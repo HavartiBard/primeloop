@@ -52,26 +52,38 @@ export function createSlackBot(deps: SlackBotDeps): App {
 
   app.action(/^approve:(.+)$/, async ({ action, ack, client, body }) => {
     await ack()
-    const approvalId = (action as { action_id: string }).action_id.split(':')[1]
-    await deps.onApprove(approvalId)
-    await client.chat.update({
-      channel: (body as { channel?: { id: string } }).channel?.id ?? deps.channelId,
-      ts: (body as { message?: { ts: string } }).message?.ts ?? '',
-      text: `✓ Approved \`${approvalId}\``,
-      blocks: [],
-    })
+    const approvalId = (action as { action_id: string }).action_id.replace(/^approve:/, '')
+    try {
+      await deps.onApprove(approvalId)
+      const ts = (body as { message?: { ts: string } }).message?.ts
+      if (!ts) throw new Error('missing message ts in action body')
+      await client.chat.update({
+        channel: (body as { channel?: { id: string } }).channel?.id ?? deps.channelId,
+        ts,
+        text: `✓ Approved \`${approvalId}\``,
+        blocks: [],
+      })
+    } catch (err) {
+      console.error('[slack] approve action failed:', err)
+    }
   })
 
   app.action(/^deny:(.+)$/, async ({ action, ack, client, body }) => {
     await ack()
-    const approvalId = (action as { action_id: string }).action_id.split(':')[1]
-    await deps.onDeny(approvalId)
-    await client.chat.update({
-      channel: (body as { channel?: { id: string } }).channel?.id ?? deps.channelId,
-      ts: (body as { message?: { ts: string } }).message?.ts ?? '',
-      text: `✕ Denied \`${approvalId}\``,
-      blocks: [],
-    })
+    const approvalId = (action as { action_id: string }).action_id.replace(/^deny:/, '')
+    try {
+      await deps.onDeny(approvalId)
+      const ts = (body as { message?: { ts: string } }).message?.ts
+      if (!ts) throw new Error('missing message ts in action body')
+      await client.chat.update({
+        channel: (body as { channel?: { id: string } }).channel?.id ?? deps.channelId,
+        ts,
+        text: `✕ Denied \`${approvalId}\``,
+        blocks: [],
+      })
+    } catch (err) {
+      console.error('[slack] deny action failed:', err)
+    }
   })
 
   return app
