@@ -35,4 +35,18 @@ describe('WebSocket broadcaster', () => {
     broadcast({ id: 'x', agent: 'langgraph', type: 'run.started', payload: {}, created_at: '' })
     expect(clientCount()).toBe(0)
   })
+
+  it('removes client on close event', () => {
+    const { addClient, clientCount } = createBroadcaster()
+    let closeHandler: () => void = () => {}
+    const ws = {
+      readyState: 1,
+      send: vi.fn(),
+      on: vi.fn((event: string, fn: () => void) => { if (event === 'close') closeHandler = fn }),
+    }
+    addClient(ws as never)
+    expect(clientCount()).toBe(1)
+    closeHandler()
+    expect(clientCount()).toBe(0)
+  })
 })

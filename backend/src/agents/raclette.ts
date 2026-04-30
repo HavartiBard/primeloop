@@ -39,8 +39,13 @@ export async function pollRaclette(deps: PollDeps): Promise<void> {
       }
     }
     await deps.upsertHeartbeat(deps.pool, 'raclette', true)
-  } catch {
-    await deps.upsertHeartbeat(deps.pool, 'raclette', false)
+  } catch (err) {
+    console.error('[raclette] poll failed:', err)
+    try {
+      await deps.upsertHeartbeat(deps.pool, 'raclette', false)
+    } catch (heartbeatErr) {
+      console.error('[raclette] heartbeat upsert failed:', heartbeatErr)
+    }
   }
 }
 

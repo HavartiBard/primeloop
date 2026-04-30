@@ -99,6 +99,9 @@ describe('langgraph approval proxy', () => {
 
     const res = await request(app2).post('/webhook/langgraph/approvals/a1/approve')
     expect(res.status).toBe(200)
-    expect(mockInsert).toHaveBeenCalledWith(mockPool, expect.objectContaining({ type: 'approval.decided' }))
+    expect(mockInsert).toHaveBeenCalledWith(mockPool, expect.objectContaining({
+      type: 'approval.decided',
+      payload: expect.objectContaining({ decision: 'approve' }),
+    }))
   })
 })

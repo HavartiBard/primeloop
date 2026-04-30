@@ -68,4 +68,15 @@ describe('raclette poller', () => {
     expect(mockUpsertHeartbeat).toHaveBeenCalledWith(mockPool, 'raclette', false)
     expect(mockInsert).not.toHaveBeenCalled()
   })
+
+  it('upserts heartbeat with healthy=false on HTTP error response', async () => {
+    const mockFetch = vi.fn().mockResolvedValue({ ok: false, status: 503, json: async () => ({}) })
+    await pollRaclette({
+      apiUrl: 'http://raclette:9119', sessionToken: 'tok',
+      pool: mockPool, insertEvent: mockInsert, broadcast: mockBroadcast,
+      upsertHeartbeat: mockUpsertHeartbeat, fetch: mockFetch as never,
+    })
+    expect(mockUpsertHeartbeat).toHaveBeenCalledWith(mockPool, 'raclette', false)
+    expect(mockInsert).not.toHaveBeenCalled()
+  })
 })
