@@ -28,13 +28,18 @@ describe('db schema', () => {
 
   it('creates approvals table', async () => {
     const res = await pool.query(
-      `SELECT column_name FROM information_schema.columns
+      `SELECT column_name, data_type FROM information_schema.columns
        WHERE table_name = 'approvals' ORDER BY column_name`
     )
     const cols = res.rows.map((r: { column_name: string }) => r.column_name)
     expect(cols).toEqual(
       expect.arrayContaining(['action', 'approval_id', 'created_at', 'decided_at', 'run_id', 'status'])
     )
+    const byName = Object.fromEntries(
+      res.rows.map((r: { column_name: string; data_type: string }) => [r.column_name, r.data_type])
+    )
+    expect(byName['created_at']).toBe('timestamp with time zone')
+    expect(byName['decided_at']).toBe('timestamp with time zone')
   })
 
   it('creates agent_heartbeat table', async () => {
