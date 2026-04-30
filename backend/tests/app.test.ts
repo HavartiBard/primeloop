@@ -15,7 +15,7 @@ describe('app smoke tests', () => {
     pool = createPool(TEST_DB)
     await runMigrations(pool)
     const { broadcast, addClient } = createBroadcaster()
-    app = createApp({ pool, broadcast, addClient, langgraphApiUrl: 'http://localhost:9999', raclettePollInterval: 0 })
+    app = createApp({ pool, broadcast, addClient, langgraphApiUrl: 'http://localhost:9999' })
   })
 
   afterAll(async () => {

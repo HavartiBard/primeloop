@@ -10,7 +10,6 @@ interface AppDeps {
   broadcast: (event: AgentEvent) => void
   addClient: (ws: WebSocket) => void
   langgraphApiUrl: string
-  raclettePollInterval?: number
 }
 
 export function createApp(deps: AppDeps): express.Express {
@@ -24,10 +23,15 @@ export function createApp(deps: AppDeps): express.Express {
   app.get('/events', async (req, res) => {
     try {
       const { agent, type, limit, before } = req.query as Record<string, string>
+      const parsedLimit = limit ? parseInt(limit, 10) : undefined
+      if (parsedLimit !== undefined && isNaN(parsedLimit)) {
+        res.status(400).json({ error: 'limit must be a number' })
+        return
+      }
       const events = await listEvents(deps.pool, {
         agent,
         type,
-        limit: limit ? parseInt(limit) : undefined,
+        limit: parsedLimit,
         before,
       })
       res.json(events)

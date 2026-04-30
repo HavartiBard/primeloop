@@ -20,6 +20,8 @@ const {
   SLACK_CHANNEL_ID = 'C0AU0620ATX',
 } = process.env
 
+if (!DATABASE_URL) throw new Error('DATABASE_URL is required')
+
 const pool = createPool(DATABASE_URL)
 await runMigrations(pool)
 
