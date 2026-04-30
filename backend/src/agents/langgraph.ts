@@ -46,7 +46,7 @@ export function createLanggraphRouter(deps: Deps): Router {
 
   router.post('/approvals/:id/:decision(approve|deny)', async (req, res) => {
     try {
-      const { id, decision } = req.params as { id: string; decision: string }
+      const { id, decision } = req.params as unknown as { id: string; decision: string }
       const upstream = await fetchFn(`${apiUrl}/approvals/${id}/${decision}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },

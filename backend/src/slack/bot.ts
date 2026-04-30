@@ -97,6 +97,7 @@ export async function notifyApprovalNeeded(
   await app.client.chat.postMessage({
     channel: channelId,
     text: `Approval needed: ${input.action} (run ${input.runId})`,
-    blocks: buildApprovalMessage(input),
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    blocks: buildApprovalMessage(input) as any,
   })
 }

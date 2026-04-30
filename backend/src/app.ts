@@ -1,0 +1,61 @@
+import express from 'express'
+import type pg from 'pg'
+import { insertEvent, listEvents } from './events/store.js'
+import type { AgentEvent } from './events/types.js'
+import { createLanggraphRouter } from './agents/langgraph.js'
+import type WebSocket from 'ws'
+
+interface AppDeps {
+  pool: pg.Pool
+  broadcast: (event: AgentEvent) => void
+  addClient: (ws: WebSocket) => void
+  langgraphApiUrl: string
+  raclettePollInterval?: number
+}
+
+export function createApp(deps: AppDeps): express.Express {
+  const app = express()
+  app.use(express.json())
+
+  app.get('/health', (_req, res) => {
+    res.json({ status: 'ok' })
+  })
+
+  app.get('/events', async (req, res) => {
+    try {
+      const { agent, type, limit, before } = req.query as Record<string, string>
+      const events = await listEvents(deps.pool, {
+        agent,
+        type,
+        limit: limit ? parseInt(limit) : undefined,
+        before,
+      })
+      res.json(events)
+    } catch (err) {
+      res.status(500).json({ error: 'internal server error' })
+    }
+  })
+
+  app.get('/agents', async (_req, res) => {
+    try {
+      const result = await deps.pool.query(
+        `SELECT agent, last_seen::text, healthy FROM agent_heartbeat ORDER BY agent`
+      )
+      res.json(result.rows)
+    } catch (err) {
+      res.status(500).json({ error: 'internal server error' })
+    }
+  })
+
+  app.use(
+    '/webhook/langgraph',
+    createLanggraphRouter({
+      pool: deps.pool,
+      insertEvent,
+      broadcast: deps.broadcast,
+      langgraphApiUrl: deps.langgraphApiUrl,
+    })
+  )
+
+  return app
+}
