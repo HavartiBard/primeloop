@@ -16,7 +16,7 @@ export function useApprovals() {
   const deny = useMutation({ mutationFn: denyAction, onSuccess: invalidate })
 
   return {
-    approvals: query.data ?? [],
+    approvals: Array.isArray(query.data) ? query.data : [],
     isLoading: query.isLoading,
     approve: (id: string) => approve.mutate(id),
     deny: (id: string) => deny.mutate(id),
