@@ -1,0 +1,28 @@
+import { useEffect, useRef, useState } from 'react'
+import type { AgentEvent } from '../types'
+
+const MAX_EVENTS = 200
+
+export function useWebSocket(url: string) {
+  const [events, setEvents] = useState<AgentEvent[]>([])
+  const [connected, setConnected] = useState(false)
+  const wsRef = useRef<WebSocket | null>(null)
+
+  useEffect(() => {
+    const ws = new WebSocket(url.startsWith('ws') ? url : `ws://${location.host}${url}`)
+    wsRef.current = ws
+
+    ws.onopen = () => setConnected(true)
+    ws.onclose = () => setConnected(false)
+    ws.onmessage = (e) => {
+      try {
+        const event = JSON.parse(e.data as string) as AgentEvent
+        setEvents((prev) => [event, ...prev].slice(0, MAX_EVENTS))
+      } catch { /* ignore malformed */ }
+    }
+
+    return () => ws.close()
+  }, [url])
+
+  return { events, connected }
+}
