@@ -24,9 +24,6 @@ export function Sidebar({ items, current, onNavigate }: Props) {
           )}
         </button>
       ))}
-      <div className="mt-auto pt-3 border-t border-gray-800 px-2">
-        <span className="text-gray-600 text-xs">2 agents</span>
-      </div>
     </div>
   )
 }
