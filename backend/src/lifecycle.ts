@@ -8,6 +8,14 @@ export function makeExecOnAgent(sshKeyPath: string): SshExecFn {
   return (host, user, cmd) => new Promise((resolve) => {
     const conn = new Client()
     let output = ''
+
+    let privateKey: Buffer
+    try {
+      privateKey = fs.readFileSync(sshKeyPath)
+    } catch (err) {
+      return resolve({ ok: false, output: (err as Error).message })
+    }
+
     conn.on('ready', () => {
       conn.exec(cmd, (err, stream) => {
         if (err) { conn.end(); return resolve({ ok: false, output: err.message }) }
@@ -16,8 +24,8 @@ export function makeExecOnAgent(sshKeyPath: string): SshExecFn {
         stream.on('close', (code: number) => { conn.end(); resolve({ ok: code === 0, output }) })
       })
     })
-    conn.on('error', (err) => resolve({ ok: false, output: err.message }))
-    conn.connect({ host, username: user, privateKey: fs.readFileSync(sshKeyPath) })
+    conn.on('error', (err) => { conn.end(); resolve({ ok: false, output: err.message }) })
+    conn.connect({ host, username: user, privateKey })
   })
 }
 
