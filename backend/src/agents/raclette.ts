@@ -13,7 +13,7 @@ interface PollDeps {
   apiUrl: string
   sessionToken: string
   pool: pg.Pool
-  insertEvent: (pool: pg.Pool, input: { agent: 'langgraph' | 'raclette'; type: string; payload: Record<string, unknown> }) => Promise<AgentEvent>
+  insertEvent: (pool: pg.Pool, input: { agent: string; type: string; payload: Record<string, unknown> }) => Promise<AgentEvent>
   broadcast: (event: AgentEvent) => void
   upsertHeartbeat: (pool: pg.Pool, agent: string, healthy: boolean) => Promise<void>
   fetch?: typeof globalThis.fetch
