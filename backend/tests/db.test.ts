@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import pg from 'pg'
-import { createPool, runMigrations } from '../src/db.js'
+import { createPool, runMigrations, seedRegistry } from '../src/db.js'
 
 const TEST_DB = process.env.TEST_DATABASE_URL!
 
@@ -13,7 +13,7 @@ describe('db schema', () => {
   })
 
   afterAll(async () => {
-    await pool.query('DROP TABLE IF EXISTS agent_heartbeat, approvals, event_log')
+    await pool.query('DROP TABLE IF EXISTS agents, providers, agent_heartbeat, approvals, event_log')
     await pool.end()
   })
 
@@ -28,13 +28,18 @@ describe('db schema', () => {
 
   it('creates approvals table', async () => {
     const res = await pool.query(
-      `SELECT column_name FROM information_schema.columns
+      `SELECT column_name, data_type FROM information_schema.columns
        WHERE table_name = 'approvals' ORDER BY column_name`
     )
     const cols = res.rows.map((r: { column_name: string }) => r.column_name)
     expect(cols).toEqual(
       expect.arrayContaining(['action', 'approval_id', 'created_at', 'decided_at', 'run_id', 'status'])
     )
+    const byName = Object.fromEntries(
+      res.rows.map((r: { column_name: string; data_type: string }) => [r.column_name, r.data_type])
+    )
+    expect(byName['created_at']).toBe('timestamp with time zone')
+    expect(byName['decided_at']).toBe('timestamp with time zone')
   })
 
   it('creates agent_heartbeat table', async () => {
@@ -44,5 +49,77 @@ describe('db schema', () => {
     )
     const cols = res.rows.map((r: { column_name: string }) => r.column_name)
     expect(cols).toEqual(expect.arrayContaining(['agent', 'healthy', 'last_seen']))
+  })
+
+  it('creates providers table with correct columns', async () => {
+    const res = await pool.query(
+      `SELECT column_name FROM information_schema.columns
+       WHERE table_name = 'providers' ORDER BY column_name`
+    )
+    const cols = res.rows.map((r: { column_name: string }) => r.column_name)
+    expect(cols).toEqual(
+      expect.arrayContaining(['id', 'name', 'type', 'base_url', 'api_key', 'created_at'])
+    )
+  })
+
+  it('creates agents table with correct columns', async () => {
+    const res = await pool.query(
+      `SELECT column_name FROM information_schema.columns
+       WHERE table_name = 'agents' ORDER BY column_name`
+    )
+    const cols = res.rows.map((r: { column_name: string }) => r.column_name)
+    expect(cols).toEqual(
+      expect.arrayContaining([
+        'id', 'name', 'type', 'provider_id', 'host',
+        'container_name', 'ssh_user', 'config', 'enabled', 'created_at',
+      ])
+    )
+  })
+})
+
+describe('seedRegistry', () => {
+  let pool: pg.Pool
+
+  beforeAll(async () => {
+    pool = createPool(TEST_DB)
+    await runMigrations(pool)
+    // Clean agents table before each suite run
+    await pool.query('DELETE FROM agents')
+  })
+
+  afterAll(async () => {
+    await pool.query('DELETE FROM agents')
+    await pool.end()
+  })
+
+  it('inserts a raclette agent when RACLETTE_API_URL is set', async () => {
+    await seedRegistry(pool, { RACLETTE_API_URL: 'http://raclette.example.com' })
+    const res = await pool.query(`SELECT name, type, config FROM agents WHERE name = 'raclette'`)
+    expect(res.rows).toHaveLength(1)
+    expect(res.rows[0].name).toBe('raclette')
+    expect(res.rows[0].type).toBe('hermes')
+    expect(res.rows[0].config).toEqual({ api_url: 'http://raclette.example.com' })
+  })
+
+  it('is idempotent — calling twice does not duplicate rows', async () => {
+    await seedRegistry(pool, { RACLETTE_API_URL: 'http://raclette.example.com' })
+    const res = await pool.query(`SELECT count(*)::int AS count FROM agents WHERE name = 'raclette'`)
+    expect(res.rows[0].count).toBe(1)
+  })
+
+  it('inserts a langgraph agent when LANGGRAPH_API_URL is set', async () => {
+    await pool.query('DELETE FROM agents')
+    await seedRegistry(pool, { LANGGRAPH_API_URL: 'http://langgraph.example.com' })
+    const res = await pool.query(`SELECT name, type, config FROM agents WHERE name = 'langgraph'`)
+    expect(res.rows).toHaveLength(1)
+    expect(res.rows[0].type).toBe('langgraph')
+    expect(res.rows[0].config).toEqual({ api_url: 'http://langgraph.example.com' })
+  })
+
+  it('inserts nothing when no env vars are set', async () => {
+    await pool.query('DELETE FROM agents')
+    await seedRegistry(pool, {})
+    const res = await pool.query(`SELECT count(*)::int AS count FROM agents`)
+    expect(res.rows[0].count).toBe(0)
   })
 })
