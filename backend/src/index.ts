@@ -1,29 +1,30 @@
 import http from 'http'
 import { WebSocketServer } from 'ws'
-import cron from 'node-cron'
-import { createPool, runMigrations } from './db.js'
+import { createPool, runMigrations, seedRegistry } from './db.js'
+import { listAgents } from './registry.js'
 import { createBroadcaster } from './ws/broadcast.js'
 import { createApp } from './app.js'
-import { pollRaclette, upsertHeartbeat } from './agents/raclette.js'
 import { createSlackBot, notifyApprovalNeeded } from './slack/bot.js'
 import { insertEvent } from './events/store.js'
 import type { AgentEvent } from './events/types.js'
+import { startIntegration, stopIntegration } from './dispatch.js'
 
 const {
   DATABASE_URL = '',
   PORT = '3100',
   LANGGRAPH_API_URL = 'http://langgraph-agent:8000',
-  RACLETTE_API_URL = 'http://192.168.20.169:9119',
-  RACLETTE_SESSION_TOKEN = '',
   SLACK_BOT_TOKEN = '',
   SLACK_APP_TOKEN = '',
   SLACK_CHANNEL_ID = 'C0AU0620ATX',
+  SSH_KEY_PATH = '/app/ssh/id_ed25519_homelab',
+  SSH_USER = 'root',
 } = process.env
 
 if (!DATABASE_URL) throw new Error('DATABASE_URL is required')
 
 const pool = createPool(DATABASE_URL)
 await runMigrations(pool)
+await seedRegistry(pool, process.env)
 
 const { broadcast: rawBroadcast, addClient } = createBroadcaster()
 
@@ -44,7 +45,22 @@ function broadcast(event: AgentEvent): void {
   }
 }
 
-const app = createApp({ pool, broadcast, addClient, langgraphApiUrl: LANGGRAPH_API_URL })
+// Start integrations for all enabled agents from the registry
+const agents = await listAgents(pool)
+for (const agent of agents) {
+  startIntegration(agent, { pool, broadcast })
+}
+
+const app = createApp({
+  pool,
+  broadcast,
+  addClient,
+  langgraphApiUrl: LANGGRAPH_API_URL,
+  sshKeyPath: SSH_KEY_PATH,
+  sshUser: SSH_USER,
+  onAgentCreated: (agent) => startIntegration(agent, { pool, broadcast }),
+  onAgentDeleted: (id) => stopIntegration(id),
+})
 const server = http.createServer(app)
 
 const wss = new WebSocketServer({ server, path: '/ws' })
@@ -66,18 +82,6 @@ if (SLACK_BOT_TOKEN && SLACK_APP_TOKEN) {
   await slackApp.start()
   console.log('Slack bot started')
 }
-
-// Poll Raclette every 30s
-cron.schedule('*/30 * * * * *', () => {
-  pollRaclette({
-    apiUrl: RACLETTE_API_URL,
-    sessionToken: RACLETTE_SESSION_TOKEN,
-    pool,
-    insertEvent,
-    broadcast,
-    upsertHeartbeat,
-  }).catch(console.error)
-})
 
 server.listen(parseInt(PORT), () => {
   console.log(`Agent control plane backend listening on :${PORT}`)

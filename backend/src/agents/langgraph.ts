@@ -4,7 +4,7 @@ import type { AgentEvent } from '../events/types.js'
 
 interface Deps {
   pool: pg.Pool
-  insertEvent: (pool: pg.Pool, input: { agent: 'langgraph' | 'raclette'; type: string; payload: Record<string, unknown> }) => Promise<AgentEvent>
+  insertEvent: (pool: pg.Pool, input: { agent: string; type: string; payload: Record<string, unknown> }) => Promise<AgentEvent>
   broadcast: (event: AgentEvent) => void
   langgraphApiUrl?: string
   fetch?: typeof globalThis.fetch

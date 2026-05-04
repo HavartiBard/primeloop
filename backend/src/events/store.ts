@@ -2,7 +2,7 @@ import type pg from 'pg'
 import type { AgentEvent } from './types.js'
 
 interface InsertInput {
-  agent: 'langgraph' | 'raclette'
+  agent: string
   type: string
   payload: Record<string, unknown>
 }

@@ -1,5 +1,6 @@
 import type pg from 'pg'
 import type { AgentEvent } from '../events/types.js'
+import { insertEvent as defaultInsertEvent } from '../events/store.js'
 
 interface HermesSession {
   id: string
@@ -13,14 +14,28 @@ interface PollDeps {
   apiUrl: string
   sessionToken: string
   pool: pg.Pool
-  insertEvent: (pool: pg.Pool, input: { agent: 'langgraph' | 'raclette'; type: string; payload: Record<string, unknown> }) => Promise<AgentEvent>
+  insertEvent: (pool: pg.Pool, input: { agent: string; type: string; payload: Record<string, unknown> }) => Promise<AgentEvent>
   broadcast: (event: AgentEvent) => void
   upsertHeartbeat: (pool: pg.Pool, agent: string, healthy: boolean) => Promise<void>
+  agentName?: string
   fetch?: typeof globalThis.fetch
+}
+
+export interface HermesPollingDeps {
+  agentName?: string
+  apiUrl: string
+  pool: pg.Pool
+  broadcast: (event: AgentEvent) => void
+  sessionToken?: string
+  insertEvent?: (pool: pg.Pool, input: { agent: string; type: string; payload: Record<string, unknown> }) => Promise<AgentEvent>
+  upsertHeartbeat?: (pool: pg.Pool, agent: string, healthy: boolean) => Promise<void>
+  fetch?: typeof globalThis.fetch
+  intervalMs?: number
 }
 
 export async function pollRaclette(deps: PollDeps): Promise<void> {
   const fetchFn = deps.fetch ?? fetch
+  const agentName = deps.agentName ?? 'raclette'
   try {
     const res = await fetchFn(`${deps.apiUrl}/api/sessions`, {
       headers: { Authorization: `Bearer ${deps.sessionToken}` },
@@ -31,22 +46,39 @@ export async function pollRaclette(deps: PollDeps): Promise<void> {
     for (const session of data.sessions) {
       if (session.is_active) {
         const event = await deps.insertEvent(deps.pool, {
-          agent: 'raclette',
+          agent: agentName,
           type: 'session.active',
           payload: session as Record<string, unknown>,
         })
         deps.broadcast(event)
       }
     }
-    await deps.upsertHeartbeat(deps.pool, 'raclette', true)
+    await deps.upsertHeartbeat(deps.pool, agentName, true)
   } catch (err) {
-    console.error('[raclette] poll failed:', err)
+    console.error(`[${agentName}] poll failed:`, err)
     try {
-      await deps.upsertHeartbeat(deps.pool, 'raclette', false)
+      await deps.upsertHeartbeat(deps.pool, agentName, false)
     } catch (heartbeatErr) {
-      console.error('[raclette] heartbeat upsert failed:', heartbeatErr)
+      console.error(`[${agentName}] heartbeat upsert failed:`, heartbeatErr)
     }
   }
+}
+
+export function startHermesPolling(deps: HermesPollingDeps): NodeJS.Timeout {
+  const intervalMs = deps.intervalMs ?? 30_000
+  const resolvedDeps: PollDeps = {
+    agentName: deps.agentName ?? 'raclette',
+    apiUrl: deps.apiUrl,
+    pool: deps.pool,
+    broadcast: deps.broadcast,
+    sessionToken: deps.sessionToken ?? process.env.RACLETTE_SESSION_TOKEN ?? '',
+    insertEvent: deps.insertEvent ?? defaultInsertEvent,
+    upsertHeartbeat: deps.upsertHeartbeat ?? upsertHeartbeat,
+    fetch: deps.fetch,
+  }
+  return setInterval(() => {
+    pollRaclette(resolvedDeps).catch(console.error)
+  }, intervalMs)
 }
 
 export async function upsertHeartbeat(pool: pg.Pool, agent: string, healthy: boolean): Promise<void> {

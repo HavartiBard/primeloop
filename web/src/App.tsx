@@ -5,6 +5,7 @@ import { LiveFeed } from './pages/LiveFeed'
 import { Approvals } from './pages/Approvals'
 import { Runs } from './pages/Runs'
 import { Agents } from './pages/Agents'
+import { Providers } from './pages/Providers'
 import { useApprovals } from './hooks/useApprovals'
 
 const queryClient = new QueryClient()
@@ -14,6 +15,7 @@ const NAV = [
   { label: 'Approvals', icon: '🔔', href: '/approvals' },
   { label: 'Runs', icon: '📋', href: '/runs' },
   { label: 'Agents', icon: '🤖', href: '/agents' },
+  { label: 'Providers', icon: '🔌', href: '/providers' },
 ]
 
 function Layout() {
@@ -29,7 +31,8 @@ function Layout() {
   const Page = page === '/' ? LiveFeed
     : page === '/approvals' ? Approvals
     : page === '/runs' ? Runs
-    : Agents
+    : page === '/agents' ? Agents
+    : Providers
 
   return (
     <div className="flex h-screen bg-gray-950 text-white">

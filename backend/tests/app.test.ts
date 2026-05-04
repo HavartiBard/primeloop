@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'
 import pg from 'pg'
 import request from 'supertest'
 import { createApp } from '../src/app.js'
@@ -15,7 +15,16 @@ describe('app smoke tests', () => {
     pool = createPool(TEST_DB)
     await runMigrations(pool)
     const { broadcast, addClient } = createBroadcaster()
-    app = createApp({ pool, broadcast, addClient, langgraphApiUrl: 'http://localhost:9999' })
+    app = createApp({
+      pool,
+      broadcast,
+      addClient,
+      langgraphApiUrl: 'http://localhost:9999',
+      sshKeyPath: '/dev/null',
+      sshUser: 'root',
+      onAgentCreated: vi.fn(),
+      onAgentDeleted: vi.fn(),
+    })
   })
 
   afterAll(async () => {
