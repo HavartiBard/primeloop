@@ -4,26 +4,48 @@ interface Props {
   items: NavItem[]
   current: string
   onNavigate: (href: string) => void
+  theme: 'dark' | 'light'
+  onToggleTheme: () => void
 }
 
-export function Sidebar({ items, current, onNavigate }: Props) {
+export function Sidebar({ items, current, onNavigate, theme, onToggleTheme }: Props) {
   return (
-    <div className="w-40 bg-gray-950 border-r border-gray-800 flex flex-col p-3 gap-1">
-      <div className="text-blue-400 font-bold text-xs tracking-widest mb-3 px-2">AGENT CP</div>
+    <aside className="hidden w-56 shrink-0 border-r border-[var(--border-soft)] bg-[var(--sidebar-bg)] p-3 lg:flex lg:flex-col lg:gap-2">
+      <div className="rounded-2xl border border-[var(--border-soft)] bg-[var(--panel)] p-3">
+        <div className="text-[10px] font-semibold tracking-[0.32em] text-[var(--accent-strong)]">AGENT CONTROL</div>
+        <div className="mt-2 text-lg font-semibold tracking-tight text-[var(--text)]">Chief Desk</div>
+      </div>
       {items.map((item) => (
         <button
           key={item.href}
           onClick={() => onNavigate(item.href)}
-          className={`flex items-center gap-2 px-2 py-2 rounded text-xs text-left w-full
-            ${current === item.href ? 'bg-gray-800 text-white' : 'text-gray-400 hover:text-gray-200'}`}
+          className={`flex w-full items-center gap-3 rounded-2xl px-3 py-3 text-left text-sm transition ${
+            current === item.href
+              ? 'bg-[var(--panel-strong)] text-[var(--text)] shadow-[inset_0_0_0_1px_var(--border-soft)]'
+              : 'text-[var(--muted)] hover:bg-[var(--panel-subtle)] hover:text-[var(--text)]'
+          }`}
         >
-          <span>{item.icon}</span>
-          <span>{item.label}</span>
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-[var(--border-soft)] bg-[var(--panel-subtle)] text-lg text-[var(--accent-strong)]">
+            {item.icon}
+          </span>
+          <span className="min-w-0 flex-1 font-medium">{item.label}</span>
           {item.badge != null && item.badge > 0 && (
-            <span className="ml-auto bg-red-600 text-white text-xs rounded-full px-1.5">{item.badge}</span>
+            <span className="rounded-full border border-amber-400/20 bg-amber-400/12 px-2 py-0.5 text-xs text-amber-500">
+              {item.badge}
+            </span>
           )}
         </button>
       ))}
-    </div>
+      <div className="mt-auto rounded-2xl border border-[var(--border-soft)] bg-[var(--panel)] p-3">
+        <button
+          type="button"
+          onClick={onToggleTheme}
+          className="flex w-full items-center justify-between rounded-xl border border-[var(--border-soft)] bg-[var(--panel-subtle)] px-3 py-2 text-sm text-[var(--text)] transition hover:bg-[var(--panel-strong)]"
+        >
+          <span>Theme</span>
+          <span className="text-[var(--muted)]">{theme === 'dark' ? 'Dark' : 'Light'}</span>
+        </button>
+      </div>
+    </aside>
   )
 }

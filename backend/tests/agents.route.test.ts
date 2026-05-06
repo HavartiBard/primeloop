@@ -44,12 +44,19 @@ describe('agents registry router', () => {
     const res = await request(app).post('/api/agents').send({
       name: 'test-agent',
       type: 'hermes',
+      runtime_family: 'hermes',
+      execution_mode: 'external',
+      endpoint: 'http://example.com/agent',
+      capabilities: ['coordination'],
       host: 'myhost.local',
       container_name: 'my-container',
       config: { api_url: 'http://example.com' },
     })
     expect(res.status).toBe(201)
     expect(res.body.name).toBe('test-agent')
+    expect(res.body.runtime_family).toBe('hermes')
+    expect(res.body.execution_mode).toBe('external')
+    expect(res.body.capabilities).toEqual(['coordination'])
     expect(res.body.id).toBeTruthy()
   })
 
@@ -88,7 +95,13 @@ describe('agents registry router', () => {
 
   it('POST /:id/lifecycle returns 400 if no host/container', async () => {
     // Create an agent with no host
-    await request(app).post('/api/agents').send({ name: 'no-host-agent', type: 'generic' })
+    await request(app).post('/api/agents').send({
+      name: 'no-host-agent',
+      type: 'custom',
+      runtime_family: 'custom',
+      execution_mode: 'external',
+      capabilities: [],
+    })
     const list = await request(app).get('/api/agents')
     const agent = list.body.find((a: any) => a.name === 'no-host-agent')
     const res = await request(app).post(`/api/agents/${agent.id}/lifecycle`).send({ action: 'restart' })

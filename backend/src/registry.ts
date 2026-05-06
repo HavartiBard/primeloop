@@ -14,6 +14,10 @@ export interface RegistryAgent {
   name: string
   type: string
   provider_id?: string
+  runtime_family: string
+  execution_mode: string
+  endpoint?: string
+  capabilities: string[]
   host?: string
   container_name?: string
   ssh_user?: string
@@ -74,12 +78,19 @@ export async function insertAgent(
   data: Omit<RegistryAgent, 'id' | 'created_at'>
 ): Promise<RegistryAgent> {
   const { rows } = await pool.query(
-    `INSERT INTO agents (name, type, provider_id, host, container_name, ssh_user, config, enabled)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+    `INSERT INTO agents (
+      name, type, provider_id, runtime_family, execution_mode, endpoint, capabilities,
+      host, container_name, ssh_user, config, enabled
+    )
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`,
     [
       data.name,
       data.type,
       data.provider_id ?? null,
+      data.runtime_family,
+      data.execution_mode,
+      data.endpoint ?? null,
+      JSON.stringify(data.capabilities ?? []),
       data.host ?? null,
       data.container_name ?? null,
       data.ssh_user ?? null,
@@ -102,6 +113,9 @@ export async function updateAgent(
     ['name', 'name'],
     ['type', 'type'],
     ['provider_id', 'provider_id'],
+    ['runtime_family', 'runtime_family'],
+    ['execution_mode', 'execution_mode'],
+    ['endpoint', 'endpoint'],
     ['host', 'host'],
     ['container_name', 'container_name'],
     ['ssh_user', 'ssh_user'],
@@ -118,6 +132,11 @@ export async function updateAgent(
   if ('config' in data) {
     vals.push(JSON.stringify(data.config))
     sets.push(`config = $${vals.length}`)
+  }
+
+  if ('capabilities' in data) {
+    vals.push(JSON.stringify(data.capabilities ?? []))
+    sets.push(`capabilities = $${vals.length}`)
   }
 
   if (sets.length === 0) return getAgent(pool, id) as Promise<RegistryAgent>

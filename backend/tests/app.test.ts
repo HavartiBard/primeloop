@@ -28,7 +28,26 @@ describe('app smoke tests', () => {
   })
 
   afterAll(async () => {
-    await pool.query('TRUNCATE event_log, approvals, agent_heartbeat')
+    await pool.query(`
+      TRUNCATE
+        runtime_events,
+        artifacts,
+        audit_runs,
+        audit_loops,
+        tool_invocations,
+        permission_rules,
+        tool_servers,
+        delegations,
+        work_items,
+        memories,
+        thread_messages,
+        threads,
+        chief_profiles,
+        portal_state,
+        event_log,
+        approvals,
+        agent_heartbeat
+    `)
     await pool.end()
   })
 
@@ -57,5 +76,43 @@ describe('app smoke tests', () => {
 
     const res = await request(app).get('/events')
     expect(res.body[0].type).toBe('run.started')
+  })
+
+  it('GET /api/portal/state returns persistent portal state', async () => {
+    const res = await request(app).get('/api/portal/state')
+    expect(res.status).toBe(200)
+    expect(res.body.chief_profile.name).toBe('Chief of Staff')
+    expect(Array.isArray(res.body.work_items)).toBe(true)
+  })
+
+  it('runtime APIs create a thread, message, work item, and delegation', async () => {
+    const thread = await request(app)
+      .post('/api/threads')
+      .send({ title: 'Homelab operations' })
+    expect(thread.status).toBe(201)
+    expect(thread.body.id).toBeTruthy()
+
+    const message = await request(app)
+      .post(`/api/threads/${thread.body.id}/messages`)
+      .send({ role: 'user', sender: 'james', content: 'Audit open work.' })
+    expect(message.status).toBe(201)
+    expect(message.body.thread_id).toBe(thread.body.id)
+
+    const work = await request(app)
+      .post('/api/work-items')
+      .send({ title: 'Audit open work', thread_id: thread.body.id, lane: 'operations' })
+    expect(work.status).toBe(201)
+    expect(work.body.title).toBe('Audit open work')
+
+    const delegation = await request(app)
+      .post('/api/delegations')
+      .send({ work_item_id: work.body.id, capability: 'operational-audit', request: { scope: 'open-work' } })
+    expect(delegation.status).toBe(201)
+    expect(delegation.body.capability).toBe('operational-audit')
+
+    const overview = await request(app).get('/api/runtime/overview')
+    expect(overview.status).toBe(200)
+    expect(overview.body.chief.name).toBe('Chief of Staff')
+    expect(Array.isArray(overview.body.recent_events)).toBe(true)
   })
 })

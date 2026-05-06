@@ -1,1 +1,62 @@
 @import "tailwindcss";
+
+:root {
+  --bg: #07111f;
+  --text: #e5eefb;
+  --muted: #8ea2c1;
+  --panel: rgba(9, 18, 32, 0.82);
+  --panel-subtle: rgba(255, 255, 255, 0.04);
+  --panel-strong: rgba(255, 255, 255, 0.08);
+  --border-soft: rgba(148, 163, 184, 0.18);
+  --sidebar-bg: linear-gradient(180deg, rgba(6, 12, 22, 0.96), rgba(9, 16, 28, 0.9));
+  --topbar-bg: rgba(7, 15, 27, 0.84);
+  --accent: #4fd1ff;
+  --accent-strong: #ffb36b;
+}
+
+html {
+  background:
+    radial-gradient(circle at top left, rgba(56, 189, 248, 0.08), transparent 24%),
+    radial-gradient(circle at 85% 18%, rgba(249, 115, 22, 0.08), transparent 18%),
+    linear-gradient(180deg, #06101d 0%, #0a1322 48%, #0d1728 100%);
+}
+
+html[data-theme='light'] {
+  --bg: #f3f6fb;
+  --text: #101927;
+  --muted: #5d6c82;
+  --panel: rgba(255, 255, 255, 0.86);
+  --panel-subtle: rgba(15, 23, 42, 0.04);
+  --panel-strong: rgba(15, 23, 42, 0.08);
+  --border-soft: rgba(15, 23, 42, 0.12);
+  --sidebar-bg: linear-gradient(180deg, rgba(248, 250, 252, 0.98), rgba(240, 244, 250, 0.94));
+  --topbar-bg: rgba(243, 246, 251, 0.88);
+  --accent: #0ea5e9;
+  --accent-strong: #ea580c;
+  background:
+    radial-gradient(circle at top left, rgba(14, 165, 233, 0.05), transparent 24%),
+    radial-gradient(circle at 85% 18%, rgba(234, 88, 12, 0.05), transparent 18%),
+    linear-gradient(180deg, #f7f9fc 0%, #eef3f9 52%, #e8eef7 100%);
+}
+
+body {
+  min-height: 100vh;
+  background: transparent;
+  color: var(--text);
+  font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body,
+button,
+input,
+textarea {
+  color: inherit;
+}

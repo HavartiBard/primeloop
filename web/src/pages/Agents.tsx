@@ -5,12 +5,14 @@ import { useAgentRegistry } from '../hooks/useAgentRegistry'
 import { useProviders } from '../hooks/useProviders'
 import type { RegistryAgent } from '../types'
 
-const AGENT_TYPE_OPTIONS = ['hermes', 'langgraph', 'codex-thread', 'generic']
-
 interface AgentFormState {
   name: string
   type: string
   provider_id: string
+  runtime_family: string
+  execution_mode: string
+  endpoint: string
+  capabilities_csv: string
   host: string
   container_name: string
   ssh_user: string
@@ -20,8 +22,12 @@ interface AgentFormState {
 
 const EMPTY_AGENT_FORM: AgentFormState = {
   name: '',
-  type: 'generic',
+  type: 'custom',
   provider_id: '',
+  runtime_family: 'custom',
+  execution_mode: 'external',
+  endpoint: '',
+  capabilities_csv: '',
   host: '',
   container_name: '',
   ssh_user: '',
@@ -40,8 +46,12 @@ interface AgentModalProps {
 function AgentModal({ mode, agent, providerOptions, onClose, onSubmit }: AgentModalProps) {
   const [form, setForm] = useState<AgentFormState>({
     name: agent?.name ?? '',
-    type: agent?.type ?? 'generic',
+    type: agent?.type ?? 'custom',
     provider_id: agent?.provider_id ?? '',
+    runtime_family: agent?.runtime_family ?? 'custom',
+    execution_mode: agent?.execution_mode ?? 'external',
+    endpoint: agent?.endpoint ?? '',
+    capabilities_csv: agent?.capabilities.join(', ') ?? '',
     host: agent?.host ?? '',
     container_name: agent?.container_name ?? '',
     ssh_user: agent?.ssh_user ?? '',
@@ -85,16 +95,54 @@ function AgentModal({ mode, agent, providerOptions, onClose, onSubmit }: AgentMo
             />
           </div>
           <div>
-            <label className="block text-xs text-gray-400 mb-1">Type *</label>
-            <select
+            <label className="block text-xs text-gray-400 mb-1">Agent Type *</label>
+            <input
+              required
               value={form.type}
               onChange={setField('type')}
-              className="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm text-white focus:outline-none focus:border-gray-400"
-            >
-              {AGENT_TYPE_OPTIONS.map((t) => (
-                <option key={t} value={t}>{t}</option>
-              ))}
-            </select>
+              placeholder="e.g. chief-of-staff, worker, reviewer"
+              className="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-gray-400"
+            />
+          </div>
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div>
+              <label className="block text-xs text-gray-400 mb-1">Runtime Family *</label>
+              <input
+                required
+                value={form.runtime_family}
+                onChange={setField('runtime_family')}
+                placeholder="e.g. hermes, openclaw, opencode, codex-app-server"
+                className="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-gray-400"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-400 mb-1">Execution Mode *</label>
+              <input
+                required
+                value={form.execution_mode}
+                onChange={setField('execution_mode')}
+                placeholder="e.g. external, portal-managed, remote-container, local"
+                className="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-gray-400"
+              />
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">Endpoint</label>
+            <input
+              value={form.endpoint}
+              onChange={setField('endpoint')}
+              placeholder="e.g. https://agent.example/api"
+              className="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-gray-400"
+            />
+          </div>
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">Capabilities</label>
+            <input
+              value={form.capabilities_csv}
+              onChange={setField('capabilities_csv')}
+              placeholder="e.g. coordination, research, code-exploration, deploy"
+              className="w-full bg-gray-800 border border-gray-600 rounded px-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-gray-400"
+            />
           </div>
           <div>
             <label className="block text-xs text-gray-400 mb-1">Provider</label>
@@ -190,13 +238,21 @@ export function Agents() {
   const handleSubmit = (form: AgentFormState) => {
     let config: Record<string, unknown> = {}
     try { config = JSON.parse(form.config_json) } catch { /* validated in modal */ }
+    const capabilities = form.capabilities_csv
+      .split(',')
+      .map((value) => value.trim())
+      .filter(Boolean)
 
     const payload: Omit<RegistryAgent, 'id' | 'created_at'> = {
       name: form.name,
       type: form.type,
+      runtime_family: form.runtime_family,
+      execution_mode: form.execution_mode,
+      capabilities,
       enabled: form.enabled,
       config,
       ...(form.provider_id ? { provider_id: form.provider_id } : {}),
+      ...(form.endpoint ? { endpoint: form.endpoint } : {}),
       ...(form.host ? { host: form.host } : {}),
       ...(form.container_name ? { container_name: form.container_name } : {}),
       ...(form.ssh_user ? { ssh_user: form.ssh_user } : {}),
@@ -259,6 +315,7 @@ export function Agents() {
                 <tr className="text-gray-500 border-b border-gray-800">
                   <th className="pb-2 pr-4 font-normal">Name</th>
                   <th className="pb-2 pr-4 font-normal">Type</th>
+                  <th className="pb-2 pr-4 font-normal">Runtime</th>
                   <th className="pb-2 pr-4 font-normal">Host</th>
                   <th className="pb-2 pr-4 font-normal">Container</th>
                   <th className="pb-2 pr-4 font-normal">Provider</th>
@@ -271,6 +328,10 @@ export function Agents() {
                   <tr key={a.id} className="border-b border-gray-800/50 hover:bg-gray-900/40">
                     <td className="py-2 pr-4 text-white font-mono">{a.name}</td>
                     <td className="py-2 pr-4 text-gray-300">{a.type}</td>
+                    <td className="py-2 pr-4 text-gray-400">
+                      <div className="font-mono">{a.runtime_family}</div>
+                      <div className="text-[11px] text-gray-500">{a.execution_mode}</div>
+                    </td>
                     <td className="py-2 pr-4 text-gray-400 font-mono">
                       {a.host ?? <span className="text-gray-600">—</span>}
                     </td>

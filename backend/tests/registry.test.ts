@@ -122,6 +122,10 @@ describe('registry — agents', () => {
       name: 'test-agent',
       type: 'hermes',
       provider_id: providerId,
+      runtime_family: 'hermes',
+      execution_mode: 'external',
+      endpoint: 'http://hermes.example.com',
+      capabilities: ['coordination', 'exec'],
       host: 'agent.example.com',
       container_name: 'my-container',
       ssh_user: 'ubuntu',
@@ -132,6 +136,10 @@ describe('registry — agents', () => {
     expect(agent.name).toBe('test-agent')
     expect(agent.type).toBe('hermes')
     expect(agent.provider_id).toBe(providerId)
+    expect(agent.runtime_family).toBe('hermes')
+    expect(agent.execution_mode).toBe('external')
+    expect(agent.endpoint).toBe('http://hermes.example.com')
+    expect(agent.capabilities).toEqual(['coordination', 'exec'])
     expect(agent.host).toBe('agent.example.com')
     expect(agent.container_name).toBe('my-container')
     expect(agent.ssh_user).toBe('ubuntu')
@@ -143,12 +151,18 @@ describe('registry — agents', () => {
   it('insertAgent — works with minimal fields', async () => {
     const agent = await insertAgent(pool, {
       name: 'minimal-agent',
-      type: 'generic',
+      type: 'custom',
+      runtime_family: 'custom',
+      execution_mode: 'external',
+      capabilities: [],
       config: {},
       enabled: true,
     })
     expect(agent.id).toBeTruthy()
     expect(agent.provider_id).toBeNull()
+    expect(agent.runtime_family).toBe('custom')
+    expect(agent.execution_mode).toBe('external')
+    expect(agent.capabilities).toEqual([])
     expect(agent.host).toBeNull()
     expect(agent.container_name).toBeNull()
     expect(agent.ssh_user).toBeNull()
@@ -166,6 +180,9 @@ describe('registry — agents', () => {
     const agent = await insertAgent(pool, {
       name: 'get-me-agent',
       type: 'langgraph',
+      runtime_family: 'langgraph',
+      execution_mode: 'external',
+      capabilities: ['workflow'],
       config: { key: 'value' },
       enabled: false,
     })
@@ -186,17 +203,28 @@ describe('registry — agents', () => {
     const agent = await insertAgent(pool, {
       name: 'update-me-agent',
       type: 'hermes',
+      runtime_family: 'hermes',
+      execution_mode: 'external',
+      capabilities: [],
       config: { original: true },
       enabled: true,
     })
     const updated = await updateAgent(pool, agent.id, {
+      runtime_family: 'openclaw',
+      execution_mode: 'portal-managed',
+      endpoint: 'http://openclaw.example.com',
       host: 'new-host.example.com',
       enabled: false,
+      capabilities: ['research', 'audit'],
       config: { updated: true },
     })
     expect(updated.id).toBe(agent.id)
+    expect(updated.runtime_family).toBe('openclaw')
+    expect(updated.execution_mode).toBe('portal-managed')
+    expect(updated.endpoint).toBe('http://openclaw.example.com')
     expect(updated.host).toBe('new-host.example.com')
     expect(updated.enabled).toBe(false)
+    expect(updated.capabilities).toEqual(['research', 'audit'])
     expect(updated.config).toEqual({ updated: true })
     expect(updated.name).toBe('update-me-agent')
   })
@@ -204,7 +232,10 @@ describe('registry — agents', () => {
   it('deleteAgent — removes row', async () => {
     const agent = await insertAgent(pool, {
       name: 'delete-me-agent',
-      type: 'generic',
+      type: 'custom',
+      runtime_family: 'custom',
+      execution_mode: 'external',
+      capabilities: [],
       config: {},
       enabled: true,
     })

@@ -2,6 +2,7 @@ import { Router } from 'express'
 import pg from 'pg'
 import { listAgents, getAgent, insertAgent, updateAgent, deleteAgent, RegistryAgent } from '../registry.js'
 import { makeExecOnAgent, dockerLifecycle, SshExecFn } from '../lifecycle.js'
+import { createAgentAdapter } from '../adapters/index.js'
 
 interface AgentsRouterDeps {
   pool: pg.Pool
@@ -26,10 +27,36 @@ export function createAgentsRouter(deps: AgentsRouterDeps) {
   })
 
   router.post('/', async (req, res) => {
-    const { name, type, provider_id, host, container_name, ssh_user, config, enabled } = req.body
+    const {
+      name,
+      type,
+      provider_id,
+      runtime_family,
+      execution_mode,
+      endpoint,
+      capabilities,
+      host,
+      container_name,
+      ssh_user,
+      config,
+      enabled,
+    } = req.body
     if (!name || !type) return res.status(400).json({ error: 'name and type required' })
     try {
-      const agent = await insertAgent(deps.pool, { name, type, provider_id, host, container_name, ssh_user, config: config ?? {}, enabled: enabled ?? true })
+      const agent = await insertAgent(deps.pool, {
+        name,
+        type,
+        provider_id,
+        runtime_family: runtime_family ?? 'custom',
+        execution_mode: execution_mode ?? 'external',
+        endpoint,
+        capabilities: Array.isArray(capabilities) ? capabilities : [],
+        host,
+        container_name,
+        ssh_user,
+        config: config ?? {},
+        enabled: enabled ?? true,
+      })
       deps.onAgentCreated(agent)
       res.status(201).json(agent)
     } catch (err) {
@@ -69,6 +96,28 @@ export function createAgentsRouter(deps: AgentsRouterDeps) {
       }
       const result = await dockerLifecycle(exec, agent.host, agent.ssh_user ?? deps.sshUser, agent.container_name, action as 'restart' | 'stop' | 'start')
       res.json(result)
+    } catch {
+      res.status(500).json({ error: 'internal error' })
+    }
+  })
+
+  router.get('/:id/runtime/discover', async (req, res) => {
+    try {
+      const agent = await getAgent(deps.pool, req.params.id)
+      if (!agent) return res.status(404).json({ error: 'agent not found' })
+      const adapter = createAgentAdapter(agent)
+      res.json(await adapter.discover(agent))
+    } catch {
+      res.status(500).json({ error: 'internal error' })
+    }
+  })
+
+  router.get('/:id/runtime/health', async (req, res) => {
+    try {
+      const agent = await getAgent(deps.pool, req.params.id)
+      if (!agent) return res.status(404).json({ error: 'agent not found' })
+      const adapter = createAgentAdapter(agent)
+      res.json(await adapter.health(agent))
     } catch {
       res.status(500).json({ error: 'internal error' })
     }

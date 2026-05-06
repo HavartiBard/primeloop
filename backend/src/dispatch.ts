@@ -13,7 +13,7 @@ export function startIntegration(agent: RegistryAgent, deps: DispatchDeps): void
   if (activeIntegrations.has(agent.id)) return
   if (!agent.enabled) return
 
-  if (agent.type === 'hermes') {
+  if (agent.runtime_family === 'hermes' || agent.type === 'hermes') {
     const apiUrl = agent.config?.api_url as string | undefined
     if (!apiUrl) return
     const interval = startHermesPolling({
