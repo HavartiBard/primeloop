@@ -12,6 +12,33 @@
   --topbar-bg: rgba(7, 15, 27, 0.84);
   --accent: #4fd1ff;
   --accent-strong: #ffb36b;
+  --canvas-surface: linear-gradient(180deg, rgba(7, 15, 27, 0.92), rgba(10, 18, 34, 0.95));
+  --canvas-grid-major: rgba(148, 163, 184, 0.12);
+  --canvas-grid-minor: rgba(148, 163, 184, 0.06);
+  --canvas-label: rgba(229, 238, 251, 0.74);
+  --canvas-chip: rgba(2, 6, 23, 0.16);
+  --tone-cyan-border: rgba(103, 232, 249, 0.34);
+  --tone-cyan-bg: rgba(103, 232, 249, 0.09);
+  --tone-cyan-text: #d8f8ff;
+  --tone-orange-border: rgba(253, 186, 116, 0.34);
+  --tone-orange-bg: rgba(253, 186, 116, 0.09);
+  --tone-orange-text: #ffe7c7;
+  --tone-emerald-border: rgba(110, 231, 183, 0.34);
+  --tone-emerald-bg: rgba(110, 231, 183, 0.08);
+  --tone-emerald-text: #d3fae8;
+  --tone-violet-border: rgba(196, 181, 253, 0.34);
+  --tone-violet-bg: rgba(196, 181, 253, 0.09);
+  --tone-violet-text: #ece6ff;
+  --tone-rose-border: rgba(251, 113, 133, 0.34);
+  --tone-rose-bg: rgba(251, 113, 133, 0.09);
+  --tone-rose-text: #ffe0e6;
+  --terminal-bg: rgba(4, 10, 20, 0.48);
+  --terminal-text: #d7f1ff;
+  --terminal-accent: #7dd3fc;
+  --terminal-time: rgba(103, 232, 249, 0.8);
+  --terminal-speaker: #facc15;
+  --terminal-working: #86efac;
+  --terminal-working-label: #34d399;
 }
 
 html {
@@ -33,6 +60,33 @@ html[data-theme='light'] {
   --topbar-bg: rgba(243, 246, 251, 0.88);
   --accent: #0ea5e9;
   --accent-strong: #ea580c;
+  --canvas-surface: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(246, 249, 253, 0.96));
+  --canvas-grid-major: rgba(14, 165, 233, 0.14);
+  --canvas-grid-minor: rgba(15, 23, 42, 0.06);
+  --canvas-label: rgba(16, 25, 39, 0.7);
+  --canvas-chip: rgba(255, 255, 255, 0.62);
+  --tone-cyan-border: rgba(14, 165, 233, 0.24);
+  --tone-cyan-bg: rgba(14, 165, 233, 0.04);
+  --tone-cyan-text: #0b5f84;
+  --tone-orange-border: rgba(234, 88, 12, 0.22);
+  --tone-orange-bg: rgba(234, 88, 12, 0.035);
+  --tone-orange-text: #9a3412;
+  --tone-emerald-border: rgba(5, 150, 105, 0.22);
+  --tone-emerald-bg: rgba(5, 150, 105, 0.04);
+  --tone-emerald-text: #0f766e;
+  --tone-violet-border: rgba(124, 58, 237, 0.2);
+  --tone-violet-bg: rgba(124, 58, 237, 0.035);
+  --tone-violet-text: #6d28d9;
+  --tone-rose-border: rgba(225, 29, 72, 0.2);
+  --tone-rose-bg: rgba(225, 29, 72, 0.035);
+  --tone-rose-text: #be123c;
+  --terminal-bg: rgba(252, 254, 255, 0.88);
+  --terminal-text: #183247;
+  --terminal-accent: #0b7db1;
+  --terminal-time: rgba(11, 125, 177, 0.75);
+  --terminal-speaker: #b45309;
+  --terminal-working: #15803d;
+  --terminal-working-label: #15803d;
   background:
     radial-gradient(circle at top left, rgba(14, 165, 233, 0.05), transparent 24%),
     radial-gradient(circle at 85% 18%, rgba(234, 88, 12, 0.05), transparent 18%),

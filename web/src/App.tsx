@@ -7,6 +7,7 @@ import { Approvals } from './pages/Approvals'
 import { Runs } from './pages/Runs'
 import { Agents } from './pages/Agents'
 import { Providers } from './pages/Providers'
+import { Governance } from './pages/Governance'
 import { useApprovals } from './hooks/useApprovals'
 
 const queryClient = new QueryClient()
@@ -24,6 +25,7 @@ const NAV: NavItem[] = [
   { label: 'Approvals', icon: '🔔', href: '/approvals' },
   { label: 'Runs', icon: '◫', href: '/runs' },
   { label: 'Agents', icon: '◉', href: '/agents' },
+  { label: 'Governance', icon: '⛭', href: '/governance' },
   { label: 'Providers', icon: '∞', href: '/providers' },
 ]
 
@@ -57,6 +59,7 @@ function Layout() {
     : page === '/approvals' ? Approvals
     : page === '/runs' ? Runs
     : page === '/agents' ? Agents
+    : page === '/governance' ? Governance
     : Providers
 
   return (
@@ -99,7 +102,7 @@ function Layout() {
               </button>
               <button
                 type="button"
-                onClick={() => setPage('/providers')}
+                onClick={() => setPage('/governance')}
                 className="inline-flex h-9 items-center gap-2 rounded-full border border-[var(--border-soft)] bg-[var(--panel-subtle)] px-3 text-sm text-[var(--text)] transition hover:bg-[var(--panel-strong)]"
               >
                 <span className="text-base">⌘</span>
