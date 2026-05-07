@@ -139,8 +139,8 @@ export function OperationsPortal() {
   const memoryCount = profile.preferences.length + profile.recurringDuties.length + profile.priorDecisions.length
 
   return (
-    <div className="flex min-h-screen flex-col px-4 py-4 sm:px-6 lg:px-8">
-      <section className={`${cardClass()} mb-5 px-4 py-3`}>
+    <div className="flex h-[calc(100vh-57px)] flex-col px-4 py-4 sm:px-6 lg:px-8">
+      <section className={`${cardClass()} mb-4 px-4 py-3 shrink-0`}>
         <div className="flex flex-wrap items-center gap-2">
           {[
             `${activeWork} active work`,
@@ -159,7 +159,7 @@ export function OperationsPortal() {
         </div>
       </section>
 
-      <section className="min-h-0 flex-1">
+      <section className="min-h-0 flex-1 overflow-hidden rounded-[1.2rem] border border-[var(--border-soft)]">
         <CollaborationRoomsView
           chiefName={profile.name}
           connected={connected}

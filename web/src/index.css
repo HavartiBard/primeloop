@@ -39,6 +39,17 @@
   --terminal-speaker: #facc15;
   --terminal-working: #86efac;
   --terminal-working-label: #34d399;
+
+  /* Selection */
+  --sel-bg: rgba(59,130,246,0.08);
+  --sel-bd: rgba(59,130,246,0.45);
+
+  /* State palette — rooms & circuit views */
+  --s-ok-tx: #4ade80;  --s-ok-bg: rgba(34,197,94,0.08);    --s-ok-bd: rgba(34,197,94,0.28);
+  --s-run-tx: #22d3ee; --s-run-bg: rgba(6,182,212,0.08);   --s-run-bd: rgba(6,182,212,0.28);
+  --s-blk-tx: #f87171; --s-blk-bg: rgba(239,68,68,0.09);   --s-blk-bd: rgba(239,68,68,0.28);
+  --s-att-tx: #fbbf24; --s-att-bg: rgba(217,119,6,0.10);   --s-att-bd: rgba(217,119,6,0.28);
+  --s-neu-tx: #6b7280; --s-neu-bg: rgba(107,114,128,0.07); --s-neu-bd: rgba(107,114,128,0.22);
 }
 
 html {
@@ -87,6 +98,18 @@ html[data-theme='light'] {
   --terminal-speaker: #b45309;
   --terminal-working: #15803d;
   --terminal-working-label: #15803d;
+
+  /* Selection */
+  --sel-bg: rgba(59,130,246,0.06);
+  --sel-bd: rgba(59,130,246,0.40);
+
+  /* State palette */
+  --s-ok-tx: #166534;  --s-ok-bg: #f0fdf4;  --s-ok-bd: rgba(34,197,94,0.30);
+  --s-run-tx: #0c6b80; --s-run-bg: #e8fafd; --s-run-bd: rgba(6,182,212,0.30);
+  --s-blk-tx: #991b1b; --s-blk-bg: #fff1f1; --s-blk-bd: rgba(239,68,68,0.30);
+  --s-att-tx: #92400e; --s-att-bg: #fffbeb; --s-att-bd: rgba(217,119,6,0.30);
+  --s-neu-tx: #4b5563; --s-neu-bg: #f9fafb; --s-neu-bd: rgba(107,114,128,0.22);
+
   background:
     radial-gradient(circle at top left, rgba(14, 165, 233, 0.05), transparent 24%),
     radial-gradient(circle at 85% 18%, rgba(234, 88, 12, 0.05), transparent 18%),

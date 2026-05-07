@@ -1,4 +1,11 @@
-interface NavItem { label: string; icon: string; href: string; badge?: number }
+import type { ReactNode } from 'react'
+
+interface NavItem {
+  label: string
+  icon: ReactNode
+  href: string
+  badge?: number
+}
 
 interface Props {
   items: NavItem[]
@@ -25,7 +32,7 @@ export function Sidebar({ items, current, onNavigate, theme, onToggleTheme }: Pr
               : 'text-[var(--muted)] hover:bg-[var(--panel-subtle)] hover:text-[var(--text)]'
           }`}
         >
-          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-[var(--border-soft)] bg-[var(--panel-subtle)] text-lg text-[var(--accent-strong)]">
+          <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-[var(--border-soft)] bg-[var(--panel-subtle)] text-[var(--muted)]">
             {item.icon}
           </span>
           <span className="min-w-0 flex-1 font-medium">{item.label}</span>
