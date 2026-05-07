@@ -130,7 +130,10 @@ function Layout() {
           </div>
         </div>
 
-        <Page />
+        {page === '/circuit'
+          ? <CircuitView onNavigate={setPage} />
+          : <Page />
+        }
       </main>
     </div>
   )

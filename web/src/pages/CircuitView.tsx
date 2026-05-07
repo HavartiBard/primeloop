@@ -202,7 +202,7 @@ function CircuitNode({ id, type, state, x, y, wide, title, summary, chips, statu
         {summary}
       </div>
 
-      {/* Footer chips + status pill */}
+      {/* Footer chips */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
         {chips.map((chip, i) => (
           <span
@@ -212,11 +212,6 @@ function CircuitNode({ id, type, state, x, y, wide, title, summary, chips, statu
             {chip.label}
           </span>
         ))}
-        <span
-          style={{ marginLeft: 'auto', fontSize: 9, fontFamily: 'monospace', textTransform: 'uppercase', letterSpacing: '0.06em', padding: '2px 6px', borderRadius: 99, border: '1px solid', ...chipStyle(status.variant) }}
-        >
-          {status.label}
-        </span>
       </div>
     </div>
   )
@@ -237,42 +232,75 @@ function Edges() {
         <marker id="a-uses"   markerWidth="5" markerHeight="5" refX="4" refY="2.5" orient="auto"><path d="M0,0.5L4,2.5L0,4.5Z" fill="#9ca3af" opacity="0.6"/></marker>
       </defs>
 
+      {/* Corridors: C1=y168, C2=y312, C3=y456, C4=y600; left=x60, right=x1200 */}
+      {/* Corners chamfered at 45° with c=8: stop 8px before turn, insert diagonal L */}
+
       {/* ── Coordinates: Chief → Rooms (blue, flowing) ── */}
-      <path className="e-flow" d="M 664,144 V 240 H 192 V 336"  stroke="#3b82f6" strokeWidth="1.5" fill="none" opacity="0.75" markerEnd="url(#a-coord)"/>
-      <path className="e-flow" d="M 664,144 V 320 H 640 V 336"  stroke="#3b82f6" strokeWidth="1.5" fill="none" opacity="0.75" markerEnd="url(#a-coord)"/>
-      <path className="e-flow" d="M 664,144 V 240 H 1072 V 336" stroke="#3b82f6" strokeWidth="1.5" fill="none" opacity="0.75" markerEnd="url(#a-coord)"/>
+      {/* → provider: down→left at C1, left→down at gap(408), down→left at C2, left→down at 192 */}
+      <path className="e-flow"
+        d="M 664,144 V 160 L 656,168 H 416 L 408,176 V 304 L 400,312 H 200 L 192,320 V 336"
+        stroke="#3b82f6" strokeWidth="1.5" fill="none" opacity="0.75" markerEnd="url(#a-coord)"/>
+      {/* → release: down→right at C1, right→down at 728, down→left at C2, left→down at 640 */}
+      <path className="e-flow"
+        d="M 664,144 V 160 L 672,168 H 720 L 728,176 V 304 L 720,312 H 648 L 640,320 V 336"
+        stroke="#3b82f6" strokeWidth="1.5" fill="none" opacity="0.75" markerEnd="url(#a-coord)"/>
+      {/* → verify: down→right at C1, right→down at 1160, down→left at C2, left→down at 1072 */}
+      <path className="e-flow"
+        d="M 664,144 V 160 L 672,168 H 1152 L 1160,176 V 304 L 1152,312 H 1080 L 1072,320 V 336"
+        stroke="#3b82f6" strokeWidth="1.5" fill="none" opacity="0.75" markerEnd="url(#a-coord)"/>
 
       {/* ── Participating: Agent → Room (gray, flowing) ── */}
-      <path className="e-flow" d="M 184,288 V 336"              stroke="#6b7280" strokeWidth="1.2" fill="none" opacity="0.6"  markerEnd="url(#a-part)"/>
-      <path className="e-flow" d="M 632,288 V 336"              stroke="#6b7280" strokeWidth="1.2" fill="none" opacity="0.6"  markerEnd="url(#a-part)"/>
-      <path className="e-flow" d="M 1064,288 V 336"             stroke="#6b7280" strokeWidth="1.2" fill="none" opacity="0.6"  markerEnd="url(#a-part)"/>
-      {/* Reviewer → Release (secondary, static dashed) */}
-      <path d="M 1064,288 V 304 H 640 V 336" stroke="#6b7280" strokeWidth="1" strokeDasharray="4 4" fill="none" opacity="0.35" markerEnd="url(#a-part)"/>
+      {/* 8px jog right/left — single diagonal replaces both 90° turns */}
+      <path className="e-flow" d="M 184,288 V 304 L 192,312 V 336"   stroke="#6b7280" strokeWidth="1.2" fill="none" opacity="0.6"  markerEnd="url(#a-part)"/>
+      <path className="e-flow" d="M 632,288 V 304 L 640,312 V 336"   stroke="#6b7280" strokeWidth="1.2" fill="none" opacity="0.6"  markerEnd="url(#a-part)"/>
+      <path className="e-flow" d="M 1064,288 V 304 L 1072,312 V 336" stroke="#6b7280" strokeWidth="1.2" fill="none" opacity="0.6"  markerEnd="url(#a-part)"/>
+      {/* Reviewer → Release secondary (dashed): down→left at C2, left→down at 640 */}
+      <path d="M 1064,288 V 304 L 1056,312 H 648 L 640,320 V 336"
+        stroke="#6b7280" strokeWidth="1" strokeDasharray="4 4" fill="none" opacity="0.35" markerEnd="url(#a-part)"/>
 
       {/* ── Owns: Room → Work ── */}
-      {/* Provider → Traces (static, blocked) */}
-      <path d="M 192,432 V 480"              stroke="#6b7280" strokeWidth="1"   fill="none" opacity="0.45" markerEnd="url(#a-own)"/>
-      {/* Release → Patch (active, green flowing) */}
-      <path className="e-flow-slow" d="M 640,432 V 480"  stroke="#22c55e" strokeWidth="1.2" fill="none" opacity="0.7"  markerEnd="url(#a-own)"/>
-      {/* Release → Deploy (queued, static dashed) */}
-      <path d="M 688,432 V 448 H 840 V 480"  stroke="#6b7280" strokeWidth="1"   strokeDasharray="4 4" fill="none" opacity="0.4" markerEnd="url(#a-own)"/>
-      {/* Verify → Review (active, green flowing) */}
-      <path className="e-flow-slow" d="M 1072,432 V 480" stroke="#22c55e" strokeWidth="1.2" fill="none" opacity="0.65" markerEnd="url(#a-own)"/>
+      {/* Provider → Traces: down→left diagonal (8px jog) */}
+      <path d="M 192,432 V 448 L 184,456 V 480"
+        stroke="#6b7280" strokeWidth="1" fill="none" opacity="0.45" markerEnd="url(#a-own)"/>
+      {/* Release → Patch: down→left diagonal (8px jog) */}
+      <path className="e-flow-slow" d="M 640,432 V 448 L 632,456 V 480"
+        stroke="#22c55e" strokeWidth="1.2" fill="none" opacity="0.7" markerEnd="url(#a-own)"/>
+      {/* Release → Deploy: down→right at C3, right→down at 840 */}
+      <path d="M 688,432 V 448 L 696,456 H 832 L 840,464 V 480"
+        stroke="#6b7280" strokeWidth="1" strokeDasharray="4 4" fill="none" opacity="0.4" markerEnd="url(#a-own)"/>
+      {/* Verify → Review: down→left diagonal (8px jog) */}
+      <path className="e-flow-slow" d="M 1072,432 V 448 L 1064,456 V 480"
+        stroke="#22c55e" strokeWidth="1.2" fill="none" opacity="0.65" markerEnd="url(#a-own)"/>
 
-      {/* ── Approval gate: Room:Provider → Approval node (amber, pulsing) ── */}
-      <path className="e-throb-att" d="M 240,432 V 448 H 408 V 480" stroke="#d97706" strokeWidth="2" fill="none" opacity="0.9" markerEnd="url(#a-att)"/>
+      {/* ── Approval gate: Provider → Approval node (amber, pulsing) ── */}
+      {/* down→right at C3, right→down at 408 */}
+      <path className="e-throb-att"
+        d="M 240,432 V 448 L 248,456 H 400 L 408,464 V 480"
+        stroke="#d97706" strokeWidth="2" fill="none" opacity="0.9" markerEnd="url(#a-att)"/>
 
-      {/* ── Blocked-on: Approval → Work:Traces (red, pulsing) ── */}
-      <path className="e-throb-blk" d="M 320,528 H 272" stroke="#ef4444" strokeWidth="2" fill="none" opacity="0.9" markerEnd="url(#a-blk)"/>
+      {/* ── Blocked-on: Approval → Traces (red, pulsing) — straight horizontal ── */}
+      <path className="e-throb-blk" d="M 320,528 H 272"
+        stroke="#ef4444" strokeWidth="2" fill="none" opacity="0.9" markerEnd="url(#a-blk)"/>
 
-      {/* ── Assigned: Agent → Work (cyan, dashed flowing) ── */}
-      <path className="e-flow" d="M 96,240 H 80 V 480 H 96"  stroke="#0891b2" strokeWidth="1" strokeDasharray="6 5" fill="none" opacity="0.55" markerEnd="url(#a-assign)"/>
-      <path className="e-flow" d="M 720,240 V 480"           stroke="#0891b2" strokeWidth="1" strokeDasharray="6 5" fill="none" opacity="0.5"  markerEnd="url(#a-assign)"/>
+      {/* ── Assigned: Agent → Work via margin corridors (cyan, dashed flowing) ── */}
+      {/* OPS left→down at C1(60), down→right at work-traces(60→96) */}
+      <path className="e-flow"
+        d="M 96,240 H 68 L 60,248 V 520 L 68,528 H 96"
+        stroke="#0891b2" strokeWidth="1" strokeDasharray="6 5" fill="none" opacity="0.55" markerEnd="url(#a-assign)"/>
+      {/* Reviewer right→down at C1(1200), down→left at work-review(1200→1152) */}
+      <path className="e-flow"
+        d="M 1152,240 H 1192 L 1200,248 V 520 L 1192,528 H 1152"
+        stroke="#0891b2" strokeWidth="1" strokeDasharray="6 5" fill="none" opacity="0.5" markerEnd="url(#a-assign)"/>
 
       {/* ── Uses: Work → Tool/System (gray dotted, static) ── */}
-      <path d="M 184,576 V 624"                stroke="#9ca3af" strokeWidth="1" strokeDasharray="2 4" fill="none" opacity="0.5"  markerEnd="url(#a-uses)"/>
-      <path d="M 640,576 V 592 H 680 V 624"    stroke="#9ca3af" strokeWidth="1" strokeDasharray="2 4" fill="none" opacity="0.5"  markerEnd="url(#a-uses)"/>
-      <path d="M 840,576 V 608 H 1064 V 624"   stroke="#9ca3af" strokeWidth="1" strokeDasharray="3 4" fill="none" opacity="0.4"  markerEnd="url(#a-uses)"/>
+      <path d="M 184,576 V 624"
+        stroke="#9ca3af" strokeWidth="1" strokeDasharray="2 4" fill="none" opacity="0.5" markerEnd="url(#a-uses)"/>
+      {/* patch→git: down→right at C4, right→down at 680 */}
+      <path d="M 632,576 V 592 L 640,600 H 672 L 680,608 V 624"
+        stroke="#9ca3af" strokeWidth="1" strokeDasharray="2 4" fill="none" opacity="0.5" markerEnd="url(#a-uses)"/>
+      {/* deploy→k8s: down→right at C4, right→down at 1064 */}
+      <path d="M 840,576 V 592 L 848,600 H 1056 L 1064,608 V 624"
+        stroke="#9ca3af" strokeWidth="1" strokeDasharray="3 4" fill="none" opacity="0.4" markerEnd="url(#a-uses)"/>
     </svg>
   )
 }
