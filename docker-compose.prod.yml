@@ -1,0 +1,36 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: agent_cp
+      POSTGRES_USER: agent_cp
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?required}
+    volumes:
+      - /mnt/user/appdata/agent-cp/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "agent_cp"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    image: code.klsll.com/havartibard/agent-control-plane:latest
+    volumes:
+      - /mnt/user/appdata/agent-cp/codex:/root/.codex
+    environment:
+      DATABASE_URL: postgresql://agent_cp:${POSTGRES_PASSWORD}@postgres:5432/agent_cp
+      SECRET_ENCRYPTION_KEY: ${SECRET_ENCRYPTION_KEY:?required}
+      LANGGRAPH_API_URL: ${LANGGRAPH_API_URL:?required}
+      RACLETTE_API_URL: ${RACLETTE_API_URL:-http://192.168.20.169:9119}
+      RACLETTE_SESSION_TOKEN: ${RACLETTE_SESSION_TOKEN:-}
+      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:-}
+      SLACK_APP_TOKEN: ${SLACK_APP_TOKEN:-}
+      SLACK_CHANNEL_ID: ${SLACK_CHANNEL_ID:-C0AU0620ATX}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    ports:
+      - "3100:3100"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
