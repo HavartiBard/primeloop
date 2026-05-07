@@ -1,0 +1,16 @@
+services:
+  postgres-test:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: agent_cp_test
+      POSTGRES_USER: agent_cp
+      POSTGRES_PASSWORD: agent_cp_test
+    ports:
+      - "55432:5432"
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "agent_cp", "-d", "agent_cp_test"]
+      interval: 2s
+      timeout: 2s
+      retries: 15

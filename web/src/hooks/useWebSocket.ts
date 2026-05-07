@@ -8,7 +8,8 @@ export function useWebSocket(url: string) {
   const [connected, setConnected] = useState(false)
 
   useEffect(() => {
-    const ws = new WebSocket(url.startsWith('ws') ? url : `ws://${window.location.host}${url}`)
+    const scheme = window.location.protocol === 'https:' ? 'wss' : 'ws'
+    const ws = new WebSocket(url.startsWith('ws') ? url : `${scheme}://${window.location.host}${url}`)
 
     ws.onopen = () => setConnected(true)
     ws.onclose = () => setConnected(false)

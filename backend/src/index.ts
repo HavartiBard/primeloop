@@ -8,6 +8,7 @@ import { createSlackBot, notifyApprovalNeeded } from './slack/bot.js'
 import { insertEvent } from './events/store.js'
 import type { AgentEvent } from './events/types.js'
 import { startIntegration, stopIntegration } from './dispatch.js'
+import { startAuditScheduler } from './audits.js'
 
 const {
   DATABASE_URL = '',
@@ -49,6 +50,10 @@ function broadcast(event: AgentEvent): void {
 const agents = await listAgents(pool)
 for (const agent of agents) {
   startIntegration(agent, { pool, broadcast })
+}
+const auditTasks = await startAuditScheduler(pool)
+if (auditTasks.length > 0) {
+  console.log(`Started ${auditTasks.length} audit scheduler(s)`)
 }
 
 const app = createApp({

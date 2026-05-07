@@ -29,6 +29,10 @@ export interface RegistryAgent {
   name: string
   type: string
   provider_id?: string
+  runtime_family: string
+  execution_mode: string
+  endpoint?: string
+  capabilities: string[]
   host?: string
   container_name?: string
   ssh_user?: string
@@ -40,4 +44,173 @@ export interface RegistryAgent {
 export interface LifecycleResult {
   ok: boolean
   output: string
+}
+
+export interface WorkItem {
+  id: string
+  title: string
+  status: 'active' | 'blocked' | 'approval' | 'review' | 'deploy' | 'follow-up'
+  owner: string
+  lane: string
+  updated_at: string
+}
+
+export interface StatusUpdate {
+  id: string
+  text: string
+  created_at: string
+}
+
+export interface ChiefProfile {
+  name: string
+  persona: string
+  policy: string
+  preferences: string[]
+  recurringDuties: string[]
+  priorDecisions: string[]
+}
+
+export interface PermissionRule {
+  scope: string
+  mode: string
+  note: string
+}
+
+export interface AuditLoop {
+  id: string
+  name: string
+  cadence: string
+  lastRun: string
+  nextRun: string
+  purpose: string
+}
+
+export interface PortalState {
+  chief_profile: ChiefProfile
+  work_items: WorkItem[]
+  status_updates: StatusUpdate[]
+  permission_rules: PermissionRule[]
+  audit_loops: AuditLoop[]
+  updated_at?: string
+}
+
+export interface RuntimeChiefProfile {
+  id: string
+  name: string
+  persona: string
+  operating_policy: string
+  delegation_policy: Record<string, unknown>
+  default_provider_id?: string
+  created_at: string
+  updated_at: string
+}
+
+export interface RuntimeThread {
+  id: string
+  title: string
+  status: string
+  metadata: Record<string, unknown>
+  created_at: string
+  updated_at: string
+}
+
+export interface ThreadMessage {
+  id: string
+  thread_id: string
+  role: string
+  sender: string
+  content: string
+  metadata: Record<string, unknown>
+  created_at: string
+}
+
+export interface RuntimeWorkItem {
+  id: string
+  title: string
+  description?: string
+  status: string
+  priority: string
+  lane: string
+  owner_agent_id?: string
+  owner_label: string
+  thread_id?: string
+  parent_id?: string
+  blocked_by?: string
+  due_at?: string
+  metadata: Record<string, unknown>
+  created_at: string
+  updated_at: string
+}
+
+export interface RuntimeDelegation {
+  id: string
+  work_item_id?: string
+  from_agent_id?: string
+  to_agent_id?: string
+  status: string
+  capability: string
+  request: Record<string, unknown>
+  result: Record<string, unknown>
+  trace: unknown[]
+  created_at: string
+  updated_at: string
+  completed_at?: string
+}
+
+export interface RuntimeMemory {
+  id: string
+  category: string
+  content: string
+  source_thread_id?: string
+  metadata: Record<string, unknown>
+  created_at: string
+  updated_at: string
+}
+
+export interface RuntimeAuditLoop {
+  id: string
+  name: string
+  purpose: string
+  cadence_cron: string
+  enabled: boolean
+  config: Record<string, unknown>
+  last_run_at?: string
+  next_run_at?: string
+  created_at: string
+  updated_at: string
+}
+
+export interface RuntimeEvent {
+  id: string
+  event_type: string
+  actor: string
+  thread_id?: string
+  work_item_id?: string
+  delegation_id?: string
+  payload: Record<string, unknown>
+  created_at: string
+}
+
+export interface RuntimeOverview {
+  chief: RuntimeChiefProfile
+  counts: Record<string, unknown>
+  recent_events: RuntimeEvent[]
+}
+
+export interface ChiefRoute {
+  capability: string
+  lane: string
+  priority: string
+  status: string
+  requiresApproval: boolean
+  reason: string
+}
+
+export interface ChiefMessageResult {
+  user_message: ThreadMessage
+  chief_message: ThreadMessage
+  work_item: RuntimeWorkItem
+  delegation?: RuntimeDelegation
+  selected_agent?: RegistryAgent
+  route: ChiefRoute
 }

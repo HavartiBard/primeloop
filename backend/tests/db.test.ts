@@ -13,7 +13,30 @@ describe('db schema', () => {
   })
 
   afterAll(async () => {
-    await pool.query('DROP TABLE IF EXISTS agents, providers, agent_heartbeat, approvals, event_log')
+    await pool.query(`
+      DROP TABLE IF EXISTS
+        runtime_events,
+        artifacts,
+        audit_runs,
+        audit_loops,
+        tool_invocations,
+        permission_rules,
+        tool_servers,
+        agent_runtime_configs,
+        delegations,
+        work_items,
+        memories,
+        thread_messages,
+        threads,
+        chief_profiles,
+        portal_state,
+        agents,
+        providers,
+        agent_heartbeat,
+        approvals,
+        event_log
+      CASCADE
+    `)
     await pool.end()
   })
 
@@ -71,9 +94,51 @@ describe('db schema', () => {
     expect(cols).toEqual(
       expect.arrayContaining([
         'id', 'name', 'type', 'provider_id', 'host',
+        'runtime_family', 'execution_mode', 'endpoint', 'capabilities',
         'container_name', 'ssh_user', 'config', 'enabled', 'created_at',
       ])
     )
+  })
+
+  it('creates portal_state table with correct columns', async () => {
+    const res = await pool.query(
+      `SELECT column_name FROM information_schema.columns
+       WHERE table_name = 'portal_state' ORDER BY column_name`
+    )
+    const cols = res.rows.map((r: { column_name: string }) => r.column_name)
+    expect(cols).toEqual(
+      expect.arrayContaining([
+        'singleton_key', 'chief_profile', 'work_items', 'status_updates',
+        'permission_rules', 'audit_loops', 'updated_at',
+      ])
+    )
+  })
+
+  it('creates runtime coordination tables', async () => {
+    const expected = [
+      'chief_profiles',
+      'threads',
+      'thread_messages',
+      'memories',
+      'work_items',
+      'delegations',
+      'agent_runtime_configs',
+      'tool_servers',
+      'tool_invocations',
+      'permission_rules',
+      'audit_loops',
+      'audit_runs',
+      'artifacts',
+      'runtime_events',
+    ]
+    const res = await pool.query(
+      `SELECT table_name FROM information_schema.tables
+       WHERE table_schema = 'public' AND table_name = ANY($1)
+       ORDER BY table_name`,
+      [expected]
+    )
+    const names = res.rows.map((r: { table_name: string }) => r.table_name)
+    expect(names).toEqual(expect.arrayContaining(expected))
   })
 })
 

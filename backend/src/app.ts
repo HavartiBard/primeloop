@@ -1,10 +1,15 @@
 import express from 'express'
+import path from 'path'
+import { fileURLToPath } from 'url'
 import type pg from 'pg'
 import { insertEvent, listEvents } from './events/store.js'
 import type { AgentEvent } from './events/types.js'
 import { createLanggraphRouter } from './agents/langgraph.js'
 import { createProvidersRouter } from './routes/providers.js'
 import { createAgentsRouter } from './routes/agents.js'
+import { createPortalRouter } from './routes/portal.js'
+import { createRuntimeRouter } from './routes/runtime.js'
+import { createApprovalsRouter } from './routes/approvals.js'
 import type { RegistryAgent } from './registry.js'
 import type WebSocket from 'ws'
 
@@ -77,6 +82,16 @@ export function createApp(deps: AppDeps): express.Express {
     onAgentCreated: deps.onAgentCreated,
     onAgentDeleted: deps.onAgentDeleted,
   }))
+
+  app.use('/api/portal', createPortalRouter({ pool: deps.pool }))
+  app.use('/api/approvals', createApprovalsRouter({ pool: deps.pool }))
+  app.use('/api', createRuntimeRouter({ pool: deps.pool }))
+
+  // Serve React SPA — must come after all API routes
+  const __dirname = path.dirname(fileURLToPath(import.meta.url))
+  const uiDir = path.join(__dirname, '..', 'public')
+  app.use(express.static(uiDir))
+  app.get('*', (_req, res) => res.sendFile(path.join(uiDir, 'index.html')))
 
   return app
 }

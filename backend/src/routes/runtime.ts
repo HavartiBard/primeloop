@@ -1,0 +1,187 @@
+import { Router } from 'express'
+import type pg from 'pg'
+import { runAuditLoop } from '../audits.js'
+import { handleChiefMessage } from '../coordinator.js'
+import { runDelegation } from '../delegation-runner.js'
+import {
+  appendThreadMessage,
+  createDelegation,
+  createMemory,
+  createThread,
+  createWorkItem,
+  getRuntimeOverview,
+  listAuditLoops,
+  listDelegations,
+  listMemories,
+  listRuntimeEvents,
+  listThreadMessages,
+  listThreads,
+  listWorkItems,
+  updateWorkItem,
+} from '../runtime.js'
+
+export function createRuntimeRouter({ pool }: { pool: pg.Pool }) {
+  const router = Router()
+
+  router.get('/runtime/overview', async (_req, res) => {
+    try {
+      res.json(await getRuntimeOverview(pool))
+    } catch {
+      res.status(500).json({ error: 'internal error' })
+    }
+  })
+
+  router.get('/runtime/events', async (req, res) => {
+    const limit = req.query.limit ? Number(req.query.limit) : 100
+    if (Number.isNaN(limit)) return res.status(400).json({ error: 'limit must be a number' })
+    try {
+      res.json(await listRuntimeEvents(pool, limit))
+    } catch {
+      res.status(500).json({ error: 'internal error' })
+    }
+  })
+
+  router.get('/threads', async (_req, res) => {
+    try {
+      res.json(await listThreads(pool))
+    } catch {
+      res.status(500).json({ error: 'internal error' })
+    }
+  })
+
+  router.post('/threads', async (req, res) => {
+    const { title, status, metadata } = req.body ?? {}
+    if (!title) return res.status(400).json({ error: 'title required' })
+    try {
+      res.status(201).json(await createThread(pool, { title, status, metadata }))
+    } catch {
+      res.status(500).json({ error: 'internal error' })
+    }
+  })
+
+  router.get('/threads/:id/messages', async (req, res) => {
+    try {
+      res.json(await listThreadMessages(pool, req.params.id))
+    } catch {
+      res.status(500).json({ error: 'internal error' })
+    }
+  })
+
+  router.post('/threads/:id/messages', async (req, res) => {
+    const { role, sender, content, metadata } = req.body ?? {}
+    if (!role || !sender || !content) {
+      return res.status(400).json({ error: 'role, sender, content required' })
+    }
+    try {
+      res.status(201).json(await appendThreadMessage(pool, req.params.id, { role, sender, content, metadata }))
+    } catch {
+      res.status(500).json({ error: 'internal error' })
+    }
+  })
+
+  router.post('/threads/:id/chief/messages', async (req, res) => {
+    const { content, sender } = req.body ?? {}
+    if (!content) return res.status(400).json({ error: 'content required' })
+    try {
+      res.status(201).json(await handleChiefMessage(pool, req.params.id, content, sender ?? 'james'))
+    } catch {
+      res.status(500).json({ error: 'internal error' })
+    }
+  })
+
+  router.get('/work-items', async (req, res) => {
+    const status = typeof req.query.status === 'string' ? req.query.status : undefined
+    try {
+      res.json(await listWorkItems(pool, status))
+    } catch {
+      res.status(500).json({ error: 'internal error' })
+    }
+  })
+
+  router.post('/work-items', async (req, res) => {
+    const { title } = req.body ?? {}
+    if (!title) return res.status(400).json({ error: 'title required' })
+    try {
+      res.status(201).json(await createWorkItem(pool, req.body))
+    } catch {
+      res.status(500).json({ error: 'internal error' })
+    }
+  })
+
+  router.put('/work-items/:id', async (req, res) => {
+    try {
+      const item = await updateWorkItem(pool, req.params.id, req.body ?? {})
+      if (!item) return res.status(404).json({ error: 'work item not found' })
+      res.json(item)
+    } catch {
+      res.status(500).json({ error: 'internal error' })
+    }
+  })
+
+  router.get('/delegations', async (req, res) => {
+    const status = typeof req.query.status === 'string' ? req.query.status : undefined
+    try {
+      res.json(await listDelegations(pool, status))
+    } catch {
+      res.status(500).json({ error: 'internal error' })
+    }
+  })
+
+  router.post('/delegations', async (req, res) => {
+    const { capability } = req.body ?? {}
+    if (!capability) return res.status(400).json({ error: 'capability required' })
+    try {
+      res.status(201).json(await createDelegation(pool, req.body))
+    } catch {
+      res.status(500).json({ error: 'internal error' })
+    }
+  })
+
+  router.post('/delegations/:id/run', async (req, res) => {
+    try {
+      res.status(202).json(await runDelegation(pool, req.params.id))
+    } catch (err) {
+      if ((err as Error).message === 'delegation not found') {
+        return res.status(404).json({ error: 'delegation not found' })
+      }
+      res.status(500).json({ error: 'internal error' })
+    }
+  })
+
+  router.get('/memory', async (req, res) => {
+    const category = typeof req.query.category === 'string' ? req.query.category : undefined
+    try {
+      res.json(await listMemories(pool, category))
+    } catch {
+      res.status(500).json({ error: 'internal error' })
+    }
+  })
+
+  router.post('/memory', async (req, res) => {
+    const { category, content } = req.body ?? {}
+    if (!category || !content) return res.status(400).json({ error: 'category and content required' })
+    try {
+      res.status(201).json(await createMemory(pool, req.body))
+    } catch {
+      res.status(500).json({ error: 'internal error' })
+    }
+  })
+
+  router.get('/audit-loops', async (_req, res) => {
+    try {
+      res.json(await listAuditLoops(pool))
+    } catch {
+      res.status(500).json({ error: 'internal error' })
+    }
+  })
+
+  router.post('/audit-loops/:id/run', async (req, res) => {
+    try {
+      res.status(201).json(await runAuditLoop(pool, req.params.id))
+    } catch {
+      res.status(500).json({ error: 'internal error' })
+    }
+  })
+
+  return router
+}
