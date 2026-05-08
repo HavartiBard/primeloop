@@ -1,6 +1,7 @@
 import type pg from 'pg'
 
 export interface LoopWarning {
+  id: string
   agent_id: string
   kind: 'repeated-failure' | 'prompt-loop' | 'stall-retry' | 'approval-churn'
   severity: 'info' | 'warn' | 'error'
@@ -9,15 +10,53 @@ export interface LoopWarning {
   created_at: string
 }
 
+export interface LoopWarningDrilldownDelegation extends DelegationRecord {
+  work_item_id?: string
+  created_at: string
+  completed_at?: string
+  from_agent_name?: string
+  to_agent_name?: string
+}
+
+export interface LoopWarningDrilldownWorkItem {
+  id: string
+  title: string
+  status: string
+  priority: string
+  lane: string
+  owner_agent_id?: string
+  owner_label: string
+  blocked_by?: string
+  updated_at: string
+}
+
+export interface LoopWarningDrilldownApproval extends ApprovalRecord {}
+
+export interface LoopWarningDrilldownEvent extends RuntimeEventRecord {
+  actor: string
+  work_item_id?: string
+}
+
+export interface LoopWarningDrilldown {
+  warning: LoopWarning
+  delegations: LoopWarningDrilldownDelegation[]
+  work_items: LoopWarningDrilldownWorkItem[]
+  approvals: LoopWarningDrilldownApproval[]
+  events: LoopWarningDrilldownEvent[]
+}
+
 interface DelegationRecord {
   id: string
+  work_item_id?: string
   from_agent_id?: string
   to_agent_id?: string
   capability: string
   status: string
   request: Record<string, unknown>
   result: Record<string, unknown>
+  created_at: string
   updated_at: string
+  completed_at?: string
 }
 
 interface ApprovalRecord {
@@ -31,9 +70,59 @@ interface ApprovalRecord {
 interface RuntimeEventRecord {
   id: string
   event_type: string
+  actor: string
+  work_item_id?: string
   delegation_id?: string
   payload: Record<string, unknown>
   created_at: string
+}
+
+interface AgentNameRecord {
+  id: string
+  name: string
+}
+
+interface WorkItemRecord {
+  id: string
+  title: string
+  status: string
+  priority: string
+  lane: string
+  owner_agent_id?: string
+  owner_label: string
+  blocked_by?: string
+  updated_at: string
+}
+
+function warningFingerprint(kind: LoopWarning['kind'], createdAt: string, evidence: Record<string, unknown>): string {
+  const parts = [kind, createdAt]
+  const delegationIds = Array.isArray(evidence['delegation_ids']) ? evidence['delegation_ids'] : []
+  const approvalIds = Array.isArray(evidence['approval_ids']) ? evidence['approval_ids'] : []
+  const delegationId = typeof evidence['delegation_id'] === 'string' ? evidence['delegation_id'] : ''
+  const capability = typeof evidence['capability'] === 'string' ? evidence['capability'] : ''
+  const prompt = typeof evidence['prompt'] === 'string' ? evidence['prompt'] : ''
+  const action = typeof evidence['action'] === 'string' ? evidence['action'] : ''
+  parts.push(delegationIds.map(String).join(','))
+  parts.push(approvalIds.map(String).join(','))
+  parts.push(delegationId)
+  parts.push(capability)
+  parts.push(prompt)
+  parts.push(action)
+
+  let hash = 0
+  const input = parts.join('|')
+  for (let index = 0; index < input.length; index += 1) {
+    hash = ((hash << 5) - hash) + input.charCodeAt(index)
+    hash |= 0
+  }
+  return `loop-${Math.abs(hash).toString(36)}`
+}
+
+function withWarningId(warning: Omit<LoopWarning, 'id'>): LoopWarning {
+  return {
+    ...warning,
+    id: warningFingerprint(warning.kind, warning.created_at, warning.evidence),
+  }
 }
 
 function normalizePrompt(request: Record<string, unknown>): string {
@@ -72,7 +161,7 @@ export async function detectLoopWarnings(
 
   const [delegationRes, approvalRes, eventRes] = await Promise.all([
     pool.query<DelegationRecord>(
-      `SELECT id, from_agent_id, to_agent_id, capability, status, request, result, updated_at::text
+      `SELECT id, work_item_id, from_agent_id, to_agent_id, capability, status, request, result, created_at::text, updated_at::text, completed_at::text
        FROM delegations
        WHERE from_agent_id = $1 OR to_agent_id = $1
        ORDER BY updated_at DESC
@@ -93,7 +182,7 @@ export async function detectLoopWarnings(
       [agentId, limit],
     ),
     pool.query<RuntimeEventRecord>(
-      `SELECT id, event_type, delegation_id, payload, created_at::text
+      `SELECT id, event_type, actor, work_item_id, delegation_id, payload, created_at::text
        FROM runtime_events
        WHERE delegation_id IN (
          SELECT id
@@ -130,6 +219,7 @@ export async function detectLoopWarnings(
   for (const [capability, failures] of failuresByCapability.entries()) {
     if (failures.length >= 2) {
       warnings.push({
+        id: '',
         agent_id: agentId,
         kind: 'repeated-failure',
         severity: failures.length >= 3 ? 'error' : 'warn',
@@ -148,6 +238,7 @@ export async function detectLoopWarnings(
     if (items.length >= 2) {
       const [capability, prompt] = signature.split('::', 2)
       warnings.push({
+        id: '',
         agent_id: agentId,
         kind: 'prompt-loop',
         severity: items.length >= 3 ? 'error' : 'warn',
@@ -176,6 +267,7 @@ export async function detectLoopWarnings(
     const deltas = related.filter((event) => event.event_type === 'adapter.message.part.delta')
     if (retries.length >= 2 && deltas.length === 0) {
       warnings.push({
+        id: '',
         agent_id: agentId,
         kind: 'stall-retry',
         severity: 'warn',
@@ -197,6 +289,7 @@ export async function detectLoopWarnings(
   for (const [action, approvals] of approvalsByAction.entries()) {
     if (approvals.length >= 2) {
       warnings.push({
+        id: '',
         agent_id: agentId,
         kind: 'approval-churn',
         severity: approvals.some((item) => item.status === 'denied') ? 'warn' : 'info',
@@ -204,6 +297,7 @@ export async function detectLoopWarnings(
         evidence: {
           action,
           approval_ids: approvals.map((item) => item.approval_id),
+          run_ids: approvals.map((item) => item.run_id),
           statuses: approvals.map((item) => item.status),
         },
         created_at: approvals[0]?.created_at ?? new Date().toISOString(),
@@ -214,4 +308,117 @@ export async function detectLoopWarnings(
   return warnings
     .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
     .slice(0, limit)
+    .map((warning) => withWarningId({
+      agent_id: warning.agent_id,
+      kind: warning.kind,
+      severity: warning.severity,
+      summary: warning.summary,
+      evidence: warning.evidence,
+      created_at: warning.created_at,
+    }))
+}
+
+function uniqueStrings(values: Array<string | undefined>): string[] {
+  return [...new Set(values.filter((value): value is string => Boolean(value)))]
+}
+
+export async function getLoopWarningDrilldown(
+  pool: pg.Pool,
+  agentId: string,
+  warningId: string,
+): Promise<LoopWarningDrilldown | null> {
+  const warnings = await detectLoopWarnings(pool, agentId, { limit: 200 })
+  const warning = warnings.find((item) => item.id === warningId)
+  if (!warning) return null
+
+  const evidence = warning.evidence
+  const delegationIds = uniqueStrings([
+    ...(Array.isArray(evidence['delegation_ids']) ? evidence['delegation_ids'].map(String) : []),
+    typeof evidence['delegation_id'] === 'string' ? evidence['delegation_id'] : undefined,
+    ...(Array.isArray(evidence['run_ids']) ? evidence['run_ids'].map(String) : []),
+  ])
+  const approvalIds = uniqueStrings(
+    Array.isArray(evidence['approval_ids']) ? evidence['approval_ids'].map(String) : [],
+  )
+
+  const [delegationRes, approvalRes, eventRes] = await Promise.all([
+    delegationIds.length > 0
+      ? pool.query<DelegationRecord>(
+          `SELECT id, work_item_id, from_agent_id, to_agent_id, capability, status, request, result, created_at::text, updated_at::text, completed_at::text
+           FROM delegations
+           WHERE id::text = ANY($1::text[])
+           ORDER BY updated_at DESC`,
+          [delegationIds],
+        )
+      : Promise.resolve({ rows: [] as DelegationRecord[] }),
+    approvalIds.length > 0
+      ? pool.query<ApprovalRecord>(
+          `SELECT approval_id, run_id, action, status, created_at::text
+           FROM approvals
+           WHERE approval_id = ANY($1::text[])
+           ORDER BY created_at DESC`,
+          [approvalIds],
+        )
+      : delegationIds.length > 0
+        ? pool.query<ApprovalRecord>(
+            `SELECT approval_id, run_id, action, status, created_at::text
+             FROM approvals
+             WHERE run_id::text = ANY($1::text[])
+             ORDER BY created_at DESC`,
+            [delegationIds],
+          )
+        : Promise.resolve({ rows: [] as ApprovalRecord[] }),
+    delegationIds.length > 0
+      ? pool.query<RuntimeEventRecord>(
+          `SELECT id, event_type, actor, work_item_id, delegation_id, payload, created_at::text
+           FROM runtime_events
+           WHERE delegation_id::text = ANY($1::text[])
+           ORDER BY created_at DESC
+           LIMIT 40`,
+          [delegationIds],
+        )
+      : Promise.resolve({ rows: [] as RuntimeEventRecord[] }),
+  ])
+
+  const workItemIds = uniqueStrings([
+    ...delegationRes.rows.map((item) => item.work_item_id),
+    ...eventRes.rows.map((item) => item.work_item_id),
+  ])
+  const agentIds = uniqueStrings([
+    ...delegationRes.rows.map((item) => item.from_agent_id),
+    ...delegationRes.rows.map((item) => item.to_agent_id),
+  ])
+
+  const [workItemRes, agentRes] = await Promise.all([
+    workItemIds.length > 0
+      ? pool.query<WorkItemRecord>(
+          `SELECT id, title, status, priority, lane, owner_agent_id, owner_label, blocked_by, updated_at::text
+           FROM work_items
+           WHERE id::text = ANY($1::text[])
+           ORDER BY updated_at DESC`,
+          [workItemIds],
+        )
+      : Promise.resolve({ rows: [] as WorkItemRecord[] }),
+    agentIds.length > 0
+      ? pool.query<AgentNameRecord>(
+          `SELECT id::text, name
+           FROM agents
+           WHERE id::text = ANY($1::text[])`,
+          [agentIds],
+        )
+      : Promise.resolve({ rows: [] as AgentNameRecord[] }),
+  ])
+
+  const agentNames = new Map(agentRes.rows.map((item) => [item.id, item.name]))
+  return {
+    warning,
+    delegations: delegationRes.rows.map((item) => ({
+      ...item,
+      from_agent_name: item.from_agent_id ? agentNames.get(item.from_agent_id) : undefined,
+      to_agent_name: item.to_agent_id ? agentNames.get(item.to_agent_id) : undefined,
+    })),
+    work_items: workItemRes.rows,
+    approvals: approvalRes.rows,
+    events: eventRes.rows,
+  }
 }

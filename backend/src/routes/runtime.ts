@@ -9,7 +9,7 @@ import {
   listFleetSnapshots,
   listPatterns,
 } from '../fleet-intelligence.js'
-import { detectLoopWarnings } from '../loop-detector.js'
+import { detectLoopWarnings, getLoopWarningDrilldown } from '../loop-detector.js'
 import { listLessons, listMemoryTimeline, listSnapshots } from '../memory-service.js'
 import { callControlPlaneTool, createPrimePortalContext } from '../mcp/service.js'
 import {
@@ -237,6 +237,16 @@ export function createRuntimeRouter({ pool }: { pool: pg.Pool }) {
     if (limit != null && Number.isNaN(limit)) return res.status(400).json({ error: 'limit must be a number' })
     try {
       res.json(await detectLoopWarnings(pool, req.params.id, { limit }))
+    } catch {
+      res.status(500).json({ error: 'internal error' })
+    }
+  })
+
+  router.get('/agents/:id/loop-warnings/:warningId', async (req, res) => {
+    try {
+      const drilldown = await getLoopWarningDrilldown(pool, req.params.id, req.params.warningId)
+      if (!drilldown) return res.status(404).json({ error: 'loop warning not found' })
+      res.json(drilldown)
     } catch {
       res.status(500).json({ error: 'internal error' })
     }

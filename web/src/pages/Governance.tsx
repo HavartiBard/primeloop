@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
+  fetchLoopWarningDrilldown,
   fetchFleetLoopWarnings,
   fetchFleetLearnings,
   fetchFleetPatterns,
@@ -79,6 +80,7 @@ export function Governance() {
   const queryClient = useQueryClient()
   const { approvals } = useApprovals()
   const { agents } = useAgentRegistry()
+  const [selectedLoopWarning, setSelectedLoopWarning] = useState<{ agentId: string; warningId: string } | null>(null)
   const [patternDraft, setPatternDraft] = useState({
     type: 'best_practice',
     severity: 'info',
@@ -120,6 +122,12 @@ export function Governance() {
     queryFn: () => fetchFleetSnapshots({ limit: 8 }),
     refetchInterval: 30_000,
   })
+  const { data: loopWarningDrilldown } = useQuery({
+    queryKey: ['loop-warning-drilldown', selectedLoopWarning?.agentId, selectedLoopWarning?.warningId],
+    queryFn: () => fetchLoopWarningDrilldown(selectedLoopWarning!.agentId, selectedLoopWarning!.warningId),
+    enabled: Boolean(selectedLoopWarning),
+    refetchInterval: 30_000,
+  })
   const publishPatternMutation = useMutation({
     mutationFn: publishFleetPattern,
     onSuccess: () => {
@@ -156,6 +164,7 @@ export function Governance() {
 
   const pendingApprovals = approvals.filter((approval) => approval.status === 'pending')
   const primeAgents = agents.filter((agent) => agent.capabilities.includes('prime'))
+  const selectedWarningKey = selectedLoopWarning ? `${selectedLoopWarning.agentId}:${selectedLoopWarning.warningId}` : null
 
   return (
     <div className="min-h-screen px-4 py-4 sm:px-6 lg:px-8">
@@ -354,6 +363,105 @@ export function Governance() {
                     </div>
                   </div>
                   <div className="mt-2 text-xs text-[var(--muted)]">{warning.agent_name} · {warning.kind}</div>
+                  <div className="mt-3 flex items-center justify-between gap-3">
+                    <div className="text-xs text-[var(--muted)]">{formatTime(warning.created_at)}</div>
+                    <button
+                      onClick={() => setSelectedLoopWarning((current) =>
+                        current?.agentId === warning.agent_id && current.warningId === warning.id
+                          ? null
+                          : { agentId: warning.agent_id, warningId: warning.id })}
+                      className="rounded-full border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-1.5 text-xs text-[var(--text)] transition hover:bg-[var(--panel-subtle)]"
+                    >
+                      {selectedWarningKey === `${warning.agent_id}:${warning.id}` ? 'Hide Lineage' : 'Inspect Lineage'}
+                    </button>
+                  </div>
+                  {selectedWarningKey === `${warning.agent_id}:${warning.id}` && loopWarningDrilldown ? (
+                    <div className="mt-4 space-y-3 rounded-[1rem] border border-[var(--border-soft)] bg-[var(--panel)] p-4">
+                      <div>
+                        <div className="text-[11px] uppercase tracking-[0.22em] text-[var(--muted)]">Delegations</div>
+                        <div className="mt-2 space-y-2">
+                          {loopWarningDrilldown.delegations.map((delegation) => (
+                            <div key={delegation.id} className="rounded-[0.9rem] border border-[var(--border-soft)] bg-[var(--panel-subtle)] p-3">
+                              <div className="flex items-center justify-between gap-3">
+                                <div className="text-sm font-medium text-[var(--text)]">{delegation.capability}</div>
+                                <div className="rounded-full border border-[var(--border-soft)] px-2 py-0.5 text-[11px] text-[var(--muted)]">{delegation.status}</div>
+                              </div>
+                              <div className="mt-1 text-xs text-[var(--muted)]">
+                                {(delegation.from_agent_name ?? delegation.from_agent_id ?? 'unknown')} {'->'} {(delegation.to_agent_name ?? delegation.to_agent_id ?? 'unknown')}
+                              </div>
+                              <div className="mt-2 text-xs text-[var(--muted)]">
+                                {typeof delegation.request.content === 'string'
+                                  ? delegation.request.content
+                                  : typeof delegation.request.prompt === 'string'
+                                    ? delegation.request.prompt
+                                    : `Delegation ${delegation.id}`}
+                              </div>
+                            </div>
+                          ))}
+                          {loopWarningDrilldown.delegations.length === 0 && (
+                            <div className="text-xs text-[var(--muted)]">No delegation lineage resolved.</div>
+                          )}
+                        </div>
+                      </div>
+
+                      <div>
+                        <div className="text-[11px] uppercase tracking-[0.22em] text-[var(--muted)]">Work Items</div>
+                        <div className="mt-2 space-y-2">
+                          {loopWarningDrilldown.work_items.map((item) => (
+                            <div key={item.id} className="rounded-[0.9rem] border border-[var(--border-soft)] bg-[var(--panel-subtle)] p-3">
+                              <div className="flex items-center justify-between gap-3">
+                                <div className="text-sm font-medium text-[var(--text)]">{item.title}</div>
+                                <div className="rounded-full border border-[var(--border-soft)] px-2 py-0.5 text-[11px] text-[var(--muted)]">{item.status}</div>
+                              </div>
+                              <div className="mt-1 text-xs text-[var(--muted)]">{item.lane} · {item.priority} · owner {item.owner_label}</div>
+                              {item.blocked_by && <div className="mt-1 text-xs text-[var(--muted)]">Blocked by {item.blocked_by}</div>}
+                            </div>
+                          ))}
+                          {loopWarningDrilldown.work_items.length === 0 && (
+                            <div className="text-xs text-[var(--muted)]">No work items attached to this warning.</div>
+                          )}
+                        </div>
+                      </div>
+
+                      <div>
+                        <div className="text-[11px] uppercase tracking-[0.22em] text-[var(--muted)]">Approvals</div>
+                        <div className="mt-2 space-y-2">
+                          {loopWarningDrilldown.approvals.map((approval) => (
+                            <div key={approval.approval_id} className="rounded-[0.9rem] border border-[var(--border-soft)] bg-[var(--panel-subtle)] p-3">
+                              <div className="flex items-center justify-between gap-3">
+                                <div className="text-sm font-medium text-[var(--text)]">{approval.action}</div>
+                                <div className="rounded-full border border-[var(--border-soft)] px-2 py-0.5 text-[11px] text-[var(--muted)]">{approval.status}</div>
+                              </div>
+                              <div className="mt-1 text-xs text-[var(--muted)]">Run {approval.run_id} · {formatTime(approval.created_at)}</div>
+                            </div>
+                          ))}
+                          {loopWarningDrilldown.approvals.length === 0 && (
+                            <div className="text-xs text-[var(--muted)]">No approval churn attached to this warning.</div>
+                          )}
+                        </div>
+                      </div>
+
+                      <div>
+                        <div className="text-[11px] uppercase tracking-[0.22em] text-[var(--muted)]">Recent Runtime Events</div>
+                        <div className="mt-2 space-y-2">
+                          {loopWarningDrilldown.events.map((event) => (
+                            <div key={event.id} className="rounded-[0.9rem] border border-[var(--border-soft)] bg-[var(--panel-subtle)] p-3">
+                              <div className="flex items-center justify-between gap-3">
+                                <div className="text-sm font-medium text-[var(--text)]">{event.event_type}</div>
+                                <div className="text-[11px] text-[var(--muted)]">{formatTime(event.created_at)}</div>
+                              </div>
+                              <div className="mt-1 text-xs text-[var(--muted)]">Actor {event.actor}</div>
+                              {event.delegation_id && <div className="mt-1 text-xs text-[var(--muted)]">Delegation {event.delegation_id}</div>}
+                              {event.work_item_id && <div className="mt-1 text-xs text-[var(--muted)]">Work item {event.work_item_id}</div>}
+                            </div>
+                          ))}
+                          {loopWarningDrilldown.events.length === 0 && (
+                            <div className="text-xs text-[var(--muted)]">No runtime events captured for this warning.</div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
               ))}
               {loopWarnings.length === 0 && (

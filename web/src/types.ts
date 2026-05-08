@@ -232,6 +232,7 @@ export interface AgentLessonRecord {
 }
 
 export interface LoopWarning {
+  id: string
   agent_id: string
   kind: 'repeated-failure' | 'prompt-loop' | 'stall-retry' | 'approval-churn'
   severity: 'info' | 'warn' | 'error'
@@ -242,6 +243,42 @@ export interface LoopWarning {
 
 export interface FleetLoopWarning extends LoopWarning {
   agent_name: string
+}
+
+export interface LoopWarningDrilldownDelegation {
+  id: string
+  work_item_id?: string
+  from_agent_id?: string
+  to_agent_id?: string
+  capability: string
+  status: string
+  request: Record<string, unknown>
+  result: Record<string, unknown>
+  created_at: string
+  updated_at: string
+  completed_at?: string
+  from_agent_name?: string
+  to_agent_name?: string
+}
+
+export interface LoopWarningDrilldownWorkItem {
+  id: string
+  title: string
+  status: string
+  priority: string
+  lane: string
+  owner_agent_id?: string
+  owner_label: string
+  blocked_by?: string
+  updated_at: string
+}
+
+export interface LoopWarningDrilldown {
+  warning: LoopWarning
+  delegations: LoopWarningDrilldownDelegation[]
+  work_items: LoopWarningDrilldownWorkItem[]
+  approvals: Approval[]
+  events: RuntimeEvent[]
 }
 
 export interface AgentSnapshot {

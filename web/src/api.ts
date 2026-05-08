@@ -16,6 +16,7 @@ import type {
   AgentMemoryRecord,
   AgentLessonRecord,
   LoopWarning,
+  LoopWarningDrilldown,
   FleetLoopWarning,
   AgentSnapshot,
   FleetSnapshot,
@@ -370,6 +371,12 @@ export async function fetchAgentLoopWarnings(agentId: string, limit = 20): Promi
   const res = await fetch(`${API_BASE}/agents/${agentId}/loop-warnings?limit=${limit}`)
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   return res.json() as Promise<LoopWarning[]>
+}
+
+export async function fetchLoopWarningDrilldown(agentId: string, warningId: string): Promise<LoopWarningDrilldown> {
+  const res = await fetch(`${API_BASE}/agents/${agentId}/loop-warnings/${warningId}`)
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json() as Promise<LoopWarningDrilldown>
 }
 
 export async function fetchAgentMemories(agentId: string, limit = 20): Promise<AgentMemoryRecord[]> {
