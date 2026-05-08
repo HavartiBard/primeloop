@@ -21,6 +21,7 @@ export interface Provider {
   type: string
   base_url: string
   api_key?: string
+  model?: string
   created_at: string
 }
 
@@ -39,6 +40,10 @@ export interface RegistryAgent {
   config: Record<string, unknown>
   enabled: boolean
   created_at: string
+  local_port?: number
+  worktree_path?: string
+  system_prompt?: string
+  soul?: string
 }
 
 export interface LifecycleResult {
@@ -204,6 +209,26 @@ export interface ChiefRoute {
   status: string
   requiresApproval: boolean
   reason: string
+}
+
+export interface CodexAuthStatus {
+  status: 'chatgpt' | 'api_key' | 'unauthenticated' | 'unknown'
+  mode: string | null
+  email: string | null
+  raw: string
+}
+
+export interface CodexDeviceAuthResult {
+  session_id: string
+  url: string
+  code: string | null
+}
+
+export interface CodexDeviceAuthPoll {
+  status: 'pending' | 'complete' | 'error'
+  url?: string
+  code?: string | null
+  error?: string
 }
 
 export interface ChiefMessageResult {

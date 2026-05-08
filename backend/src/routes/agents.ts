@@ -38,6 +38,10 @@ export function createAgentsRouter(deps: AgentsRouterDeps) {
       host,
       container_name,
       ssh_user,
+      local_port,
+      worktree_path,
+      system_prompt,
+      soul,
       config,
       enabled,
     } = req.body
@@ -54,6 +58,10 @@ export function createAgentsRouter(deps: AgentsRouterDeps) {
         host,
         container_name,
         ssh_user,
+        local_port,
+        worktree_path,
+        system_prompt,
+        soul,
         config: config ?? {},
         enabled: enabled ?? true,
       })

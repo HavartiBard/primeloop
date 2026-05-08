@@ -32,6 +32,13 @@ describe('db schema', () => {
         portal_state,
         agents,
         providers,
+        agent_lessons,
+        agent_memories,
+        agent_pattern_assignments,
+        agent_patterns,
+        agent_mcp_assignments,
+        mcp_servers,
+        agent_tokens,
         agent_heartbeat,
         approvals,
         event_log
@@ -81,7 +88,7 @@ describe('db schema', () => {
     )
     const cols = res.rows.map((r: { column_name: string }) => r.column_name)
     expect(cols).toEqual(
-      expect.arrayContaining(['id', 'name', 'type', 'base_url', 'api_key', 'created_at'])
+      expect.arrayContaining(['id', 'name', 'type', 'base_url', 'api_key', 'model', 'created_at'])
     )
   })
 
@@ -96,6 +103,7 @@ describe('db schema', () => {
         'id', 'name', 'type', 'provider_id', 'host',
         'runtime_family', 'execution_mode', 'endpoint', 'capabilities',
         'container_name', 'ssh_user', 'config', 'enabled', 'created_at',
+        'local_port', 'worktree_path', 'system_prompt', 'soul',
       ])
     )
   })
@@ -130,6 +138,13 @@ describe('db schema', () => {
       'audit_runs',
       'artifacts',
       'runtime_events',
+      'agent_tokens',
+      'mcp_servers',
+      'agent_mcp_assignments',
+      'agent_patterns',
+      'agent_pattern_assignments',
+      'agent_memories',
+      'agent_lessons',
     ]
     const res = await pool.query(
       `SELECT table_name FROM information_schema.tables

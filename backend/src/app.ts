@@ -10,6 +10,7 @@ import { createAgentsRouter } from './routes/agents.js'
 import { createPortalRouter } from './routes/portal.js'
 import { createRuntimeRouter } from './routes/runtime.js'
 import { createApprovalsRouter } from './routes/approvals.js'
+import { createCodexAuthRouter } from './routes/codex-auth.js'
 import type { RegistryAgent } from './registry.js'
 import type WebSocket from 'ws'
 
@@ -74,6 +75,7 @@ export function createApp(deps: AppDeps): express.Express {
   )
 
   app.use('/api/providers', createProvidersRouter({ pool: deps.pool }))
+  app.use('/api/providers/:providerId/codex/auth', createCodexAuthRouter())
 
   app.use('/api/agents', createAgentsRouter({
     pool: deps.pool,

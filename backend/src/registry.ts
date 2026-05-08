@@ -1,4 +1,5 @@
 import type pg from 'pg'
+import { decrypt, encrypt, isEncrypted } from './crypto.js'
 
 export interface Provider {
   id: string
@@ -6,6 +7,7 @@ export interface Provider {
   type: string
   base_url: string
   api_key?: string
+  model?: string
   created_at: string
 }
 
@@ -24,22 +26,33 @@ export interface RegistryAgent {
   config: Record<string, unknown>
   enabled: boolean
   created_at: string
+  local_port?: number
+  worktree_path?: string
+  system_prompt?: string
+  soul?: string
 }
 
 export async function listProviders(pool: pg.Pool): Promise<Provider[]> {
   const { rows } = await pool.query('SELECT * FROM providers ORDER BY created_at')
-  return rows
+  return rows.map((row) => ({
+    ...row,
+    api_key: row.api_key ? '••••••••' : undefined,
+  }))
 }
 
 export async function insertProvider(
   pool: pg.Pool,
   data: Omit<Provider, 'id' | 'created_at'>
 ): Promise<Provider> {
+  const encryptedKey = data.api_key ? encrypt(data.api_key) : null
   const { rows } = await pool.query(
-    'INSERT INTO providers (name, type, base_url, api_key) VALUES ($1, $2, $3, $4) RETURNING *',
-    [data.name, data.type, data.base_url, data.api_key ?? null]
+    'INSERT INTO providers (name, type, base_url, api_key, model) VALUES ($1, $2, $3, $4, $5) RETURNING *',
+    [data.name, data.type, data.base_url, encryptedKey, data.model ?? null]
   )
-  return rows[0]
+  return {
+    ...rows[0],
+    api_key: rows[0].api_key ? '••••••••' : undefined,
+  }
 }
 
 export async function updateProvider(
@@ -47,20 +60,39 @@ export async function updateProvider(
   id: string,
   data: Partial<Omit<Provider, 'id' | 'created_at'>>
 ): Promise<Provider> {
+  const encryptedKey = data.api_key ? encrypt(data.api_key) : undefined
   const { rows } = await pool.query(
     `UPDATE providers SET
       name     = COALESCE($2, name),
       type     = COALESCE($3, type),
       base_url = COALESCE($4, base_url),
-      api_key  = CASE WHEN $5::boolean THEN $6 ELSE api_key END
+      model    = COALESCE($5, model),
+      api_key  = CASE WHEN $6::boolean THEN $7 ELSE api_key END
     WHERE id = $1 RETURNING *`,
-    [id, data.name ?? null, data.type ?? null, data.base_url ?? null, 'api_key' in data, data.api_key ?? null]
+    [
+      id,
+      data.name ?? null,
+      data.type ?? null,
+      data.base_url ?? null,
+      data.model ?? null,
+      'api_key' in data,
+      encryptedKey ?? null,
+    ]
   )
-  return rows[0]
+  return {
+    ...rows[0],
+    api_key: rows[0].api_key ? '••••••••' : undefined,
+  }
 }
 
 export async function deleteProvider(pool: pg.Pool, id: string): Promise<void> {
   await pool.query('DELETE FROM providers WHERE id = $1', [id])
+}
+
+export async function getProviderApiKey(pool: pg.Pool, id: string): Promise<string | null> {
+  const { rows } = await pool.query('SELECT api_key FROM providers WHERE id = $1', [id])
+  if (!rows[0]?.api_key) return null
+  return isEncrypted(rows[0].api_key) ? decrypt(rows[0].api_key) : rows[0].api_key
 }
 
 export async function listAgents(pool: pg.Pool): Promise<RegistryAgent[]> {
@@ -80,9 +112,10 @@ export async function insertAgent(
   const { rows } = await pool.query(
     `INSERT INTO agents (
       name, type, provider_id, runtime_family, execution_mode, endpoint, capabilities,
-      host, container_name, ssh_user, config, enabled
+      host, container_name, ssh_user, config, enabled, local_port, worktree_path,
+      system_prompt, soul
     )
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING *`,
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) RETURNING *`,
     [
       data.name,
       data.type,
@@ -96,6 +129,10 @@ export async function insertAgent(
       data.ssh_user ?? null,
       JSON.stringify(data.config ?? {}),
       data.enabled ?? true,
+      data.local_port ?? null,
+      data.worktree_path ?? null,
+      data.system_prompt ?? null,
+      data.soul ?? null,
     ]
   )
   return rows[0]
@@ -120,6 +157,10 @@ export async function updateAgent(
     ['container_name', 'container_name'],
     ['ssh_user', 'ssh_user'],
     ['enabled', 'enabled'],
+    ['local_port', 'local_port'],
+    ['worktree_path', 'worktree_path'],
+    ['system_prompt', 'system_prompt'],
+    ['soul', 'soul'],
   ]
 
   for (const [key, col] of scalarFields) {
@@ -150,4 +191,19 @@ export async function updateAgent(
 
 export async function deleteAgent(pool: pg.Pool, id: string): Promise<void> {
   await pool.query('DELETE FROM agents WHERE id = $1', [id])
+}
+
+export async function upsertLocalCodexProvider(pool: pg.Pool): Promise<void> {
+  // Fix any existing codex providers pointing at non-localhost URLs (stale container refs)
+  await pool.query(`
+    UPDATE providers
+    SET base_url = 'ws://localhost:10101'
+    WHERE type = 'codex' AND base_url <> 'ws://localhost:10101'
+  `)
+  // Ensure the local provider record exists
+  await pool.query(`
+    INSERT INTO providers (name, type, base_url)
+    VALUES ('Codex (local)', 'codex', 'ws://localhost:10101')
+    ON CONFLICT (name) DO UPDATE SET type = EXCLUDED.type, base_url = EXCLUDED.base_url
+  `)
 }

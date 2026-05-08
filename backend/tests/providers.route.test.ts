@@ -6,6 +6,7 @@ import { createPool, runMigrations } from '../src/db.js'
 import { createProvidersRouter } from '../src/routes/providers.js'
 
 const TEST_DB = process.env.TEST_DATABASE_URL!
+process.env.SECRET_ENCRYPTION_KEY = 'a'.repeat(64)
 
 describe('providers router', () => {
   let pool: pg.Pool
@@ -43,6 +44,19 @@ describe('providers router', () => {
     expect(res.body.id).toBeTruthy()
   })
 
+  it('POST / masks api_key in response', async () => {
+    const res = await request(app).post('/api/providers').send({
+      name: 'masked-provider',
+      type: 'llm',
+      base_url: 'https://api.anthropic.com',
+      api_key: 'sk-ant-real-secret',
+      model: 'anthropic/claude-sonnet-4-5',
+    })
+    expect(res.status).toBe(201)
+    expect(res.body.api_key).toBe('••••••••')
+    expect(res.body.model).toBe('anthropic/claude-sonnet-4-5')
+  })
+
   it('POST / returns 400 when required fields missing', async () => {
     const res = await request(app).post('/api/providers').send({ name: 'x' })
     expect(res.status).toBe(400)
@@ -53,6 +67,16 @@ describe('providers router', () => {
     expect(res.status).toBe(200)
     expect(res.body.length).toBeGreaterThan(0)
     expect(res.body[0].name).toBe('test-provider')
+  })
+
+  it('GET / never exposes plaintext api_key', async () => {
+    const res = await request(app).get('/api/providers')
+    expect(res.status).toBe(200)
+    for (const provider of res.body) {
+      if (provider.api_key !== undefined) {
+        expect(provider.api_key).toBe('••••••••')
+      }
+    }
   })
 
   it('PUT /:id updates a provider', async () => {

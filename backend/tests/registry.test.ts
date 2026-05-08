@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import pg from 'pg'
 import { createPool, runMigrations } from '../src/db.js'
 import {
+  getProviderApiKey,
   listProviders,
   insertProvider,
   updateProvider,
@@ -14,6 +15,7 @@ import {
 } from '../src/registry.js'
 
 const TEST_DB = process.env.TEST_DATABASE_URL!
+process.env.SECRET_ENCRYPTION_KEY = 'a'.repeat(64)
 
 let pool: pg.Pool
 
@@ -48,7 +50,7 @@ describe('registry — providers', () => {
     expect(provider.name).toBe('test-provider')
     expect(provider.type).toBe('openai')
     expect(provider.base_url).toBe('https://api.openai.com')
-    expect(provider.api_key).toBe('sk-test')
+    expect(provider.api_key).toBe('••••••••')
     expect(provider.created_at).toBeTruthy()
   })
 
@@ -59,7 +61,7 @@ describe('registry — providers', () => {
       base_url: 'http://localhost:11434',
     })
     expect(provider.id).toBeTruthy()
-    expect(provider.api_key).toBeNull()
+    expect(provider.api_key).toBeUndefined()
   })
 
   it('listProviders — returns inserted providers', async () => {
@@ -68,6 +70,17 @@ describe('registry — providers', () => {
     const names = result.map((p) => p.name)
     expect(names).toContain('test-provider')
     expect(names).toContain('test-provider-no-key')
+  })
+
+  it('getProviderApiKey decrypts stored provider key', async () => {
+    const provider = await insertProvider(pool, {
+      name: 'decrypt-me-provider',
+      type: 'openai',
+      base_url: 'https://api.openai.com',
+      api_key: 'sk-decrypt-me',
+    })
+    const apiKey = await getProviderApiKey(pool, provider.id)
+    expect(apiKey).toBe('sk-decrypt-me')
   })
 
   it('updateProvider — updates fields', async () => {
@@ -82,7 +95,7 @@ describe('registry — providers', () => {
     })
     expect(updated.id).toBe(provider.id)
     expect(updated.base_url).toBe('https://api.openai.com/v2')
-    expect(updated.api_key).toBe('sk-new-key')
+    expect(updated.api_key).toBe('••••••••')
     expect(updated.name).toBe('update-me-provider')
   })
 
@@ -131,6 +144,10 @@ describe('registry — agents', () => {
       ssh_user: 'ubuntu',
       config: { timeout: 30 },
       enabled: true,
+      local_port: 7777,
+      worktree_path: '/tmp/worktree-a',
+      system_prompt: 'Be precise',
+      soul: 'Builder spirit',
     })
     expect(agent.id).toBeTruthy()
     expect(agent.name).toBe('test-agent')
@@ -145,6 +162,10 @@ describe('registry — agents', () => {
     expect(agent.ssh_user).toBe('ubuntu')
     expect(agent.config).toEqual({ timeout: 30 })
     expect(agent.enabled).toBe(true)
+    expect(agent.local_port).toBe(7777)
+    expect(agent.worktree_path).toBe('/tmp/worktree-a')
+    expect(agent.system_prompt).toBe('Be precise')
+    expect(agent.soul).toBe('Builder spirit')
     expect(agent.created_at).toBeTruthy()
   })
 
@@ -166,6 +187,10 @@ describe('registry — agents', () => {
     expect(agent.host).toBeNull()
     expect(agent.container_name).toBeNull()
     expect(agent.ssh_user).toBeNull()
+    expect(agent.local_port).toBeNull()
+    expect(agent.worktree_path).toBeNull()
+    expect(agent.system_prompt).toBeNull()
+    expect(agent.soul).toBeNull()
   })
 
   it('listAgents — returns inserted agents', async () => {
@@ -185,6 +210,8 @@ describe('registry — agents', () => {
       capabilities: ['workflow'],
       config: { key: 'value' },
       enabled: false,
+      system_prompt: 'Route carefully',
+      soul: 'Operations first',
     })
     const fetched = await getAgent(pool, agent.id)
     expect(fetched).not.toBeNull()
@@ -192,6 +219,8 @@ describe('registry — agents', () => {
     expect(fetched!.name).toBe('get-me-agent')
     expect(fetched!.enabled).toBe(false)
     expect(fetched!.config).toEqual({ key: 'value' })
+    expect(fetched!.system_prompt).toBe('Route carefully')
+    expect(fetched!.soul).toBe('Operations first')
   })
 
   it('getAgent — returns null for unknown id', async () => {
@@ -217,6 +246,10 @@ describe('registry — agents', () => {
       enabled: false,
       capabilities: ['research', 'audit'],
       config: { updated: true },
+      local_port: 8787,
+      worktree_path: '/tmp/worktree-b',
+      system_prompt: 'Review changes',
+      soul: 'Skeptical collaborator',
     })
     expect(updated.id).toBe(agent.id)
     expect(updated.runtime_family).toBe('openclaw')
@@ -226,6 +259,10 @@ describe('registry — agents', () => {
     expect(updated.enabled).toBe(false)
     expect(updated.capabilities).toEqual(['research', 'audit'])
     expect(updated.config).toEqual({ updated: true })
+    expect(updated.local_port).toBe(8787)
+    expect(updated.worktree_path).toBe('/tmp/worktree-b')
+    expect(updated.system_prompt).toBe('Review changes')
+    expect(updated.soul).toBe('Skeptical collaborator')
     expect(updated.name).toBe('update-me-agent')
   })
 
