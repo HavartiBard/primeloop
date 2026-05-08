@@ -206,6 +206,26 @@ export interface ChiefRoute {
   reason: string
 }
 
+export interface CodexAuthStatus {
+  status: 'chatgpt' | 'api_key' | 'unauthenticated' | 'unknown'
+  mode: string | null
+  email: string | null
+  raw: string
+}
+
+export interface CodexDeviceAuthResult {
+  session_id: string
+  url: string
+  code: string | null
+}
+
+export interface CodexDeviceAuthPoll {
+  status: 'pending' | 'complete' | 'error'
+  url?: string
+  code?: string | null
+  error?: string
+}
+
 export interface ChiefMessageResult {
   user_message: ThreadMessage
   chief_message: ThreadMessage

@@ -1,7 +1,7 @@
 import http from 'http'
 import { WebSocketServer } from 'ws'
 import { createPool, runMigrations, seedRegistry } from './db.js'
-import { listAgents } from './registry.js'
+import { listAgents, upsertLocalCodexProvider } from './registry.js'
 import { createBroadcaster } from './ws/broadcast.js'
 import { createApp } from './app.js'
 import { createSlackBot, notifyApprovalNeeded } from './slack/bot.js'
@@ -26,6 +26,7 @@ if (!DATABASE_URL) throw new Error('DATABASE_URL is required')
 const pool = createPool(DATABASE_URL)
 await runMigrations(pool)
 await seedRegistry(pool, process.env)
+await upsertLocalCodexProvider(pool)
 
 const { broadcast: rawBroadcast, addClient } = createBroadcaster()
 

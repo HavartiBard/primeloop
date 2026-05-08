@@ -151,3 +151,19 @@ export async function updateAgent(
 export async function deleteAgent(pool: pg.Pool, id: string): Promise<void> {
   await pool.query('DELETE FROM agents WHERE id = $1', [id])
 }
+
+export async function upsertLocalCodexProvider(pool: pg.Pool): Promise<void> {
+  await pool.query(`
+    UPDATE providers
+    SET base_url = 'ws://localhost:10101'
+    WHERE type = 'codex' AND base_url <> 'ws://localhost:10101'
+  `)
+
+  await pool.query(`
+    INSERT INTO providers (name, type, base_url)
+    VALUES ('Codex (local)', 'codex', 'ws://localhost:10101')
+    ON CONFLICT (name) DO UPDATE
+      SET type = EXCLUDED.type,
+          base_url = EXCLUDED.base_url
+  `)
+}

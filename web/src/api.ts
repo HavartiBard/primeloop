@@ -14,6 +14,9 @@ import type {
   RuntimeAuditLoop,
   RuntimeEvent,
   ChiefMessageResult,
+  CodexAuthStatus,
+  CodexDeviceAuthResult,
+  CodexDeviceAuthPoll,
 } from './types'
 
 const BASE = '/api/approvals'
@@ -259,6 +262,39 @@ export async function fetchRuntimeMemory(category?: string): Promise<RuntimeMemo
   const res = await fetch(`${API_BASE}/memory?${qs}`)
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   return res.json() as Promise<RuntimeMemory[]>
+}
+
+export async function fetchCodexAuthStatus(providerId: string): Promise<CodexAuthStatus> {
+  const res = await fetch(`${API_BASE}/providers/${providerId}/codex/auth`)
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json() as Promise<CodexAuthStatus>
+}
+
+export async function startCodexDeviceAuth(providerId: string): Promise<CodexDeviceAuthResult> {
+  const res = await fetch(`${API_BASE}/providers/${providerId}/codex/auth/device`, { method: 'POST' })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json() as Promise<CodexDeviceAuthResult>
+}
+
+export async function pollCodexDeviceAuth(providerId: string, sessionId: string): Promise<CodexDeviceAuthPoll> {
+  const res = await fetch(`${API_BASE}/providers/${providerId}/codex/auth/device/${sessionId}`)
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json() as Promise<CodexDeviceAuthPoll>
+}
+
+export async function codexApiKeyAuth(providerId: string, apiKey: string): Promise<{ ok: boolean; error?: string }> {
+  const res = await fetch(`${API_BASE}/providers/${providerId}/codex/auth/apikey`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ api_key: apiKey }),
+  })
+  return res.json()
+}
+
+export async function codexLogout(providerId: string): Promise<{ ok: boolean }> {
+  const res = await fetch(`${API_BASE}/providers/${providerId}/codex/auth/logout`, { method: 'POST' })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json()
 }
 
 export async function fetchRuntimeAuditLoops(): Promise<RuntimeAuditLoop[]> {
