@@ -240,6 +240,10 @@ export interface LoopWarning {
   created_at: string
 }
 
+export interface FleetLoopWarning extends LoopWarning {
+  agent_name: string
+}
+
 export interface AgentSnapshot {
   id: string
   agent_id: string
@@ -247,6 +251,10 @@ export interface AgentSnapshot {
   summary?: string
   payload: Record<string, unknown>
   created_at: string
+}
+
+export interface FleetSnapshot extends AgentSnapshot {
+  agent_name: string
 }
 
 export interface RuntimeAuditLoop {

@@ -16,7 +16,9 @@ import type {
   AgentMemoryRecord,
   AgentLessonRecord,
   LoopWarning,
+  FleetLoopWarning,
   AgentSnapshot,
+  FleetSnapshot,
   RuntimeAuditLoop,
   RuntimeEvent,
   ChiefMessageResult,
@@ -330,6 +332,40 @@ export async function fetchFleetLearnings(params?: { agentId?: string; query?: s
   return res.json() as Promise<FleetLearning[]>
 }
 
+export async function fetchFleetLoopWarnings(params?: { agentId?: string; limit?: number }): Promise<FleetLoopWarning[]> {
+  const qs = new URLSearchParams()
+  if (params?.agentId) qs.set('agent_id', params.agentId)
+  if (params?.limit != null) qs.set('limit', String(params.limit))
+  const res = await fetch(`${API_BASE}/fleet/loop-warnings?${qs}`)
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json() as Promise<FleetLoopWarning[]>
+}
+
+export async function fetchFleetSnapshots(params?: { agentId?: string; limit?: number }): Promise<FleetSnapshot[]> {
+  const qs = new URLSearchParams()
+  if (params?.agentId) qs.set('agent_id', params.agentId)
+  if (params?.limit != null) qs.set('limit', String(params.limit))
+  const res = await fetch(`${API_BASE}/fleet/snapshots?${qs}`)
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json() as Promise<FleetSnapshot[]>
+}
+
+export async function publishFleetPattern(data: {
+  type?: 'best_practice' | 'antipattern'
+  content: string
+  severity?: string
+  source_agent_id?: string
+  target_agent_ids?: string[]
+}): Promise<{ pattern: FleetPattern; assigned_agent_ids: string[] }> {
+  const res = await fetch(`${API_BASE}/fleet/patterns/publish`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json() as Promise<{ pattern: FleetPattern; assigned_agent_ids: string[] }>
+}
+
 export async function fetchAgentLoopWarnings(agentId: string, limit = 20): Promise<LoopWarning[]> {
   const res = await fetch(`${API_BASE}/agents/${agentId}/loop-warnings?limit=${limit}`)
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
@@ -352,6 +388,19 @@ export async function fetchAgentSnapshots(agentId: string, limit = 20): Promise<
   const res = await fetch(`${API_BASE}/agents/${agentId}/snapshots?limit=${limit}`)
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   return res.json() as Promise<AgentSnapshot[]>
+}
+
+export async function resolveApprovalAsPrime(
+  approvalId: string,
+  decision: 'approved' | 'denied',
+): Promise<{ approval: Approval; resumed?: unknown }> {
+  const res = await fetch(`${BASE}/${approvalId}/resolve`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ decision }),
+  })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json() as Promise<{ approval: Approval; resumed?: unknown }>
 }
 
 // Codex auth

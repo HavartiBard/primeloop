@@ -2,6 +2,7 @@ import { Router } from 'express'
 import type pg from 'pg'
 import { decideApproval, getApproval, listPendingApprovals } from '../approvals.js'
 import { runDelegation } from '../delegation-runner.js'
+import { callControlPlaneTool, createPrimePortalContext } from '../mcp/service.js'
 import { insertRuntimeEvent, updateDelegation, updateWorkItem } from '../runtime.js'
 
 export function createApprovalsRouter({ pool }: { pool: pg.Pool }) {
@@ -63,6 +64,23 @@ export function createApprovalsRouter({ pool }: { pool: pg.Pool }) {
       })
       res.json({ approval, delegation })
     } catch {
+      res.status(500).json({ error: 'internal error' })
+    }
+  })
+
+  router.post('/:id/resolve', async (req, res) => {
+    const decision = req.body?.decision === 'denied' ? 'denied' : 'approved'
+    try {
+      const ctx = await createPrimePortalContext(pool)
+      const result = await callControlPlaneTool(pool, ctx, 'resolve_approval', {
+        approval_id: req.params.id,
+        decision,
+      })
+      res.json(result)
+    } catch (err) {
+      const message = (err as Error).message
+      if (message === 'no prime agent available') return res.status(409).json({ error: message })
+      if (message === 'approval not found') return res.status(404).json({ error: message })
       res.status(500).json({ error: 'internal error' })
     }
   })

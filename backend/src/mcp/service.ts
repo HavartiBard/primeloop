@@ -122,6 +122,17 @@ export async function authenticateAgentToken(pool: pg.Pool, token: string): Prom
   return { agent, token: matchedToken }
 }
 
+export async function createPrimePortalContext(pool: pg.Pool): Promise<AgentAuthContext> {
+  const prime = await selectAgentForCapability(pool, 'prime')
+  if (!prime) {
+    throw new Error('no prime agent available')
+  }
+  return {
+    agent: prime,
+    token: 'portal-prime',
+  }
+}
+
 const TOOL_DEFINITIONS: McpToolDefinition[] = [
     {
       name: 'delegate_to_agent',

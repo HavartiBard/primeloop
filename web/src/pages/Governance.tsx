@@ -1,14 +1,17 @@
-import { useMemo } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useMemo, useState } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
-  fetchAgentLoopWarnings,
-  fetchAgentSnapshots,
+  fetchFleetLoopWarnings,
   fetchFleetLearnings,
   fetchFleetPatterns,
+  fetchFleetSnapshots,
   fetchRuntimeAuditLoops,
   fetchRuntimeMemory,
   fetchRuntimeOverview,
+  publishFleetPattern,
+  resolveApprovalAsPrime,
 } from '../api'
+import { useAgentRegistry } from '../hooks/useAgentRegistry'
 import { useApprovals } from '../hooks/useApprovals'
 import type { ChiefProfile, PermissionRule } from '../types'
 
@@ -73,7 +76,15 @@ function SectionHeader({
 }
 
 export function Governance() {
-  const { approvals, approve, deny } = useApprovals()
+  const queryClient = useQueryClient()
+  const { approvals } = useApprovals()
+  const { agents } = useAgentRegistry()
+  const [patternDraft, setPatternDraft] = useState({
+    type: 'best_practice',
+    severity: 'info',
+    content: '',
+    source_agent_id: '',
+  })
   const { data: runtimeOverview } = useQuery({
     queryKey: ['runtime-overview'],
     queryFn: fetchRuntimeOverview,
@@ -99,28 +110,30 @@ export function Governance() {
     queryFn: () => fetchFleetLearnings({ limit: 12 }),
     refetchInterval: 30_000,
   })
-  const primeAgentId = useMemo(() => {
-    const agentRows = runtimeOverview?.counts?.['agents']
-    if (!Array.isArray(agentRows)) return undefined
-    return undefined
-  }, [runtimeOverview])
   const { data: loopWarnings = [] } = useQuery({
-    queryKey: ['agent-loop-warnings', 'governance-default'],
-    queryFn: async () => {
-      const learnings = await fetchFleetLearnings({ limit: 1 })
-      const firstAgentId = learnings[0]?.agent_id
-      return firstAgentId ? fetchAgentLoopWarnings(firstAgentId, 12) : Promise.resolve([])
-    },
+    queryKey: ['fleet-loop-warnings'],
+    queryFn: () => fetchFleetLoopWarnings({ limit: 12 }),
     refetchInterval: 30_000,
   })
   const { data: snapshots = [] } = useQuery({
-    queryKey: ['agent-snapshots', 'governance-default'],
-    queryFn: async () => {
-      const learnings = await fetchFleetLearnings({ limit: 1 })
-      const firstAgentId = learnings[0]?.agent_id
-      return firstAgentId ? fetchAgentSnapshots(firstAgentId, 8) : Promise.resolve([])
-    },
+    queryKey: ['fleet-snapshots'],
+    queryFn: () => fetchFleetSnapshots({ limit: 8 }),
     refetchInterval: 30_000,
+  })
+  const publishPatternMutation = useMutation({
+    mutationFn: publishFleetPattern,
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['fleet-patterns'] })
+      setPatternDraft((current) => ({ ...current, content: '' }))
+    },
+  })
+  const resolveApprovalMutation = useMutation({
+    mutationFn: ({ approvalId, decision }: { approvalId: string; decision: 'approved' | 'denied' }) =>
+      resolveApprovalAsPrime(approvalId, decision),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['approvals'] })
+      void queryClient.invalidateQueries({ queryKey: ['runtime-overview'] })
+    },
   })
 
   const profile: ChiefProfile = useMemo(() => {
@@ -142,6 +155,7 @@ export function Governance() {
   }, [memories, runtimeOverview?.chief])
 
   const pendingApprovals = approvals.filter((approval) => approval.status === 'pending')
+  const primeAgents = agents.filter((agent) => agent.capabilities.includes('prime'))
 
   return (
     <div className="min-h-screen px-4 py-4 sm:px-6 lg:px-8">
@@ -171,16 +185,18 @@ export function Governance() {
                   <div className="mt-1 text-xs text-amber-50/70">Run {approval.run_id}</div>
                   <div className="mt-3 flex gap-2">
                     <button
-                      onClick={() => approve(approval.approval_id)}
+                      onClick={() => resolveApprovalMutation.mutate({ approvalId: approval.approval_id, decision: 'approved' })}
+                      disabled={resolveApprovalMutation.isPending}
                       className="rounded-full border border-emerald-300/20 bg-emerald-300/12 px-3 py-1.5 text-xs text-emerald-50 transition hover:bg-emerald-300/20"
                     >
-                      Approve
+                      Approve Via Prime
                     </button>
                     <button
-                      onClick={() => deny(approval.approval_id)}
+                      onClick={() => resolveApprovalMutation.mutate({ approvalId: approval.approval_id, decision: 'denied' })}
+                      disabled={resolveApprovalMutation.isPending}
                       className="rounded-full border border-rose-300/20 bg-rose-300/12 px-3 py-1.5 text-xs text-rose-50 transition hover:bg-rose-300/20"
                     >
-                      Deny
+                      Deny Via Prime
                     </button>
                   </div>
                 </div>
@@ -197,6 +213,62 @@ export function Governance() {
         <div className="grid gap-5">
           <div className={`${cardClass()} p-5 sm:p-6`}>
             <SectionHeader eyebrow="Fleet" title="Pattern Library" detail={`${patterns.length} patterns`} />
+            <div className="mb-4 rounded-[1rem] border border-[var(--border-soft)] bg-[var(--panel-subtle)] p-4">
+              <div className="text-[11px] uppercase tracking-[0.22em] text-[var(--muted)]">Publish Pattern</div>
+              <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                <select
+                  value={patternDraft.type}
+                  onChange={(e) => setPatternDraft((current) => ({ ...current, type: e.target.value }))}
+                  className="rounded border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-2 text-sm text-[var(--text)]"
+                >
+                  <option value="best_practice">Best practice</option>
+                  <option value="antipattern">Antipattern</option>
+                </select>
+                <select
+                  value={patternDraft.severity}
+                  onChange={(e) => setPatternDraft((current) => ({ ...current, severity: e.target.value }))}
+                  className="rounded border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-2 text-sm text-[var(--text)]"
+                >
+                  <option value="info">Info</option>
+                  <option value="warn">Warn</option>
+                  <option value="error">Error</option>
+                </select>
+              </div>
+              <select
+                value={patternDraft.source_agent_id}
+                onChange={(e) => setPatternDraft((current) => ({ ...current, source_agent_id: e.target.value }))}
+                className="mt-3 w-full rounded border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-2 text-sm text-[var(--text)]"
+              >
+                <option value="">Source agent: Prime default</option>
+                {agents.map((agent) => (
+                  <option key={agent.id} value={agent.id}>{agent.name}</option>
+                ))}
+              </select>
+              <textarea
+                value={patternDraft.content}
+                onChange={(e) => setPatternDraft((current) => ({ ...current, content: e.target.value }))}
+                rows={4}
+                placeholder="Capture a reusable best practice or antipattern for the fleet."
+                className="mt-3 w-full rounded border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-2 text-sm text-[var(--text)]"
+              />
+              <div className="mt-3 flex items-center justify-between gap-3">
+                <div className="text-xs text-[var(--muted)]">
+                  {primeAgents.length > 0 ? `${primeAgents.length} prime-capable agent${primeAgents.length === 1 ? '' : 's'} available` : 'No prime-capable agent registered'}
+                </div>
+                <button
+                  onClick={() => publishPatternMutation.mutate({
+                    type: patternDraft.type as 'best_practice' | 'antipattern',
+                    severity: patternDraft.severity,
+                    content: patternDraft.content,
+                    ...(patternDraft.source_agent_id ? { source_agent_id: patternDraft.source_agent_id } : {}),
+                  })}
+                  disabled={publishPatternMutation.isPending || !patternDraft.content.trim() || primeAgents.length === 0}
+                  className="rounded-full border border-[var(--sel-bd)] bg-[var(--sel-bg)] px-4 py-1.5 text-xs text-blue-300 transition hover:bg-blue-500/20 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  Publish Pattern
+                </button>
+              </div>
+            </div>
             <div className="space-y-3">
               {patterns.slice(0, 8).map((pattern) => (
                 <div key={pattern.id} className="rounded-[1rem] border border-[var(--border-soft)] bg-[var(--panel-subtle)] p-4">
@@ -281,7 +353,7 @@ export function Governance() {
                       {warning.severity}
                     </div>
                   </div>
-                  <div className="mt-2 text-xs text-[var(--muted)]">{warning.kind}</div>
+                  <div className="mt-2 text-xs text-[var(--muted)]">{warning.agent_name} · {warning.kind}</div>
                 </div>
               ))}
               {loopWarnings.length === 0 && (
@@ -311,6 +383,19 @@ export function Governance() {
                       ? (entry.context ? `Context: ${entry.context}` : entry.severity ?? 'lesson')
                       : (entry.importance != null ? `Importance ${entry.importance}` : 'memory')}
                   </div>
+                  <div className="mt-3">
+                    <button
+                      onClick={() => setPatternDraft({
+                        type: entry.kind === 'lesson' && entry.severity === 'error' ? 'antipattern' : 'best_practice',
+                        severity: entry.kind === 'lesson' ? (entry.severity ?? 'info') : (entry.importance != null && entry.importance >= 4 ? 'warn' : 'info'),
+                        content: entry.content,
+                        source_agent_id: entry.agent_id,
+                      })}
+                      className="rounded-full border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-1.5 text-xs text-[var(--text)] transition hover:bg-[var(--panel-subtle)]"
+                    >
+                      Seed Pattern Draft
+                    </button>
+                  </div>
                 </div>
               ))}
               {learnings.length === 0 && (
@@ -328,7 +413,7 @@ export function Governance() {
                 <div key={snapshot.id} className="rounded-[1rem] border border-[var(--border-soft)] bg-[var(--panel-subtle)] p-4">
                   <div className="text-sm font-semibold text-[var(--text)]">{snapshot.title}</div>
                   {snapshot.summary && <div className="mt-2 text-sm text-[var(--text)]">{snapshot.summary}</div>}
-                  <div className="mt-2 text-xs text-[var(--muted)]">{formatTime(snapshot.created_at)}</div>
+                  <div className="mt-2 text-xs text-[var(--muted)]">{snapshot.agent_name} · {formatTime(snapshot.created_at)}</div>
                 </div>
               ))}
               {snapshots.length === 0 && (

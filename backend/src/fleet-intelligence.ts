@@ -26,6 +26,26 @@ export interface FleetLearning {
   created_at: string
 }
 
+export interface FleetLoopWarning {
+  agent_id: string
+  agent_name: string
+  kind: 'repeated-failure' | 'prompt-loop' | 'stall-retry' | 'approval-churn'
+  severity: 'info' | 'warn' | 'error'
+  summary: string
+  evidence: Record<string, unknown>
+  created_at: string
+}
+
+export interface FleetSnapshot {
+  id: string
+  agent_id: string
+  agent_name: string
+  title: string
+  summary?: string
+  payload: Record<string, unknown>
+  created_at: string
+}
+
 export async function listPatterns(pool: pg.Pool, agentId?: string): Promise<AgentPattern[]> {
   const values: unknown[] = []
   const joins = [
@@ -114,6 +134,62 @@ export async function listFleetLearnings(
      ${agentFilter}
      ORDER BY item.created_at DESC
      LIMIT $${limitIndex}`,
+    values,
+  )
+  return rows
+}
+
+export async function listFleetLoopWarnings(
+  pool: pg.Pool,
+  input: { agentId?: string; limit?: number } = {},
+): Promise<FleetLoopWarning[]> {
+  const limit = Math.max(1, Math.min(input.limit ?? 50, 200))
+  const values: unknown[] = [limit]
+  const where = input.agentId ? 'WHERE warnings.agent_id = $2' : ''
+  if (input.agentId) values.push(input.agentId)
+
+  const { rows } = await pool.query<FleetLoopWarning>(
+    `SELECT
+       warnings.agent_id,
+       a.name AS agent_name,
+       warnings.kind,
+       warnings.severity,
+       warnings.summary,
+       warnings.evidence,
+       warnings.created_at::text
+     FROM agent_loop_warnings warnings
+     JOIN agents a ON a.id = warnings.agent_id
+     ${where}
+     ORDER BY warnings.created_at DESC
+     LIMIT $1`,
+    values,
+  )
+  return rows
+}
+
+export async function listFleetSnapshots(
+  pool: pg.Pool,
+  input: { agentId?: string; limit?: number } = {},
+): Promise<FleetSnapshot[]> {
+  const limit = Math.max(1, Math.min(input.limit ?? 50, 200))
+  const values: unknown[] = [limit]
+  const where = input.agentId ? 'WHERE s.agent_id = $2' : ''
+  if (input.agentId) values.push(input.agentId)
+
+  const { rows } = await pool.query<FleetSnapshot>(
+    `SELECT
+       s.id,
+       s.agent_id,
+       a.name AS agent_name,
+       s.title,
+       s.summary,
+       s.payload,
+       s.created_at::text
+     FROM agent_snapshots s
+     JOIN agents a ON a.id = s.agent_id
+     ${where}
+     ORDER BY s.created_at DESC
+     LIMIT $1`,
     values,
   )
   return rows
