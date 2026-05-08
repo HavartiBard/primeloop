@@ -331,6 +331,18 @@ export async function runMigrations(pool: pg.Pool): Promise<void> {
 
     CREATE INDEX IF NOT EXISTS idx_agent_lessons_embedding
       ON agent_lessons USING hnsw (embedding vector_cosine_ops);
+
+    CREATE TABLE IF NOT EXISTS agent_snapshots (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      agent_id UUID NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+      title TEXT NOT NULL,
+      summary TEXT,
+      payload JSONB NOT NULL DEFAULT '{}',
+      created_at TIMESTAMPTZ DEFAULT now()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_agent_snapshots_agent_created_at
+      ON agent_snapshots (agent_id, created_at DESC);
   `)
 }
 

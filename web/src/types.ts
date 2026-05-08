@@ -44,6 +44,19 @@ export interface RegistryAgent {
   worktree_path?: string
   system_prompt?: string
   soul?: string
+  mcp_server_ids?: string[]
+}
+
+export interface MCPServer {
+  id: string
+  name: string
+  description?: string
+  type: 'http' | 'stdio'
+  url?: string
+  command?: string
+  args?: string[]
+  env_vars?: Record<string, string>
+  created_at: string
 }
 
 export interface LifecycleResult {
@@ -170,6 +183,70 @@ export interface RuntimeMemory {
   metadata: Record<string, unknown>
   created_at: string
   updated_at: string
+}
+
+export interface FleetPattern {
+  id: string
+  type: 'best_practice' | 'antipattern'
+  content: string
+  severity: string
+  source_agent_id?: string
+  source_agent_name?: string
+  published_by?: string
+  published_by_name?: string
+  created_at: string
+}
+
+export interface FleetLearning {
+  id: string
+  kind: 'memory' | 'lesson'
+  agent_id: string
+  agent_name: string
+  content: string
+  category?: string
+  tags?: string[]
+  importance?: number
+  severity?: string
+  context?: string
+  created_at: string
+}
+
+export interface AgentMemoryRecord {
+  id: string
+  agent_id: string
+  content: string
+  category?: string
+  tags?: string[]
+  importance: number
+  created_at: string
+}
+
+export interface AgentLessonRecord {
+  id: string
+  agent_id: string
+  content: string
+  context?: string
+  category?: string
+  severity: string
+  created_at: string
+}
+
+export interface LoopWarning {
+  agent_id: string
+  kind: 'repeated-failure' | 'prompt-loop' | 'stall-retry' | 'approval-churn'
+  severity: 'info' | 'warn' | 'error'
+  summary: string
+  evidence: Record<string, unknown>
+  created_at: string
+}
+
+export interface AgentSnapshot {
+  id: string
+  agent_id: string
+  title: string
+  summary?: string
+  payload: Record<string, unknown>
+  created_at: string
 }
 
 export interface RuntimeAuditLoop {

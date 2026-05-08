@@ -3,6 +3,7 @@ import pg from 'pg'
 import { listAgents, getAgent, insertAgent, updateAgent, deleteAgent, RegistryAgent } from '../registry.js'
 import { makeExecOnAgent, dockerLifecycle, SshExecFn } from '../lifecycle.js'
 import { createAgentAdapter } from '../adapters/index.js'
+import { listAgentMcpAssignments, setAgentMcpAssignments } from '../mcp-registry.js'
 
 interface AgentsRouterDeps {
   pool: pg.Pool
@@ -10,6 +11,7 @@ interface AgentsRouterDeps {
   sshUser: string
   execFn?: SshExecFn  // optional injection for testing
   onAgentCreated: (agent: RegistryAgent) => void
+  onAgentUpdated?: (agent: RegistryAgent) => void
   onAgentDeleted: (id: string) => void
 }
 
@@ -17,10 +19,18 @@ export function createAgentsRouter(deps: AgentsRouterDeps) {
   const router = Router()
   const exec = deps.execFn ?? makeExecOnAgent(deps.sshKeyPath)
 
+  const withAssignments = async <T extends RegistryAgent>(agents: T[]): Promise<Array<T & { mcp_server_ids: string[] }>> => {
+    const assignmentMap = await listAgentMcpAssignments(deps.pool, agents.map((agent) => agent.id))
+    return agents.map((agent) => ({
+      ...agent,
+      mcp_server_ids: assignmentMap[agent.id] ?? [],
+    }))
+  }
+
   router.get('/', async (_req, res) => {
     try {
       const agents = await listAgents(deps.pool)
-      res.json(agents)
+      res.json(await withAssignments(agents))
     } catch {
       res.status(500).json({ error: 'internal error' })
     }
@@ -42,6 +52,7 @@ export function createAgentsRouter(deps: AgentsRouterDeps) {
       worktree_path,
       system_prompt,
       soul,
+      mcp_server_ids,
       config,
       enabled,
     } = req.body
@@ -65,8 +76,9 @@ export function createAgentsRouter(deps: AgentsRouterDeps) {
         config: config ?? {},
         enabled: enabled ?? true,
       })
+      await setAgentMcpAssignments(deps.pool, agent.id, Array.isArray(mcp_server_ids) ? mcp_server_ids : [])
       deps.onAgentCreated(agent)
-      res.status(201).json(agent)
+      res.status(201).json({ ...agent, mcp_server_ids: Array.isArray(mcp_server_ids) ? mcp_server_ids : [] })
     } catch (err) {
       res.status(500).json({ error: 'internal error' })
     }
@@ -75,7 +87,12 @@ export function createAgentsRouter(deps: AgentsRouterDeps) {
   router.put('/:id', async (req, res) => {
     try {
       const agent = await updateAgent(deps.pool, req.params.id, req.body)
-      res.json(agent)
+      if (Array.isArray(req.body?.mcp_server_ids)) {
+        await setAgentMcpAssignments(deps.pool, agent.id, req.body.mcp_server_ids)
+      }
+      deps.onAgentUpdated?.(agent)
+      const assignmentMap = await listAgentMcpAssignments(deps.pool, [agent.id])
+      res.json({ ...agent, mcp_server_ids: assignmentMap[agent.id] ?? [] })
     } catch {
       res.status(500).json({ error: 'internal error' })
     }

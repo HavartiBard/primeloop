@@ -25,6 +25,7 @@ describe('agents registry router', () => {
       sshUser: 'root',
       execFn: mockExec,  // inject mock exec
       onAgentCreated: vi.fn(),
+      onAgentUpdated: vi.fn(),
       onAgentDeleted: vi.fn(),
     }))
   })

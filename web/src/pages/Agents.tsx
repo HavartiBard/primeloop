@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { fetchAgents } from '../api'
+import { fetchAgentLessons, fetchAgentLoopWarnings, fetchAgentMemories, fetchAgentSnapshots, fetchAgents } from '../api'
 import { useAgentRegistry } from '../hooks/useAgentRegistry'
+import { useMcpServers } from '../hooks/useMcpServers'
 import { useProviders } from '../hooks/useProviders'
 import type { Provider, RegistryAgent } from '../types'
 
@@ -20,6 +21,7 @@ interface AgentFormState {
   worktree_path: string
   system_prompt: string
   soul: string
+  mcp_server_ids: string[]
   config_json: string
   enabled: boolean
 }
@@ -39,6 +41,7 @@ const EMPTY_AGENT_FORM: AgentFormState = {
   worktree_path: '',
   system_prompt: '',
   soul: '',
+  mcp_server_ids: [],
   config_json: '{}',
   enabled: true,
 }
@@ -53,11 +56,12 @@ interface AgentModalProps {
   mode: 'add' | 'edit'
   agent?: RegistryAgent
   providers: Provider[]
+  mcpServerOptions: Array<{ id: string; name: string; type: string }>
   onClose: () => void
   onSubmit: (data: AgentFormState) => void
 }
 
-function AgentModal({ mode, agent, providers, onClose, onSubmit }: AgentModalProps) {
+function AgentModal({ mode, agent, providers, mcpServerOptions, onClose, onSubmit }: AgentModalProps) {
   const [form, setForm] = useState<AgentFormState>({
     name: agent?.name ?? '',
     type: agent?.type ?? 'custom',
@@ -73,6 +77,7 @@ function AgentModal({ mode, agent, providers, onClose, onSubmit }: AgentModalPro
     worktree_path: agent?.worktree_path ?? '',
     system_prompt: agent?.system_prompt ?? '',
     soul: agent?.soul ?? '',
+    mcp_server_ids: agent?.mcp_server_ids ?? [],
     config_json: agent?.config ? JSON.stringify(agent.config, null, 2) : '{}',
     enabled: agent?.enabled ?? true,
   })
@@ -82,6 +87,14 @@ function AgentModal({ mode, agent, providers, onClose, onSubmit }: AgentModalPro
     (field: keyof AgentFormState) =>
     (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) =>
       setForm((f) => ({ ...f, [field]: e.target.value }))
+
+  const toggleMcpServer = (serverId: string) =>
+    setForm((current) => ({
+      ...current,
+      mcp_server_ids: current.mcp_server_ids.includes(serverId)
+        ? current.mcp_server_ids.filter((id) => id !== serverId)
+        : [...current.mcp_server_ids, serverId],
+    }))
 
   // Auto-populate fields when a codex provider is selected
   useEffect(() => {
@@ -228,6 +241,30 @@ function AgentModal({ mode, agent, providers, onClose, onSubmit }: AgentModalPro
             </div>
           </div>
 
+          <div className="border-t border-[var(--border-soft)] pt-4 mt-1">
+            <h3 className="text-xs font-semibold text-[var(--muted)] uppercase tracking-wider mb-3">
+              MCP Servers
+            </h3>
+            {mcpServerOptions.length === 0 ? (
+              <p className="text-xs text-[var(--muted)]">No external MCP servers registered yet.</p>
+            ) : (
+              <div className="grid gap-2">
+                {mcpServerOptions.map((server) => (
+                  <label key={server.id} className="flex items-center gap-2 text-xs text-[var(--text)]">
+                    <input
+                      type="checkbox"
+                      checked={form.mcp_server_ids.includes(server.id)}
+                      onChange={() => toggleMcpServer(server.id)}
+                      className="accent-blue-500"
+                    />
+                    <span className="font-mono">{server.name}</span>
+                    <span className="text-[var(--muted)]">{server.type}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+
           <div>
             <label className={labelCls}>Config JSON</label>
             <textarea value={form.config_json} onChange={setField('config_json')} rows={4}
@@ -261,9 +298,11 @@ function AgentModal({ mode, agent, providers, onClose, onSubmit }: AgentModalPro
 export function Agents() {
   const { agents, isLoading, isError, create, update, remove, lifecycle } = useAgentRegistry()
   const { providers } = useProviders()
+  const { mcpServers } = useMcpServers()
   const [modal, setModal] = useState<{ mode: 'add' | 'edit'; agent?: RegistryAgent } | null>(null)
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const [lifecycleMsg, setLifecycleMsg] = useState<{ id: string; msg: string } | null>(null)
+  const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null)
 
   const providerMap = Object.fromEntries(providers.map((p) => [p.id, p.name]))
 
@@ -290,6 +329,7 @@ export function Agents() {
       ...(form.worktree_path ? { worktree_path: form.worktree_path } : {}),
       ...(form.system_prompt ? { system_prompt: form.system_prompt } : {}),
       ...(form.soul ? { soul: form.soul } : {}),
+      mcp_server_ids: form.mcp_server_ids,
     }
 
     if (modal?.mode === 'edit' && modal.agent) {
@@ -314,6 +354,31 @@ export function Agents() {
   const { data: healthData = [], isError: healthError } = useQuery({
     queryKey: ['agents'],
     queryFn: fetchAgents,
+    refetchInterval: 30_000,
+  })
+  const effectiveSelectedAgentId = selectedAgentId ?? agents[0]?.id
+  const { data: selectedLoopWarnings = [] } = useQuery({
+    queryKey: ['agent-loop-warnings', effectiveSelectedAgentId],
+    queryFn: () => effectiveSelectedAgentId ? fetchAgentLoopWarnings(effectiveSelectedAgentId, 8) : Promise.resolve([]),
+    enabled: Boolean(effectiveSelectedAgentId),
+    refetchInterval: 30_000,
+  })
+  const { data: selectedSnapshots = [] } = useQuery({
+    queryKey: ['agent-snapshots', effectiveSelectedAgentId],
+    queryFn: () => effectiveSelectedAgentId ? fetchAgentSnapshots(effectiveSelectedAgentId, 6) : Promise.resolve([]),
+    enabled: Boolean(effectiveSelectedAgentId),
+    refetchInterval: 30_000,
+  })
+  const { data: selectedMemories = [] } = useQuery({
+    queryKey: ['agent-memories', effectiveSelectedAgentId],
+    queryFn: () => effectiveSelectedAgentId ? fetchAgentMemories(effectiveSelectedAgentId, 6) : Promise.resolve([]),
+    enabled: Boolean(effectiveSelectedAgentId),
+    refetchInterval: 30_000,
+  })
+  const { data: selectedLessons = [] } = useQuery({
+    queryKey: ['agent-lessons', effectiveSelectedAgentId],
+    queryFn: () => effectiveSelectedAgentId ? fetchAgentLessons(effectiveSelectedAgentId, 6) : Promise.resolve([]),
+    enabled: Boolean(effectiveSelectedAgentId),
     refetchInterval: 30_000,
   })
 
@@ -385,6 +450,10 @@ export function Agents() {
                           className="px-2 py-1 text-xs bg-[var(--panel-subtle)] border border-[var(--border-soft)] text-[var(--muted)] rounded hover:bg-[var(--panel)]">
                           Edit
                         </button>
+                        <button onClick={() => setSelectedAgentId(a.id)}
+                          className="px-2 py-1 text-xs bg-[var(--panel-subtle)] border border-[var(--border-soft)] text-[var(--muted)] rounded hover:bg-[var(--panel)]">
+                          Inspect
+                        </button>
                         {deletingId === a.id ? (
                           <>
                             <button onClick={() => handleDelete(a)}
@@ -425,11 +494,83 @@ export function Agents() {
         {healthData.length === 0 && <p className="text-[var(--muted)] text-sm">No agents seen yet.</p>}
       </div>
 
+      <div className="mt-8 grid gap-5 xl:grid-cols-2">
+        <div className="rounded-[1.2rem] border border-[var(--border-soft)] bg-[var(--panel)] p-5">
+          <h3 className="text-sm text-[var(--muted)] mb-3">Loop warnings</h3>
+          <div className="space-y-3">
+            {selectedLoopWarnings.map((warning, index) => (
+              <div key={`${warning.kind}:${warning.created_at}:${index}`} className="rounded-[1rem] border border-[var(--border-soft)] bg-[var(--panel-subtle)] p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-sm font-semibold text-[var(--text)]">{warning.summary}</div>
+                  <div className="text-xs text-[var(--muted)]">{warning.severity}</div>
+                </div>
+                <div className="mt-2 text-xs text-[var(--muted)]">{warning.kind}</div>
+              </div>
+            ))}
+            {selectedLoopWarnings.length === 0 && (
+              <p className="text-[var(--muted)] text-sm">No loop warnings for the selected agent.</p>
+            )}
+          </div>
+        </div>
+
+        <div className="rounded-[1.2rem] border border-[var(--border-soft)] bg-[var(--panel)] p-5">
+          <h3 className="text-sm text-[var(--muted)] mb-3">Recent snapshots</h3>
+          <div className="space-y-3">
+            {selectedSnapshots.map((snapshot) => (
+              <div key={snapshot.id} className="rounded-[1rem] border border-[var(--border-soft)] bg-[var(--panel-subtle)] p-4">
+                <div className="text-sm font-semibold text-[var(--text)]">{snapshot.title}</div>
+                {snapshot.summary && <div className="mt-2 text-sm text-[var(--text)]">{snapshot.summary}</div>}
+                <div className="mt-2 text-xs text-[var(--muted)]">{new Date(snapshot.created_at).toLocaleString()}</div>
+              </div>
+            ))}
+            {selectedSnapshots.length === 0 && (
+              <p className="text-[var(--muted)] text-sm">No snapshots for the selected agent.</p>
+            )}
+          </div>
+        </div>
+        <div className="rounded-[1.2rem] border border-[var(--border-soft)] bg-[var(--panel)] p-5">
+          <h3 className="text-sm text-[var(--muted)] mb-3">Recent memories</h3>
+          <div className="space-y-3">
+            {selectedMemories.map((memory) => (
+              <div key={memory.id} className="rounded-[1rem] border border-[var(--border-soft)] bg-[var(--panel-subtle)] p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-sm font-semibold text-[var(--text)]">{memory.category ?? 'general'}</div>
+                  <div className="text-xs text-[var(--muted)]">importance {memory.importance}</div>
+                </div>
+                <div className="mt-2 text-sm text-[var(--text)]">{memory.content}</div>
+              </div>
+            ))}
+            {selectedMemories.length === 0 && (
+              <p className="text-[var(--muted)] text-sm">No memories for the selected agent.</p>
+            )}
+          </div>
+        </div>
+        <div className="rounded-[1.2rem] border border-[var(--border-soft)] bg-[var(--panel)] p-5">
+          <h3 className="text-sm text-[var(--muted)] mb-3">Recent lessons</h3>
+          <div className="space-y-3">
+            {selectedLessons.map((lesson) => (
+              <div key={lesson.id} className="rounded-[1rem] border border-[var(--border-soft)] bg-[var(--panel-subtle)] p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="text-sm font-semibold text-[var(--text)]">{lesson.category ?? 'general'}</div>
+                  <div className="text-xs text-[var(--muted)]">{lesson.severity}</div>
+                </div>
+                <div className="mt-2 text-sm text-[var(--text)]">{lesson.content}</div>
+                {lesson.context && <div className="mt-2 text-xs text-[var(--muted)]">Context: {lesson.context}</div>}
+              </div>
+            ))}
+            {selectedLessons.length === 0 && (
+              <p className="text-[var(--muted)] text-sm">No lessons for the selected agent.</p>
+            )}
+          </div>
+        </div>
+      </div>
+
       {modal && (
         <AgentModal
           mode={modal.mode}
           agent={modal.agent}
           providers={providers}
+          mcpServerOptions={mcpServers.map((server) => ({ id: server.id, name: server.name, type: server.type }))}
           onClose={() => setModal(null)}
           onSubmit={handleSubmit}
         />

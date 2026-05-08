@@ -1,6 +1,10 @@
 import { useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
+  fetchAgentLoopWarnings,
+  fetchAgentSnapshots,
+  fetchFleetLearnings,
+  fetchFleetPatterns,
   fetchRuntimeAuditLoops,
   fetchRuntimeMemory,
   fetchRuntimeOverview,
@@ -85,6 +89,39 @@ export function Governance() {
     queryFn: fetchRuntimeAuditLoops,
     refetchInterval: 30_000,
   })
+  const { data: patterns = [] } = useQuery({
+    queryKey: ['fleet-patterns'],
+    queryFn: () => fetchFleetPatterns(),
+    refetchInterval: 30_000,
+  })
+  const { data: learnings = [] } = useQuery({
+    queryKey: ['fleet-learnings'],
+    queryFn: () => fetchFleetLearnings({ limit: 12 }),
+    refetchInterval: 30_000,
+  })
+  const primeAgentId = useMemo(() => {
+    const agentRows = runtimeOverview?.counts?.['agents']
+    if (!Array.isArray(agentRows)) return undefined
+    return undefined
+  }, [runtimeOverview])
+  const { data: loopWarnings = [] } = useQuery({
+    queryKey: ['agent-loop-warnings', 'governance-default'],
+    queryFn: async () => {
+      const learnings = await fetchFleetLearnings({ limit: 1 })
+      const firstAgentId = learnings[0]?.agent_id
+      return firstAgentId ? fetchAgentLoopWarnings(firstAgentId, 12) : Promise.resolve([])
+    },
+    refetchInterval: 30_000,
+  })
+  const { data: snapshots = [] } = useQuery({
+    queryKey: ['agent-snapshots', 'governance-default'],
+    queryFn: async () => {
+      const learnings = await fetchFleetLearnings({ limit: 1 })
+      const firstAgentId = learnings[0]?.agent_id
+      return firstAgentId ? fetchAgentSnapshots(firstAgentId, 8) : Promise.resolve([])
+    },
+    refetchInterval: 30_000,
+  })
 
   const profile: ChiefProfile = useMemo(() => {
     const current = runtimeOverview?.chief
@@ -159,6 +196,33 @@ export function Governance() {
 
         <div className="grid gap-5">
           <div className={`${cardClass()} p-5 sm:p-6`}>
+            <SectionHeader eyebrow="Fleet" title="Pattern Library" detail={`${patterns.length} patterns`} />
+            <div className="space-y-3">
+              {patterns.slice(0, 8).map((pattern) => (
+                <div key={pattern.id} className="rounded-[1rem] border border-[var(--border-soft)] bg-[var(--panel-subtle)] p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="text-sm font-semibold text-[var(--text)]">
+                      {pattern.type === 'antipattern' ? 'Antipattern' : 'Best Practice'}
+                    </div>
+                    <div className="rounded-full border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-1 text-xs text-[var(--muted)]">
+                      {pattern.severity}
+                    </div>
+                  </div>
+                  <div className="mt-2 text-sm text-[var(--text)]">{pattern.content}</div>
+                  <div className="mt-2 text-xs text-[var(--muted)]">
+                    {pattern.source_agent_name ? `Source ${pattern.source_agent_name}` : 'Fleet pattern'}
+                  </div>
+                </div>
+              ))}
+              {patterns.length === 0 && (
+                <div className="rounded-[1rem] border border-dashed border-[var(--border-soft)] bg-[var(--panel-subtle)] p-4 text-sm text-[var(--muted)]">
+                  No published patterns yet.
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className={`${cardClass()} p-5 sm:p-6`}>
             <SectionHeader eyebrow="Context" title="Persistent Memory" detail={`${profile.preferences.length + profile.recurringDuties.length + profile.priorDecisions.length} entries`} />
             <div className="space-y-4">
               <div className="rounded-[1rem] border border-[var(--border-soft)] bg-[var(--panel-subtle)] p-4">
@@ -201,6 +265,75 @@ export function Governance() {
               {auditLoops.length === 0 && (
                 <div className="rounded-[1rem] border border-dashed border-[var(--border-soft)] bg-[var(--panel-subtle)] p-4 text-sm text-[var(--muted)]">
                   No audit loops are configured yet.
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className={`${cardClass()} p-5 sm:p-6`}>
+            <SectionHeader eyebrow="Fleet" title="Loop Monitor" detail={`${loopWarnings.length} warnings`} />
+            <div className="space-y-3">
+              {loopWarnings.map((warning, index) => (
+                <div key={`${warning.kind}:${warning.created_at}:${index}`} className="rounded-[1rem] border border-[var(--border-soft)] bg-[var(--panel-subtle)] p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="text-sm font-semibold text-[var(--text)]">{warning.summary}</div>
+                    <div className="rounded-full border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-1 text-xs text-[var(--muted)]">
+                      {warning.severity}
+                    </div>
+                  </div>
+                  <div className="mt-2 text-xs text-[var(--muted)]">{warning.kind}</div>
+                </div>
+              ))}
+              {loopWarnings.length === 0 && (
+                <div className="rounded-[1rem] border border-dashed border-[var(--border-soft)] bg-[var(--panel-subtle)] p-4 text-sm text-[var(--muted)]">
+                  No loop warnings detected yet.
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className={`${cardClass()} p-5 sm:p-6`}>
+            <SectionHeader eyebrow="Fleet" title="Recent Learnings" detail={`${learnings.length} entries`} />
+            <div className="space-y-3">
+              {learnings.map((entry) => (
+                <div key={`${entry.kind}:${entry.id}`} className="rounded-[1rem] border border-[var(--border-soft)] bg-[var(--panel-subtle)] p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="text-sm font-semibold text-[var(--text)]">
+                      {entry.agent_name} · {entry.kind}
+                    </div>
+                    <div className="rounded-full border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-1 text-xs text-[var(--muted)]">
+                      {entry.category ?? 'general'}
+                    </div>
+                  </div>
+                  <div className="mt-2 text-sm text-[var(--text)]">{entry.content}</div>
+                  <div className="mt-2 text-xs text-[var(--muted)]">
+                    {entry.kind === 'lesson'
+                      ? (entry.context ? `Context: ${entry.context}` : entry.severity ?? 'lesson')
+                      : (entry.importance != null ? `Importance ${entry.importance}` : 'memory')}
+                  </div>
+                </div>
+              ))}
+              {learnings.length === 0 && (
+                <div className="rounded-[1rem] border border-dashed border-[var(--border-soft)] bg-[var(--panel-subtle)] p-4 text-sm text-[var(--muted)]">
+                  No fleet learnings logged yet.
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className={`${cardClass()} p-5 sm:p-6`}>
+            <SectionHeader eyebrow="Recovery" title="Recent Snapshots" detail={`${snapshots.length} snapshots`} />
+            <div className="space-y-3">
+              {snapshots.map((snapshot) => (
+                <div key={snapshot.id} className="rounded-[1rem] border border-[var(--border-soft)] bg-[var(--panel-subtle)] p-4">
+                  <div className="text-sm font-semibold text-[var(--text)]">{snapshot.title}</div>
+                  {snapshot.summary && <div className="mt-2 text-sm text-[var(--text)]">{snapshot.summary}</div>}
+                  <div className="mt-2 text-xs text-[var(--muted)]">{formatTime(snapshot.created_at)}</div>
+                </div>
+              ))}
+              {snapshots.length === 0 && (
+                <div className="rounded-[1rem] border border-dashed border-[var(--border-soft)] bg-[var(--panel-subtle)] p-4 text-sm text-[var(--muted)]">
+                  No snapshots created yet.
                 </div>
               )}
             </div>

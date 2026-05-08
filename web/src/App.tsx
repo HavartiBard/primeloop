@@ -7,6 +7,7 @@ import { CircuitView } from './pages/CircuitView'
 import { OperationsPortal } from './pages/OperationsPortal'
 import { Schedule } from './pages/Schedule'
 import { Agents } from './pages/Agents'
+import { McpServers } from './pages/McpServers'
 import { Providers } from './pages/Providers'
 import { Governance } from './pages/Governance'
 import { useApprovals } from './hooks/useApprovals'
@@ -27,6 +28,7 @@ const NAV: NavItem[] = [
   { label: 'Rooms',    icon: <MessageSquare className={ICON_CLS} />, href: '/' },
   { label: 'Schedule', icon: <CalendarClock className={ICON_CLS} />, href: '/schedule' },
   { label: 'Agents',   icon: <Bot className={ICON_CLS} />,          href: '/agents' },
+  { label: 'MCP',      icon: <Server className={ICON_CLS} />,       href: '/mcp-servers' },
   { label: 'Providers',icon: <Server className={ICON_CLS} />,        href: '/providers' },
 ]
 
@@ -58,6 +60,7 @@ function Layout() {
     : page === '/' ? OperationsPortal
     : page === '/schedule' ? Schedule
     : page === '/agents' ? Agents
+    : page === '/mcp-servers' ? McpServers
     : page === '/governance' ? Governance
     : Providers
 

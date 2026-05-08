@@ -11,12 +11,19 @@ import type {
   RuntimeWorkItem,
   RuntimeDelegation,
   RuntimeMemory,
+  FleetPattern,
+  FleetLearning,
+  AgentMemoryRecord,
+  AgentLessonRecord,
+  LoopWarning,
+  AgentSnapshot,
   RuntimeAuditLoop,
   RuntimeEvent,
   ChiefMessageResult,
   CodexAuthStatus,
   CodexDeviceAuthResult,
   CodexDeviceAuthPoll,
+  MCPServer,
 } from './types'
 
 const BASE = '/api/approvals'
@@ -135,6 +142,37 @@ export async function agentLifecycle(id: string, action: 'restart' | 'stop' | 's
   })
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   return res.json() as Promise<LifecycleResult>
+}
+
+export async function fetchMcpServers(): Promise<MCPServer[]> {
+  const res = await fetch(`${API_BASE}/mcp-servers`)
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json() as Promise<MCPServer[]>
+}
+
+export async function createMcpServer(data: Omit<MCPServer, 'id' | 'created_at'>): Promise<MCPServer> {
+  const res = await fetch(`${API_BASE}/mcp-servers`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json() as Promise<MCPServer>
+}
+
+export async function updateMcpServer(id: string, data: Partial<Omit<MCPServer, 'id' | 'created_at'>>): Promise<MCPServer> {
+  const res = await fetch(`${API_BASE}/mcp-servers/${id}`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json() as Promise<MCPServer>
+}
+
+export async function deleteMcpServer(id: string): Promise<void> {
+  const res = await fetch(`${API_BASE}/mcp-servers/${id}`, { method: 'DELETE' })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
 }
 
 export async function fetchPortalState(): Promise<PortalState> {
@@ -272,6 +310,48 @@ export async function fetchRuntimeMemory(category?: string): Promise<RuntimeMemo
   const res = await fetch(`${API_BASE}/memory?${qs}`)
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   return res.json() as Promise<RuntimeMemory[]>
+}
+
+export async function fetchFleetPatterns(agentId?: string): Promise<FleetPattern[]> {
+  const qs = new URLSearchParams()
+  if (agentId) qs.set('agent_id', agentId)
+  const res = await fetch(`${API_BASE}/fleet/patterns?${qs}`)
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json() as Promise<FleetPattern[]>
+}
+
+export async function fetchFleetLearnings(params?: { agentId?: string; query?: string; limit?: number }): Promise<FleetLearning[]> {
+  const qs = new URLSearchParams()
+  if (params?.agentId) qs.set('agent_id', params.agentId)
+  if (params?.query) qs.set('query', params.query)
+  if (params?.limit != null) qs.set('limit', String(params.limit))
+  const res = await fetch(`${API_BASE}/fleet/learnings?${qs}`)
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json() as Promise<FleetLearning[]>
+}
+
+export async function fetchAgentLoopWarnings(agentId: string, limit = 20): Promise<LoopWarning[]> {
+  const res = await fetch(`${API_BASE}/agents/${agentId}/loop-warnings?limit=${limit}`)
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json() as Promise<LoopWarning[]>
+}
+
+export async function fetchAgentMemories(agentId: string, limit = 20): Promise<AgentMemoryRecord[]> {
+  const res = await fetch(`${API_BASE}/agents/${agentId}/memories?limit=${limit}`)
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json() as Promise<AgentMemoryRecord[]>
+}
+
+export async function fetchAgentLessons(agentId: string, limit = 20): Promise<AgentLessonRecord[]> {
+  const res = await fetch(`${API_BASE}/agents/${agentId}/lessons?limit=${limit}`)
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json() as Promise<AgentLessonRecord[]>
+}
+
+export async function fetchAgentSnapshots(agentId: string, limit = 20): Promise<AgentSnapshot[]> {
+  const res = await fetch(`${API_BASE}/agents/${agentId}/snapshots?limit=${limit}`)
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json() as Promise<AgentSnapshot[]>
 }
 
 // Codex auth

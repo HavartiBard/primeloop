@@ -1,5 +1,6 @@
 import type { RegistryAgent } from '../registry.js'
 import { GenericHttpAdapter } from './generic-http.js'
+import { OpenCodeAdapter } from './opencode.js'
 import type { AgentAdapter } from './types.js'
 
 export function createAgentAdapter(
@@ -7,10 +8,11 @@ export function createAgentAdapter(
   fetchFn: typeof globalThis.fetch = fetch
 ): AgentAdapter {
   switch (agent.runtime_family) {
-    case 'hermes':
-    case 'openclaw':
     case 'opencode':
     case 'codex-app-server':
+      return new OpenCodeAdapter(fetchFn)
+    case 'hermes':
+    case 'openclaw':
     case 'custom':
     case 'generic-http':
     default:

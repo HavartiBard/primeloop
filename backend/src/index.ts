@@ -9,6 +9,7 @@ import { insertEvent } from './events/store.js'
 import type { AgentEvent } from './events/types.js'
 import { startIntegration, stopIntegration } from './dispatch.js'
 import { startAuditScheduler } from './audits.js'
+import { OpenCodeProcessManager } from './opencode/process-manager.js'
 
 const {
   DATABASE_URL = '',
@@ -27,6 +28,8 @@ const pool = createPool(DATABASE_URL)
 await runMigrations(pool)
 await seedRegistry(pool, process.env)
 await upsertLocalCodexProvider(pool)
+const processManager = new OpenCodeProcessManager(pool)
+await processManager.initialize()
 
 const { broadcast: rawBroadcast, addClient } = createBroadcaster()
 
@@ -64,8 +67,19 @@ const app = createApp({
   langgraphApiUrl: LANGGRAPH_API_URL,
   sshKeyPath: SSH_KEY_PATH,
   sshUser: SSH_USER,
-  onAgentCreated: (agent) => startIntegration(agent, { pool, broadcast }),
-  onAgentDeleted: (id) => stopIntegration(id),
+  onAgentCreated: (agent) => {
+    startIntegration(agent, { pool, broadcast })
+    void processManager.syncAgent(agent)
+  },
+  onAgentUpdated: (agent) => {
+    stopIntegration(agent.id)
+    startIntegration(agent, { pool, broadcast })
+    void processManager.syncAgent(agent)
+  },
+  onAgentDeleted: (id) => {
+    stopIntegration(id)
+    processManager.stopAgent(id)
+  },
 })
 const server = http.createServer(app)
 
