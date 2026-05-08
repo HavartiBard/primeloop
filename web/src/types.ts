@@ -21,6 +21,7 @@ export interface Provider {
   type: string
   base_url: string
   api_key?: string
+  model?: string
   created_at: string
 }
 
@@ -38,6 +39,23 @@ export interface RegistryAgent {
   ssh_user?: string
   config: Record<string, unknown>
   enabled: boolean
+  created_at: string
+  local_port?: number
+  worktree_path?: string
+  system_prompt?: string
+  soul?: string
+  mcp_server_ids?: string[]
+}
+
+export interface MCPServer {
+  id: string
+  name: string
+  description?: string
+  type: 'http' | 'stdio'
+  url?: string
+  command?: string
+  args?: string[]
+  env_vars?: Record<string, string>
   created_at: string
 }
 
@@ -167,6 +185,78 @@ export interface RuntimeMemory {
   updated_at: string
 }
 
+export interface FleetPattern {
+  id: string
+  type: 'best_practice' | 'antipattern'
+  content: string
+  severity: string
+  source_agent_id?: string
+  source_agent_name?: string
+  published_by?: string
+  published_by_name?: string
+  created_at: string
+}
+
+export interface FleetLearning {
+  id: string
+  kind: 'memory' | 'lesson'
+  agent_id: string
+  agent_name: string
+  content: string
+  category?: string
+  tags?: string[]
+  importance?: number
+  severity?: string
+  context?: string
+  created_at: string
+}
+
+export interface AgentMemoryRecord {
+  id: string
+  agent_id: string
+  content: string
+  category?: string
+  tags?: string[]
+  importance: number
+  created_at: string
+}
+
+export interface AgentLessonRecord {
+  id: string
+  agent_id: string
+  content: string
+  context?: string
+  category?: string
+  severity: string
+  created_at: string
+}
+
+export interface LoopWarning {
+  agent_id: string
+  kind: 'repeated-failure' | 'prompt-loop' | 'stall-retry' | 'approval-churn'
+  severity: 'info' | 'warn' | 'error'
+  summary: string
+  evidence: Record<string, unknown>
+  created_at: string
+}
+
+export interface FleetLoopWarning extends LoopWarning {
+  agent_name: string
+}
+
+export interface AgentSnapshot {
+  id: string
+  agent_id: string
+  title: string
+  summary?: string
+  payload: Record<string, unknown>
+  created_at: string
+}
+
+export interface FleetSnapshot extends AgentSnapshot {
+  agent_name: string
+}
+
 export interface RuntimeAuditLoop {
   id: string
   name: string
@@ -204,6 +294,26 @@ export interface ChiefRoute {
   status: string
   requiresApproval: boolean
   reason: string
+}
+
+export interface CodexAuthStatus {
+  status: 'chatgpt' | 'api_key' | 'unauthenticated' | 'unknown'
+  mode: string | null
+  email: string | null
+  raw: string
+}
+
+export interface CodexDeviceAuthResult {
+  session_id: string
+  url: string
+  code: string | null
+}
+
+export interface CodexDeviceAuthPoll {
+  status: 'pending' | 'complete' | 'error'
+  url?: string
+  code?: string | null
+  error?: string
 }
 
 export interface ChiefMessageResult {

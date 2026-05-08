@@ -1,4 +1,6 @@
 import { useMemo, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import { fetchThreadMessages } from '../api'
 import type { RegistryAgent, RuntimeAuditLoop, RuntimeDelegation, RuntimeThread, RuntimeWorkItem } from '../types'
 
 type AgentHealth = {
@@ -303,6 +305,22 @@ export function CollaborationRoomsView({
   }, [rooms, filter, search])
 
   const selectedRoom = filteredRooms.find((r) => r.id === selectedRoomId) ?? filteredRooms[0]
+  const activeRoomId = selectedRoom?.id ?? null
+
+  const { data: rawMessages = [] } = useQuery({
+    queryKey: ['thread-messages', activeRoomId],
+    queryFn: () => fetchThreadMessages(activeRoomId!),
+    enabled: !!activeRoomId && !activeRoomId.startsWith('sr-'),
+    refetchInterval: 10_000,
+  })
+
+  const displayMessages = rawMessages.length >= 1
+    ? rawMessages.map(msg => ({
+        speaker: msg.sender || msg.role,
+        text: msg.content,
+        at: formatShortTime(msg.created_at),
+      }))
+    : selectedRoom?.messages ?? []
 
   const signalRows  = selectedRoom ? buildSignalRows(selectedRoom, connected, pendingApprovals, auditLoops) : []
   const activeAgents = selectedRoom
@@ -404,7 +422,7 @@ export function CollaborationRoomsView({
               {/* Messages */}
               <div className="min-h-0 flex-1 overflow-y-auto bg-[var(--panel-subtle)] px-[18px] py-4">
                 <div className="flex flex-col gap-1.5 font-mono text-sm">
-                  {selectedRoom.messages.map((msg, i) => (
+                  {displayMessages.map((msg, i) => (
                     <div key={`${selectedRoom.id}-${i}`} className="grid gap-2.5" style={{ gridTemplateColumns: '50px 100px 1fr' }}>
                       <span className="text-[var(--terminal-time)]">{msg.at}</span>
                       <span className={speakerCls(msg.speaker)}>&lt;{msg.speaker}&gt;</span>

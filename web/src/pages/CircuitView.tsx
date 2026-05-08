@@ -1,7 +1,22 @@
+import { useMemo } from 'react'
+import type { CSSProperties } from 'react'
+import { useQuery } from '@tanstack/react-query'
+import {
+  fetchAgentRegistry,
+  fetchAgents,
+  fetchRuntimeAuditLoops,
+  fetchRuntimeDelegations,
+  fetchRuntimeOverview,
+  fetchRuntimeWorkItems,
+  fetchThreads,
+} from '../api'
+import type { RegistryAgent, RuntimeAuditLoop, RuntimeDelegation, RuntimeThread, RuntimeWorkItem } from '../types'
+
 // ─── Types ────────────────────────────────────────────────────────────────────
 
-type NodeType  = 'agent' | 'room' | 'work' | 'approval' | 'tool' | 'system'
+type NodeType  = 'agent' | 'room' | 'work' | 'audit' | 'system'
 type NodeState = 'active' | 'running' | 'blocked' | 'approval' | 'neutral' | 'system'
+type EdgeStyle = 'coord' | 'part' | 'owns' | 'queued' | 'audit'
 
 interface Chip { label: string; variant?: 'ok' | 'run' | 'blk' | 'att' | 'neu' }
 
@@ -14,103 +29,190 @@ interface NodeDef {
   title: string
   summary: string
   chips: Chip[]
-  status: { label: string; variant: 'ok' | 'run' | 'blk' | 'att' | 'neu' }
   wide?: boolean
 }
 
-// ─── Static mock graph ────────────────────────────────────────────────────────
+interface EdgeDef {
+  from: string
+  to: string
+  style: EdgeStyle
+}
 
-const NODES: NodeDef[] = [
-  // Row 1 — Chief coordinator
-  { id: 'chief', type: 'agent', state: 'active', x: 576, y: 48, wide: false,
-    title: 'Chief of Staff', summary: 'coordinator · delegate · approve',
-    chips: [{ label: '3 active', variant: 'ok' }, { label: '1 appr', variant: 'att' }],
-    status: { label: 'active', variant: 'ok' } },
+// ─── Layout constants ─────────────────────────────────────────────────────────
 
-  // Row 2 — Sub-agents
-  { id: 'ops', type: 'agent', state: 'running', x: 96, y: 192, wide: false,
-    title: 'OPS', summary: 'incident · infra · provider',
-    chips: [{ label: '1 blocked', variant: 'blk' }, { label: '1 run', variant: 'run' }],
-    status: { label: 'running', variant: 'run' } },
+const CANVAS_W = 1296
+const CANVAS_H = 768
+const NODE_W   = 176
+const ROOM_W   = 192
+const NODE_H   = 96
+const ROW_Y    = [48, 192, 336, 480, 624] as const
 
-  { id: 'builder', type: 'agent', state: 'active', x: 544, y: 192, wide: false,
-    title: 'Builder', summary: 'impl · patch · thread-4a2',
-    chips: [{ label: '1 active', variant: 'ok' }],
-    status: { label: 'active', variant: 'ok' } },
+// ─── Layout helpers ───────────────────────────────────────────────────────────
 
-  { id: 'reviewer', type: 'agent', state: 'active', x: 976, y: 192, wide: false,
-    title: 'Reviewer', summary: 'review · verify · approve',
-    chips: [{ label: '2 active', variant: 'ok' }],
-    status: { label: 'active', variant: 'ok' } },
+function rowPositions(count: number, nodeWidth = NODE_W): number[] {
+  if (count === 0) return []
+  const spacing = CANVAS_W / (count + 1)
+  return Array.from({ length: count }, (_, i) => Math.round((i + 1) * spacing - nodeWidth / 2))
+}
 
-  // Row 3 — Rooms (wide: 192px)
-  { id: 'room-provider', type: 'room', state: 'blocked', x: 96, y: 336, wide: true,
-    title: 'Provider Incident', summary: 'infra instability · downstream blk',
-    chips: [{ label: '1 blocked', variant: 'blk' }, { label: '1 appr', variant: 'att' }],
-    status: { label: 'blocked', variant: 'blk' } },
+function routeEdge(x1: number, y1: number, x2: number, y2: number, c = 8): string {
+  const midY = Math.round((y1 + y2) / 2)
+  if (Math.abs(x2 - x1) < 2) return `M ${x1},${y1} V ${y2}`
+  const dx = x2 > x1 ? c : -c
+  if (Math.abs(x2 - x1) <= c * 2) {
+    return `M ${x1},${y1} V ${midY - c} L ${x2},${midY + c} V ${y2}`
+  }
+  return [`M ${x1},${y1}`, `V ${midY - c}`, `L ${x1 + dx},${midY}`, `H ${x2 - dx}`, `L ${x2},${midY + c}`, `V ${y2}`].join(' ')
+}
 
-  { id: 'room-release', type: 'room', state: 'running', x: 544, y: 336, wide: true,
-    title: 'Release Coord', summary: 'websocket patch · deploy pipeline',
-    chips: [{ label: '2 active', variant: 'ok' }, { label: '1 queued', variant: 'run' }],
-    status: { label: 'running', variant: 'run' } },
+function nodePt(node: NodeDef, side: 'top' | 'bottom'): [number, number] {
+  const w = node.wide ? ROOM_W : NODE_W
+  return [node.x + Math.round(w / 2), side === 'top' ? node.y : node.y + NODE_H]
+}
 
-  { id: 'room-verify', type: 'room', state: 'active', x: 976, y: 336, wide: true,
-    title: 'Verification Lane', summary: 'artifact check · smoke suite',
-    chips: [{ label: '1 active', variant: 'ok' }],
-    status: { label: 'active', variant: 'ok' } },
+// ─── Graph builder ────────────────────────────────────────────────────────────
 
-  // Row 4 — Work + Approval
-  { id: 'work-traces', type: 'work', state: 'blocked', x: 96, y: 480, wide: false,
-    title: 'Collect traces', summary: 'ops · incident · provider',
-    chips: [{ label: 'blocked', variant: 'blk' }],
-    status: { label: 'blocked', variant: 'blk' } },
+function buildGraph(
+  chiefName: string,
+  agents: RegistryAgent[],
+  threads: RuntimeThread[],
+  workItems: RuntimeWorkItem[],
+  delegations: RuntimeDelegation[],
+  auditLoops: RuntimeAuditLoop[],
+  healthMap: Map<string, boolean>,
+): { nodes: Map<string, NodeDef>; edges: EdgeDef[] } {
+  const nodes = new Map<string, NodeDef>()
+  const edges: EdgeDef[] = []
 
-  { id: 'approval-fix', type: 'approval', state: 'approval', x: 320, y: 480, wide: false,
-    title: 'Provider Fix', summary: 'gates trace work · chief review',
-    chips: [{ label: 'gating', variant: 'att' }],
-    status: { label: 'pending', variant: 'att' } },
+  // Row 0 — Chief
+  const activeCount  = workItems.filter(i => i.status === 'active').length
+  const blockedCount = workItems.filter(i => i.status === 'blocked').length
+  const chiefChips: Chip[] = []
+  if (activeCount)  chiefChips.push({ label: `${activeCount} active`,  variant: 'ok'  })
+  if (blockedCount) chiefChips.push({ label: `${blockedCount} blocked`, variant: 'blk' })
+  if (!chiefChips.length) chiefChips.push({ label: 'idle', variant: 'neu' })
 
-  { id: 'work-patch', type: 'work', state: 'active', x: 544, y: 480, wide: false,
-    title: 'Patch websocket', summary: 'builder · impl · branch open',
-    chips: [{ label: 'active', variant: 'ok' }, { label: '4a2f' }],
-    status: { label: 'active', variant: 'ok' } },
+  nodes.set('chief', {
+    id: 'chief', type: 'agent', state: blockedCount > 0 ? 'blocked' : 'active',
+    x: Math.round(CANVAS_W / 2 - NODE_W / 2), y: ROW_Y[0],
+    title: chiefName,
+    summary: 'coordinator · delegate · approve',
+    chips: chiefChips,
+  })
 
-  { id: 'work-deploy', type: 'work', state: 'running', x: 752, y: 480, wide: false,
-    title: 'Deploy bundle', summary: 'queued · awaiting infra gate',
-    chips: [{ label: 'queued', variant: 'run' }],
-    status: { label: 'queued', variant: 'run' } },
+  // Row 1 — Agents
+  const agentXs = rowPositions(agents.length)
+  agents.forEach((agent, i) => {
+    const healthy = healthMap.get(agent.name.toLowerCase())
+    const state: NodeState = !agent.enabled ? 'neutral' : healthy === false ? 'blocked' : 'active'
+    const agentItems = workItems.filter(wi => wi.owner_agent_id === agent.id)
+    const chips: Chip[] = []
+    const aActive  = agentItems.filter(it => it.status === 'active').length
+    const aBlocked = agentItems.filter(it => it.status === 'blocked').length
+    if (aActive)  chips.push({ label: `${aActive} active`,  variant: 'ok'  })
+    if (aBlocked) chips.push({ label: `${aBlocked} blocked`, variant: 'blk' })
+    if (!chips.length) chips.push({ label: agent.execution_mode || agent.type, variant: state === 'active' ? 'ok' : 'neu' })
 
-  { id: 'work-review', type: 'work', state: 'active', x: 976, y: 480, wide: false,
-    title: 'Review checklist', summary: 'reviewer · verification pass',
-    chips: [{ label: 'active', variant: 'ok' }],
-    status: { label: 'active', variant: 'ok' } },
+    const id = `agent-${agent.id}`
+    nodes.set(id, {
+      id, type: 'agent', state,
+      x: agentXs[i], y: ROW_Y[1],
+      title: agent.name,
+      summary: [agent.type, agent.runtime_family].filter(Boolean).join(' · '),
+      chips,
+    })
+    edges.push({ from: 'chief', to: id, style: 'coord' })
+  })
 
-  // Row 5 — Tools + System
-  { id: 'tool-kubectl', type: 'tool', state: 'neutral', x: 96, y: 624, wide: false,
-    title: 'kubectl', summary: 'pod · log · exec access',
-    chips: [{ label: 'in use' }],
-    status: { label: 'tool', variant: 'neu' } },
+  // Row 2 — Threads / Rooms
+  const threadXs = rowPositions(threads.length, ROOM_W)
+  threads.forEach((thread, i) => {
+    const items  = workItems.filter(wi => wi.thread_id === thread.id)
+    const delegs = delegations.filter(d => d.work_item_id && items.some(it => it.id === d.work_item_id))
+    const state: NodeState = thread.status === 'closed' ? 'neutral'
+      : items.some(it => it.status === 'blocked')      ? 'blocked'
+      : delegs.some(d => d.status === 'running')       ? 'running'
+      : items.some(it => it.status === 'active')        ? 'active'
+      : 'neutral'
+    const tActive  = items.filter(it => it.status === 'active').length
+    const tBlocked = items.filter(it => it.status === 'blocked').length
+    const chips: Chip[] = []
+    if (tActive)  chips.push({ label: `${tActive} active`,  variant: 'ok'  })
+    if (tBlocked) chips.push({ label: `${tBlocked} blocked`, variant: 'blk' })
+    if (!chips.length) chips.push({ label: `${items.length} items`, variant: 'neu' })
 
-  { id: 'tool-git', type: 'tool', state: 'neutral', x: 592, y: 624, wide: false,
-    title: 'git', summary: 'patch branch · diff review',
-    chips: [{ label: 'in use' }],
-    status: { label: 'tool', variant: 'neu' } },
+    const lanePart = items[0]?.lane ? ` · ${items[0].lane}` : ''
+    const id = `thread-${thread.id}`
+    nodes.set(id, {
+      id, type: 'room', state,
+      x: threadXs[i], y: ROW_Y[2],
+      title: thread.title || 'Untitled',
+      summary: `${items.length} item${items.length === 1 ? '' : 's'}${lanePart}`,
+      chips,
+      wide: true,
+    })
+    edges.push({ from: 'chief', to: id, style: 'coord' })
 
-  { id: 'sys-k8s', type: 'system', state: 'system', x: 976, y: 624, wide: false,
-    title: 'k8s / Infra', summary: 'gateway · memory · pod mesh',
-    chips: [{ label: 'degraded', variant: 'blk' }],
-    status: { label: 'degraded', variant: 'blk' } },
-]
+    agents.forEach(agent => {
+      if (items.some(wi => wi.owner_agent_id === agent.id)) {
+        edges.push({ from: `agent-${agent.id}`, to: id, style: 'part' })
+      }
+    })
+  })
+
+  // Row 3 — Work items
+  const workXs = rowPositions(workItems.length)
+  workItems.forEach((item, i) => {
+    const state: NodeState = item.status === 'blocked' ? 'blocked'
+      : item.status === 'active' ? 'active'
+      : item.status === 'queued' ? 'running'
+      : 'neutral'
+    const chips: Chip[] = [{
+      label: item.status,
+      variant: state === 'active' ? 'ok' : state === 'blocked' ? 'blk' : state === 'running' ? 'run' : 'neu',
+    }]
+    if (item.priority && item.priority !== 'medium') chips.push({ label: item.priority })
+
+    const id = `work-${item.id}`
+    nodes.set(id, {
+      id, type: 'work', state,
+      x: workXs[i], y: ROW_Y[3],
+      title: item.title,
+      summary: [item.owner_label, item.lane].filter(Boolean).join(' · '),
+      chips,
+    })
+    if (item.thread_id && nodes.has(`thread-${item.thread_id}`)) {
+      edges.push({ from: `thread-${item.thread_id}`, to: id, style: item.status === 'active' ? 'owns' : 'queued' })
+    } else {
+      edges.push({ from: 'chief', to: id, style: 'coord' })
+    }
+  })
+
+  // Row 4 — Audit loops
+  const auditXs = rowPositions(auditLoops.length)
+  auditLoops.forEach((loop, i) => {
+    const id = `audit-${loop.id}`
+    nodes.set(id, {
+      id, type: 'audit', state: 'neutral',
+      x: auditXs[i], y: ROW_Y[4],
+      title: loop.name,
+      summary: (loop.purpose || '').slice(0, 44),
+      chips: [{ label: loop.cadence_cron }],
+    })
+    edges.push({ from: 'chief', to: id, style: 'audit' })
+  })
+
+  return { nodes, edges }
+}
 
 // ─── Style helpers ────────────────────────────────────────────────────────────
 
 const TYPE_LABEL_COLOR: Record<NodeType, string> = {
-  agent:    '#0891b2',
-  room:     '#7c3aed',
-  work:     '#15803d',
-  approval: '#d97706',
-  tool:     '#6b7280',
-  system:   '#7c3aed',
+  agent:  '#0891b2',
+  room:   '#7c3aed',
+  work:   '#15803d',
+  audit:  '#6b7280',
+  system: '#9ca3af',
 }
 
 function nodeBorder(state: NodeState): string {
@@ -131,7 +233,7 @@ function nodeGlow(state: NodeState): string {
   return '0 1px 4px rgba(0,0,0,0.05)'
 }
 
-function chipStyle(variant?: Chip['variant']): React.CSSProperties {
+function chipStyle(variant?: Chip['variant']): CSSProperties {
   if (variant === 'ok')  return { color: 'var(--s-ok-tx)',  background: 'var(--s-ok-bg)',  border: '1px solid var(--s-ok-bd)'  }
   if (variant === 'run') return { color: 'var(--s-run-tx)', background: 'var(--s-run-bg)', border: '1px solid var(--s-run-bd)' }
   if (variant === 'blk') return { color: 'var(--s-blk-tx)', background: 'var(--s-blk-bg)', border: '1px solid var(--s-blk-bd)' }
@@ -154,10 +256,10 @@ interface CircuitNodeProps extends NodeDef {
   onRoomClick?: (id: string) => void
 }
 
-function CircuitNode({ id, type, state, x, y, wide, title, summary, chips, status, onRoomClick }: CircuitNodeProps) {
+function CircuitNode({ id, type, state, x, y, wide, title, summary, chips, onRoomClick }: CircuitNodeProps) {
   const dot = sdotStyle(state)
   const isRoom = type === 'room'
-  const width = wide ? 192 : 176
+  const width = wide ? ROOM_W : NODE_W
   const leftBorder = state === 'approval' ? '3px solid var(--s-att-bd)' : undefined
 
   return (
@@ -217,90 +319,39 @@ function CircuitNode({ id, type, state, x, y, wide, title, summary, chips, statu
   )
 }
 
-// ─── Edge SVG layer ───────────────────────────────────────────────────────────
+// ─── Dynamic edge SVG layer ───────────────────────────────────────────────────
 
-function Edges() {
+function DynamicEdges({ nodes, edges }: { nodes: Map<string, NodeDef>; edges: EdgeDef[] }) {
   return (
     <svg style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', overflow: 'visible' }}>
       <defs>
-        <marker id="a-coord"  markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,1L5,3L0,5Z" fill="#3b82f6" opacity="0.85"/></marker>
-        <marker id="a-part"   markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,1L5,3L0,5Z" fill="#6b7280" opacity="0.7"/></marker>
-        <marker id="a-own"    markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,1L5,3L0,5Z" fill="#6b7280" opacity="0.55"/></marker>
-        <marker id="a-assign" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,1L5,3L0,5Z" fill="#0891b2" opacity="0.8"/></marker>
-        <marker id="a-blk"    markerWidth="7" markerHeight="7" refX="5" refY="3.5" orient="auto"><path d="M0,1L6,3.5L0,6Z" fill="#ef4444"/></marker>
-        <marker id="a-att"    markerWidth="7" markerHeight="7" refX="5" refY="3.5" orient="auto"><path d="M0,1L6,3.5L0,6Z" fill="#d97706"/></marker>
-        <marker id="a-uses"   markerWidth="5" markerHeight="5" refX="4" refY="2.5" orient="auto"><path d="M0,0.5L4,2.5L0,4.5Z" fill="#9ca3af" opacity="0.6"/></marker>
+        <marker id="a-coord" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,1L5,3L0,5Z" fill="#3b82f6" opacity="0.85"/></marker>
+        <marker id="a-part"  markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,1L5,3L0,5Z" fill="#6b7280" opacity="0.7"/></marker>
+        <marker id="a-owns"  markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,1L5,3L0,5Z" fill="#22c55e" opacity="0.8"/></marker>
+        <marker id="a-queue" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,1L5,3L0,5Z" fill="#6b7280" opacity="0.55"/></marker>
+        <marker id="a-audit" markerWidth="5" markerHeight="5" refX="4" refY="2.5" orient="auto"><path d="M0,0.5L4,2.5L0,4.5Z" fill="#9ca3af" opacity="0.6"/></marker>
       </defs>
-
-      {/* Corridors: C1=y168, C2=y312, C3=y456, C4=y600; left=x60, right=x1200 */}
-      {/* Corners chamfered at 45° with c=8: stop 8px before turn, insert diagonal L */}
-
-      {/* ── Coordinates: Chief → Rooms (blue, flowing) ── */}
-      {/* → provider: down→left at C1, left→down at gap(408), down→left at C2, left→down at 192 */}
-      <path className="e-flow"
-        d="M 664,144 V 160 L 656,168 H 416 L 408,176 V 304 L 400,312 H 200 L 192,320 V 336"
-        stroke="#3b82f6" strokeWidth="1.5" fill="none" opacity="0.75" markerEnd="url(#a-coord)"/>
-      {/* → release: down→right at C1, right→down at 728, down→left at C2, left→down at 640 */}
-      <path className="e-flow"
-        d="M 664,144 V 160 L 672,168 H 720 L 728,176 V 304 L 720,312 H 648 L 640,320 V 336"
-        stroke="#3b82f6" strokeWidth="1.5" fill="none" opacity="0.75" markerEnd="url(#a-coord)"/>
-      {/* → verify: down→right at C1, right→down at 1160, down→left at C2, left→down at 1072 */}
-      <path className="e-flow"
-        d="M 664,144 V 160 L 672,168 H 1152 L 1160,176 V 304 L 1152,312 H 1080 L 1072,320 V 336"
-        stroke="#3b82f6" strokeWidth="1.5" fill="none" opacity="0.75" markerEnd="url(#a-coord)"/>
-
-      {/* ── Participating: Agent → Room (gray, flowing) ── */}
-      {/* 8px jog right/left — single diagonal replaces both 90° turns */}
-      <path className="e-flow" d="M 184,288 V 304 L 192,312 V 336"   stroke="#6b7280" strokeWidth="1.2" fill="none" opacity="0.6"  markerEnd="url(#a-part)"/>
-      <path className="e-flow" d="M 632,288 V 304 L 640,312 V 336"   stroke="#6b7280" strokeWidth="1.2" fill="none" opacity="0.6"  markerEnd="url(#a-part)"/>
-      <path className="e-flow" d="M 1064,288 V 304 L 1072,312 V 336" stroke="#6b7280" strokeWidth="1.2" fill="none" opacity="0.6"  markerEnd="url(#a-part)"/>
-      {/* Reviewer → Release secondary (dashed): down→left at C2, left→down at 640 */}
-      <path d="M 1064,288 V 304 L 1056,312 H 648 L 640,320 V 336"
-        stroke="#6b7280" strokeWidth="1" strokeDasharray="4 4" fill="none" opacity="0.35" markerEnd="url(#a-part)"/>
-
-      {/* ── Owns: Room → Work ── */}
-      {/* Provider → Traces: down→left diagonal (8px jog) */}
-      <path d="M 192,432 V 448 L 184,456 V 480"
-        stroke="#6b7280" strokeWidth="1" fill="none" opacity="0.45" markerEnd="url(#a-own)"/>
-      {/* Release → Patch: down→left diagonal (8px jog) */}
-      <path className="e-flow-slow" d="M 640,432 V 448 L 632,456 V 480"
-        stroke="#22c55e" strokeWidth="1.2" fill="none" opacity="0.7" markerEnd="url(#a-own)"/>
-      {/* Release → Deploy: down→right at C3, right→down at 840 */}
-      <path d="M 688,432 V 448 L 696,456 H 832 L 840,464 V 480"
-        stroke="#6b7280" strokeWidth="1" strokeDasharray="4 4" fill="none" opacity="0.4" markerEnd="url(#a-own)"/>
-      {/* Verify → Review: down→left diagonal (8px jog) */}
-      <path className="e-flow-slow" d="M 1072,432 V 448 L 1064,456 V 480"
-        stroke="#22c55e" strokeWidth="1.2" fill="none" opacity="0.65" markerEnd="url(#a-own)"/>
-
-      {/* ── Approval gate: Provider → Approval node (amber, pulsing) ── */}
-      {/* down→right at C3, right→down at 408 */}
-      <path className="e-throb-att"
-        d="M 240,432 V 448 L 248,456 H 400 L 408,464 V 480"
-        stroke="#d97706" strokeWidth="2" fill="none" opacity="0.9" markerEnd="url(#a-att)"/>
-
-      {/* ── Blocked-on: Approval → Traces (red, pulsing) — straight horizontal ── */}
-      <path className="e-throb-blk" d="M 320,528 H 272"
-        stroke="#ef4444" strokeWidth="2" fill="none" opacity="0.9" markerEnd="url(#a-blk)"/>
-
-      {/* ── Assigned: Agent → Work via margin corridors (cyan, dashed flowing) ── */}
-      {/* OPS left→down at C1(60), down→right at work-traces(60→96) */}
-      <path className="e-flow"
-        d="M 96,240 H 68 L 60,248 V 520 L 68,528 H 96"
-        stroke="#0891b2" strokeWidth="1" strokeDasharray="6 5" fill="none" opacity="0.55" markerEnd="url(#a-assign)"/>
-      {/* Reviewer right→down at C1(1200), down→left at work-review(1200→1152) */}
-      <path className="e-flow"
-        d="M 1152,240 H 1192 L 1200,248 V 520 L 1192,528 H 1152"
-        stroke="#0891b2" strokeWidth="1" strokeDasharray="6 5" fill="none" opacity="0.5" markerEnd="url(#a-assign)"/>
-
-      {/* ── Uses: Work → Tool/System (gray dotted, static) ── */}
-      <path d="M 184,576 V 624"
-        stroke="#9ca3af" strokeWidth="1" strokeDasharray="2 4" fill="none" opacity="0.5" markerEnd="url(#a-uses)"/>
-      {/* patch→git: down→right at C4, right→down at 680 */}
-      <path d="M 632,576 V 592 L 640,600 H 672 L 680,608 V 624"
-        stroke="#9ca3af" strokeWidth="1" strokeDasharray="2 4" fill="none" opacity="0.5" markerEnd="url(#a-uses)"/>
-      {/* deploy→k8s: down→right at C4, right→down at 1064 */}
-      <path d="M 840,576 V 592 L 848,600 H 1056 L 1064,608 V 624"
-        stroke="#9ca3af" strokeWidth="1" strokeDasharray="3 4" fill="none" opacity="0.4" markerEnd="url(#a-uses)"/>
+      {edges.map((edge, i) => {
+        const fromNode = nodes.get(edge.from)
+        const toNode   = nodes.get(edge.to)
+        if (!fromNode || !toNode) return null
+        const [x1, y1] = nodePt(fromNode, 'bottom')
+        const [x2, y2] = nodePt(toNode,   'top')
+        const d = routeEdge(x1, y1, x2, y2)
+        if (edge.style === 'coord') {
+          return <path key={i} className="e-flow"      d={d} stroke="#3b82f6" strokeWidth="1.5" fill="none" opacity="0.75" markerEnd="url(#a-coord)" />
+        }
+        if (edge.style === 'part') {
+          return <path key={i} className="e-flow"      d={d} stroke="#6b7280" strokeWidth="1.2" fill="none" opacity="0.6"  markerEnd="url(#a-part)"  />
+        }
+        if (edge.style === 'owns') {
+          return <path key={i} className="e-flow-slow" d={d} stroke="#22c55e" strokeWidth="1.2" fill="none" opacity="0.7"  markerEnd="url(#a-owns)"  />
+        }
+        if (edge.style === 'queued') {
+          return <path key={i} d={d} stroke="#6b7280" strokeWidth="1" strokeDasharray="4 4" fill="none" opacity="0.4" markerEnd="url(#a-queue)" />
+        }
+        return <path key={i} d={d} stroke="#9ca3af" strokeWidth="1" strokeDasharray="2 4" fill="none" opacity="0.5" markerEnd="url(#a-audit)" />
+      })}
     </svg>
   )
 }
@@ -309,13 +360,11 @@ function Edges() {
 
 function Legend() {
   const rows: { stroke: string; width: number; dash?: string; label: string }[] = [
-    { stroke: '#3b82f6', width: 1.5, label: 'coordinates  ▶ animated'  },
-    { stroke: '#6b7280', width: 1.2, label: 'participating ▶ animated' },
-    { stroke: '#22c55e', width: 1.2, label: 'owns active  ▶ animated'  },
-    { stroke: '#0891b2', width: 1,   dash: '5 3', label: 'assigned  ▶ animated'    },
-    { stroke: '#d97706', width: 2,   dash: '5 3', label: 'approval gate ▶ pulsing' },
-    { stroke: '#ef4444', width: 2,   label: 'blocked on  ▶ pulsing'   },
-    { stroke: '#9ca3af', width: 1,   dash: '2 3', label: 'uses / depends'          },
+    { stroke: '#3b82f6', width: 1.5,             label: 'coordinates  ▶ animated'  },
+    { stroke: '#6b7280', width: 1.2,             label: 'participating ▶ animated' },
+    { stroke: '#22c55e', width: 1.2,             label: 'owns active  ▶ animated'  },
+    { stroke: '#6b7280', width: 1,   dash: '4 4', label: 'queued / pending'         },
+    { stroke: '#9ca3af', width: 1,   dash: '2 4', label: 'audit schedule'           },
   ]
 
   return (
@@ -342,10 +391,7 @@ function Legend() {
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
-const CANVAS_W = 1296
-const CANVAS_H = 768
-
-const GRID_BG: React.CSSProperties = {
+const GRID_BG: CSSProperties = {
   backgroundImage: [
     'linear-gradient(var(--canvas-grid-major) 1px, transparent 1px)',
     'linear-gradient(90deg, var(--canvas-grid-major) 1px, transparent 1px)',
@@ -361,15 +407,69 @@ interface CircuitViewProps {
 }
 
 export function CircuitView({ onNavigate }: CircuitViewProps) {
+  const { data: agentRegistry = [] } = useQuery({
+    queryKey: ['agent-registry', 'circuit'],
+    queryFn: fetchAgentRegistry,
+    refetchInterval: 30_000,
+  })
+
+  const { data: healthData = [] } = useQuery({
+    queryKey: ['agents', 'health'],
+    queryFn: fetchAgents,
+    refetchInterval: 30_000,
+  })
+
+  const { data: runtimeOverview } = useQuery({
+    queryKey: ['runtime-overview'],
+    queryFn: fetchRuntimeOverview,
+    refetchInterval: 30_000,
+  })
+
+  const { data: threads = [] } = useQuery({
+    queryKey: ['threads'],
+    queryFn: fetchThreads,
+    refetchInterval: 15_000,
+  })
+
+  const { data: workItems = [] } = useQuery({
+    queryKey: ['runtime-work-items'],
+    queryFn: () => fetchRuntimeWorkItems(),
+    refetchInterval: 15_000,
+  })
+
+  const { data: delegations = [] } = useQuery({
+    queryKey: ['runtime-delegations'],
+    queryFn: () => fetchRuntimeDelegations(),
+    refetchInterval: 15_000,
+  })
+
+  const { data: auditLoops = [] } = useQuery({
+    queryKey: ['runtime-audit-loops'],
+    queryFn: fetchRuntimeAuditLoops,
+    refetchInterval: 30_000,
+  })
+
+  const healthMap = useMemo(
+    () => new Map(healthData.map(h => [h.agent.toLowerCase(), h.healthy])),
+    [healthData],
+  )
+
+  const chiefName = runtimeOverview?.chief?.name ?? 'Chief of Staff'
+
+  const { nodes, edges } = useMemo(
+    () => buildGraph(chiefName, agentRegistry, threads, workItems, delegations, auditLoops, healthMap),
+    [chiefName, agentRegistry, threads, workItems, delegations, auditLoops, healthMap],
+  )
+
   return (
     <div style={{ ...GRID_BG, flex: 1, overflow: 'auto', position: 'relative' }}>
       <div style={{ position: 'relative', width: CANVAS_W, height: CANVAS_H }}>
-        <Edges />
-        {NODES.map((node) => (
+        <DynamicEdges nodes={nodes} edges={edges} />
+        {Array.from(nodes.values()).map((node) => (
           <CircuitNode
             key={node.id}
             {...node}
-            onRoomClick={onNavigate ? () => onNavigate('/') : undefined}
+            onRoomClick={node.type === 'room' && onNavigate ? () => onNavigate('/') : undefined}
           />
         ))}
       </div>

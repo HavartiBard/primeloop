@@ -4,6 +4,15 @@ import { runAuditLoop } from '../audits.js'
 import { handleChiefMessage } from '../coordinator.js'
 import { runDelegation } from '../delegation-runner.js'
 import {
+  listFleetLearnings,
+  listFleetLoopWarnings,
+  listFleetSnapshots,
+  listPatterns,
+} from '../fleet-intelligence.js'
+import { detectLoopWarnings } from '../loop-detector.js'
+import { listLessons, listMemoryTimeline, listSnapshots } from '../memory-service.js'
+import { callControlPlaneTool, createPrimePortalContext } from '../mcp/service.js'
+import {
   appendThreadMessage,
   createDelegation,
   createMemory,
@@ -162,6 +171,102 @@ export function createRuntimeRouter({ pool }: { pool: pg.Pool }) {
     if (!category || !content) return res.status(400).json({ error: 'category and content required' })
     try {
       res.status(201).json(await createMemory(pool, req.body))
+    } catch {
+      res.status(500).json({ error: 'internal error' })
+    }
+  })
+
+  router.get('/fleet/patterns', async (req, res) => {
+    const agentId = typeof req.query.agent_id === 'string' ? req.query.agent_id : undefined
+    try {
+      res.json(await listPatterns(pool, agentId))
+    } catch {
+      res.status(500).json({ error: 'internal error' })
+    }
+  })
+
+  router.get('/fleet/learnings', async (req, res) => {
+    const agentId = typeof req.query.agent_id === 'string' ? req.query.agent_id : undefined
+    const query = typeof req.query.query === 'string' ? req.query.query : undefined
+    const limit = req.query.limit ? Number(req.query.limit) : undefined
+    if (limit != null && Number.isNaN(limit)) return res.status(400).json({ error: 'limit must be a number' })
+    try {
+      res.json(await listFleetLearnings(pool, { agentId, query, limit }))
+    } catch {
+      res.status(500).json({ error: 'internal error' })
+    }
+  })
+
+  router.get('/fleet/loop-warnings', async (req, res) => {
+    const agentId = typeof req.query.agent_id === 'string' ? req.query.agent_id : undefined
+    const limit = req.query.limit ? Number(req.query.limit) : undefined
+    if (limit != null && Number.isNaN(limit)) return res.status(400).json({ error: 'limit must be a number' })
+    try {
+      res.json(await listFleetLoopWarnings(pool, { agentId, limit }))
+    } catch {
+      res.status(500).json({ error: 'internal error' })
+    }
+  })
+
+  router.get('/fleet/snapshots', async (req, res) => {
+    const agentId = typeof req.query.agent_id === 'string' ? req.query.agent_id : undefined
+    const limit = req.query.limit ? Number(req.query.limit) : undefined
+    if (limit != null && Number.isNaN(limit)) return res.status(400).json({ error: 'limit must be a number' })
+    try {
+      res.json(await listFleetSnapshots(pool, { agentId, limit }))
+    } catch {
+      res.status(500).json({ error: 'internal error' })
+    }
+  })
+
+  router.post('/fleet/patterns/publish', async (req, res) => {
+    try {
+      const ctx = await createPrimePortalContext(pool)
+      const result = await callControlPlaneTool(pool, ctx, 'publish_pattern', req.body ?? {})
+      res.status(201).json(result)
+    } catch (err) {
+      const message = (err as Error).message
+      if (message === 'no prime agent available') return res.status(409).json({ error: message })
+      if (message === 'content is required') return res.status(400).json({ error: message })
+      res.status(500).json({ error: 'internal error' })
+    }
+  })
+
+  router.get('/agents/:id/loop-warnings', async (req, res) => {
+    const limit = req.query.limit ? Number(req.query.limit) : undefined
+    if (limit != null && Number.isNaN(limit)) return res.status(400).json({ error: 'limit must be a number' })
+    try {
+      res.json(await detectLoopWarnings(pool, req.params.id, { limit }))
+    } catch {
+      res.status(500).json({ error: 'internal error' })
+    }
+  })
+
+  router.get('/agents/:id/memories', async (req, res) => {
+    const limit = req.query.limit ? Number(req.query.limit) : undefined
+    if (limit != null && Number.isNaN(limit)) return res.status(400).json({ error: 'limit must be a number' })
+    try {
+      res.json(await listMemoryTimeline(pool, req.params.id, { limit }))
+    } catch {
+      res.status(500).json({ error: 'internal error' })
+    }
+  })
+
+  router.get('/agents/:id/lessons', async (req, res) => {
+    const limit = req.query.limit ? Number(req.query.limit) : undefined
+    if (limit != null && Number.isNaN(limit)) return res.status(400).json({ error: 'limit must be a number' })
+    try {
+      res.json(await listLessons(pool, req.params.id, { limit }))
+    } catch {
+      res.status(500).json({ error: 'internal error' })
+    }
+  })
+
+  router.get('/agents/:id/snapshots', async (req, res) => {
+    const limit = req.query.limit ? Number(req.query.limit) : undefined
+    if (limit != null && Number.isNaN(limit)) return res.status(400).json({ error: 'limit must be a number' })
+    try {
+      res.json(await listSnapshots(pool, req.params.id, limit))
     } catch {
       res.status(500).json({ error: 'internal error' })
     }

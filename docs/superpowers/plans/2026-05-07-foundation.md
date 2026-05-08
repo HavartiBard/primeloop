@@ -19,8 +19,136 @@ This is **Plan 1 of 5**. Plans are independent and build on this foundation:
 | **1 — Foundation** (this) | Crypto, DB schema, provider/agent API + UI |
 | **2 — OpenCode Runtime** | Process manager, git worktrees, config files, delegation adapter |
 | **3 — MCP Registry + CP MCP Server** | MCP server CRUD, control plane tools, agent-to-agent |
-| **4 — SoulLayer-PG** | Fork SoulLayer, swap SQLite → Postgres+pgvector, portal memory views |
+| **4 — Native Memory & Learning Layer** | SoulLayer/Octopoda-inspired memory tools, context assembly, loop detection, portal memory views |
 | **5 — Prime & Fleet Intelligence** | Cross-agent learning, pattern library, Prime-only tools, Fleet UI |
+
+### Plan 4 Breakdown
+
+Plan 4 is no longer “fork SoulLayer.” It is a native control-plane implementation that borrows:
+- **SoulLayer** concepts for soul files, memories, lessons, and context assembly
+- **Octopoda** concepts for loop detection, snapshots, recovery, and observability
+
+The system of record remains the existing Postgres schema in this repo.
+
+---
+
+## Plan 4: Native Memory & Learning Layer
+
+**Goal:** Build the missing memory, lesson, context, and loop-detection capabilities directly into the control plane so agents can persist and retrieve durable working knowledge without introducing a second runtime or storage boundary.
+
+**Architecture:** The control plane exposes memory-oriented MCP tools, stores all state in `agent_memories` / `agent_lessons` / `agent_patterns`, assembles context before delegations, and surfaces loop/stall signals in the backend and portal. Embedding generation and ranking can begin with deterministic fallbacks and lexical retrieval, then upgrade to semantic retrieval once the embedding path is in place.
+
+**Tech Stack:** TypeScript, Postgres + pgvector, existing MCP server (`backend/src/mcp/server.ts`), existing OpenCode runtime manager, React portal views
+
+### File Map
+
+**Create:**
+- `backend/src/memory-service.ts` — native memory/lesson CRUD, ranking, and context assembly
+- `backend/src/loop-detector.ts` — repeated-failure / stall heuristics over runtime events + delegations
+- `backend/tests/memory-service.test.ts`
+- `backend/tests/loop-detector.test.ts`
+
+**Modify:**
+- `backend/src/mcp/service.ts` — implement memory-native tools (`soul_read`, `soul_update`, `memory_store`, `memory_search`, `memory_timeline`, `lessons_log`, `lessons_check`, `context_get`, `loop_check`, `snapshot_create`)
+- `backend/src/delegation-runner.ts` — write richer memory/lesson events around runs
+- `backend/src/opencode/process-manager.ts` — include memory-tool metadata in generated workspace artifacts
+- `backend/src/routes/runtime.ts` — add API endpoints for per-agent learnings, snapshots, and loop warnings
+- `backend/src/fleet-intelligence.ts` — expand ranking/query support for memory and lessons
+- `web/src/api.ts` — fetch loop warnings, per-agent learnings, and snapshot data
+- `web/src/types.ts` — add loop-warning / snapshot / agent-learning types
+- `web/src/pages/Governance.tsx` — add loop monitor and memory explorer panels
+- `web/src/pages/Agents.tsx` — optional per-agent memory/lesson summary
+
+### Task 1: Native memory service
+
+- [ ] Implement `backend/src/memory-service.ts`
+- [ ] Add `storeMemory(agentId, input)`
+- [ ] Add `storeLesson(agentId, input)`
+- [ ] Add `searchMemories(agentId, query, options)`
+- [ ] Add `listMemoryTimeline(agentId, options)`
+- [ ] Add `checkLessons(agentId, query, options)`
+- [ ] Add `assembleContext(agentId, options)` combining:
+  - soul
+  - assigned patterns
+  - recent high-importance memories
+  - recent high-severity lessons
+- [ ] Start with lexical + recency ranking if embeddings are not available yet
+- [ ] Add tests for store/search/timeline/context assembly
+
+### Task 2: MCP memory tools
+
+- [ ] Extend `backend/src/mcp/service.ts` with:
+  - `soul_read`
+  - `soul_update`
+  - `memory_store`
+  - `memory_search`
+  - `memory_timeline`
+  - `lessons_log`
+  - `lessons_check`
+  - `context_get`
+  - `loop_check`
+  - `snapshot_create`
+- [ ] Add input/output schemas for all new tools
+- [ ] Reuse the native memory service instead of direct SQL inside the tool handlers
+- [ ] Add focused MCP tests for the new tools
+
+### Task 3: Loop detection
+
+- [ ] Implement `backend/src/loop-detector.ts`
+- [ ] Detect:
+  - repeated failed delegations for the same capability/agent pair
+  - repeated nearly-identical prompts over a short time window
+  - rapid retries with no meaningful new output
+  - approval churn for the same action/work item
+- [ ] Emit normalized loop warning objects with:
+  - `agent_id`
+  - `kind`
+  - `severity`
+  - `summary`
+  - `evidence`
+  - `created_at`
+- [ ] Add `loop_check` MCP tool backed by this module
+- [ ] Add tests for repeated-failure and retry/stall cases
+
+### Task 4: Snapshots and recovery scaffolding
+
+- [ ] Decide whether snapshots live in a new `agent_snapshots` table or in `artifacts`
+- [ ] Implement `snapshot_create` as a compact persisted checkpoint of:
+  - current soul hash/version
+  - selected context payload
+  - current work item / delegation linkage
+  - recent warnings
+- [ ] Expose snapshot listing via runtime API
+- [ ] Keep restore/resume out of scope for this iteration unless trivial
+
+### Task 5: Runtime and portal integration
+
+- [ ] Update runtime routes to expose:
+  - per-agent memories
+  - per-agent lessons
+  - loop warnings
+  - snapshots
+- [ ] Add Governance panels for:
+  - loop monitor
+  - memory explorer
+  - recent snapshots
+- [ ] Reuse existing Fleet Intelligence views where possible instead of inventing parallel screens
+
+### Task 6: Retrieval quality upgrade path
+
+- [ ] Keep the first implementation operational without requiring embeddings
+- [ ] Define the embedding hook behind a narrow interface so it can be added later
+- [ ] When embeddings are added:
+  - populate `agent_memories.embedding`
+  - populate `agent_lessons.embedding`
+  - use pgvector similarity in `memory_search`, `lessons_check`, and `query_fleet_learnings`
+
+### Task 7: Verification
+
+- [ ] `cd backend && npm test -- tests/memory-service.test.ts tests/loop-detector.test.ts tests/mcp/service.test.ts`
+- [ ] `cd backend && npm run build`
+- [ ] `cd web && npm run build`
+- [ ] If DB-backed tests are stable, add coverage for new runtime routes and per-agent memory APIs
 
 ---
 
@@ -344,7 +472,7 @@ In `backend/src/db.ts`, append to the end of the SQL string inside `runMigration
       PRIMARY KEY (pattern_id, agent_id)
     );
 
-    -- pgvector: agent memory and lessons (SoulLayer-PG backend)
+    -- pgvector: native agent memory and lessons
     CREATE EXTENSION IF NOT EXISTS vector;
 
     CREATE TABLE IF NOT EXISTS agent_memories (

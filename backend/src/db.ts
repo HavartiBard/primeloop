@@ -254,6 +254,95 @@ export async function runMigrations(pool: pg.Pool): Promise<void> {
 
     CREATE INDEX IF NOT EXISTS idx_runtime_events_created_at
       ON runtime_events (created_at DESC);
+
+    ALTER TABLE providers ADD COLUMN IF NOT EXISTS model TEXT;
+
+    ALTER TABLE agents ADD COLUMN IF NOT EXISTS local_port INTEGER;
+    ALTER TABLE agents ADD COLUMN IF NOT EXISTS worktree_path TEXT;
+    ALTER TABLE agents ADD COLUMN IF NOT EXISTS system_prompt TEXT;
+    ALTER TABLE agents ADD COLUMN IF NOT EXISTS soul TEXT;
+
+    CREATE TABLE IF NOT EXISTS agent_tokens (
+      agent_id UUID PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE,
+      token TEXT NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT now()
+    );
+
+    CREATE TABLE IF NOT EXISTS mcp_servers (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      name TEXT NOT NULL UNIQUE,
+      description TEXT,
+      type TEXT NOT NULL CHECK (type IN ('http', 'stdio')),
+      url TEXT,
+      command TEXT,
+      args TEXT[],
+      env_vars JSONB,
+      created_at TIMESTAMPTZ DEFAULT now()
+    );
+
+    CREATE TABLE IF NOT EXISTS agent_mcp_assignments (
+      agent_id UUID NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+      mcp_server_id UUID NOT NULL REFERENCES mcp_servers(id) ON DELETE CASCADE,
+      PRIMARY KEY (agent_id, mcp_server_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS agent_patterns (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      type TEXT NOT NULL CHECK (type IN ('best_practice', 'antipattern')),
+      content TEXT NOT NULL,
+      severity TEXT DEFAULT 'info',
+      source_agent_id UUID REFERENCES agents(id) ON DELETE SET NULL,
+      published_by UUID REFERENCES agents(id) ON DELETE SET NULL,
+      created_at TIMESTAMPTZ DEFAULT now()
+    );
+
+    CREATE TABLE IF NOT EXISTS agent_pattern_assignments (
+      pattern_id UUID NOT NULL REFERENCES agent_patterns(id) ON DELETE CASCADE,
+      agent_id UUID NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+      PRIMARY KEY (pattern_id, agent_id)
+    );
+
+    CREATE EXTENSION IF NOT EXISTS vector;
+
+    CREATE TABLE IF NOT EXISTS agent_memories (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      agent_id UUID NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+      content TEXT NOT NULL,
+      category TEXT,
+      tags TEXT[],
+      importance INT DEFAULT 3,
+      embedding vector(384),
+      created_at TIMESTAMPTZ DEFAULT now()
+    );
+
+    CREATE TABLE IF NOT EXISTS agent_lessons (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      agent_id UUID NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+      content TEXT NOT NULL,
+      context TEXT,
+      category TEXT,
+      severity TEXT DEFAULT 'info',
+      embedding vector(384),
+      created_at TIMESTAMPTZ DEFAULT now()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_agent_memories_embedding
+      ON agent_memories USING hnsw (embedding vector_cosine_ops);
+
+    CREATE INDEX IF NOT EXISTS idx_agent_lessons_embedding
+      ON agent_lessons USING hnsw (embedding vector_cosine_ops);
+
+    CREATE TABLE IF NOT EXISTS agent_snapshots (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      agent_id UUID NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+      title TEXT NOT NULL,
+      summary TEXT,
+      payload JSONB NOT NULL DEFAULT '{}',
+      created_at TIMESTAMPTZ DEFAULT now()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_agent_snapshots_agent_created_at
+      ON agent_snapshots (agent_id, created_at DESC);
   `)
 }
 

@@ -10,6 +10,8 @@ import { createAgentsRouter } from './routes/agents.js'
 import { createPortalRouter } from './routes/portal.js'
 import { createRuntimeRouter } from './routes/runtime.js'
 import { createApprovalsRouter } from './routes/approvals.js'
+import { createCodexAuthRouter } from './routes/codex-auth.js'
+import { createMcpServersRouter } from './routes/mcp-servers.js'
 import type { RegistryAgent } from './registry.js'
 import type WebSocket from 'ws'
 
@@ -21,6 +23,7 @@ interface AppDeps {
   sshKeyPath: string
   sshUser: string
   onAgentCreated: (agent: RegistryAgent) => void
+  onAgentUpdated?: (agent: RegistryAgent) => void
   onAgentDeleted: (id: string) => void
 }
 
@@ -74,12 +77,15 @@ export function createApp(deps: AppDeps): express.Express {
   )
 
   app.use('/api/providers', createProvidersRouter({ pool: deps.pool }))
+  app.use('/api/providers/:providerId/codex/auth', createCodexAuthRouter())
+  app.use('/api/mcp-servers', createMcpServersRouter({ pool: deps.pool }))
 
   app.use('/api/agents', createAgentsRouter({
     pool: deps.pool,
     sshKeyPath: deps.sshKeyPath,
     sshUser: deps.sshUser,
     onAgentCreated: deps.onAgentCreated,
+    onAgentUpdated: deps.onAgentUpdated,
     onAgentDeleted: deps.onAgentDeleted,
   }))
 

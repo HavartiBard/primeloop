@@ -1,6 +1,7 @@
 import type pg from 'pg'
 import { createAgentAdapter } from './adapters/index.js'
 import { ensurePendingApproval, getApprovalForRun } from './approvals.js'
+import { loadDelegationContext, mergeDelegationContext } from './delegation-context.js'
 import { getAgent } from './registry.js'
 import {
   appendDelegationTrace,
@@ -35,6 +36,10 @@ function threadIdFromRequest(delegation: Delegation): string | undefined {
 function contentFromRequest(delegation: Delegation): string {
   const value = delegation.request?.['content']
   return typeof value === 'string' ? value : ''
+}
+
+function supportsInjectedContext(runtimeFamily: string): boolean {
+  return runtimeFamily === 'opencode' || runtimeFamily === 'codex-app-server'
 }
 
 export async function runDelegation(pool: pg.Pool, delegationId: string): Promise<DelegationRunResult> {
@@ -169,11 +174,19 @@ export async function runDelegation(pool: pg.Pool, delegationId: string): Promis
 
   const adapter = createAgentAdapter(agent)
   const resultEvents: Array<Record<string, unknown>> = []
+  const requestInput = { ...delegation.request }
+
+  if (supportsInjectedContext(agent.runtime_family)) {
+    const injectedContext = await loadDelegationContext(pool, agent.id)
+    if (injectedContext) {
+      requestInput['context'] = mergeDelegationContext(requestInput['context'], injectedContext)
+    }
+  }
 
   try {
     for await (const event of adapter.startTask(agent, {
       capability: delegation.capability,
-      input: delegation.request,
+      input: requestInput,
       work_item_id: delegation.work_item_id,
       delegation_id: delegation.id,
     })) {

@@ -25,6 +25,7 @@ describe('agents registry router', () => {
       sshUser: 'root',
       execFn: mockExec,  // inject mock exec
       onAgentCreated: vi.fn(),
+      onAgentUpdated: vi.fn(),
       onAgentDeleted: vi.fn(),
     }))
   })
@@ -51,12 +52,20 @@ describe('agents registry router', () => {
       host: 'myhost.local',
       container_name: 'my-container',
       config: { api_url: 'http://example.com' },
+      local_port: 9200,
+      worktree_path: '/tmp/agent',
+      system_prompt: 'Be sharp',
+      soul: 'Helpful critic',
     })
     expect(res.status).toBe(201)
     expect(res.body.name).toBe('test-agent')
     expect(res.body.runtime_family).toBe('hermes')
     expect(res.body.execution_mode).toBe('external')
     expect(res.body.capabilities).toEqual(['coordination'])
+    expect(res.body.local_port).toBe(9200)
+    expect(res.body.worktree_path).toBe('/tmp/agent')
+    expect(res.body.system_prompt).toBe('Be sharp')
+    expect(res.body.soul).toBe('Helpful critic')
     expect(res.body.id).toBeTruthy()
   })
 

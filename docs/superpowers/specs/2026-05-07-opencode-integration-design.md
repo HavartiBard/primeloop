@@ -12,7 +12,7 @@ This spec covers the full agent runtime and intelligence layer for the control p
 1. **Encryption at rest** — AES-256-GCM for all provider credentials
 2. **OpenCode agent runtime** — per-agent `opencode serve` processes with git worktree isolation
 3. **MCP registry & agent profiles** — built-in MCP server management, no external Director dependency
-4. **SoulLayer-PG** — forked SoulLayer with Postgres+pgvector backend for agent soul, memory, and lessons
+4. **Native memory & learning layer** — SoulLayer/Octopoda-inspired memory, lesson, context, and loop-detection primitives implemented directly in the control plane
 5. **Agent-to-agent communication** — all inter-agent work routed through the control plane for full auditability
 6. **Prime agent** — fleet coordinator with cross-agent learning visibility
 
@@ -259,10 +259,10 @@ The process manager writes these files to each agent's worktree at creation and 
 | File | Source | Notes |
 |------|--------|-------|
 | `AGENTS.md` | `agents.system_prompt` | Operating instructions |
-| `soul.md` | `agents.soul` | Identity and values (read by SoulLayer) |
+| `soul.md` | `agents.soul` | Identity and values consumed by native memory/context tooling |
 | `TOOLS.md` | Auto-generated | Lists all assigned MCP servers and their tools |
 | `opencode.json` | Generated | Model config + MCP server list |
-| `soullayer.json` | Generated | Points SoulLayer at Postgres |
+| `control-plane-tools.json` | Generated | Machine-readable schemas for built-in control-plane tools |
 
 **`TOOLS.md` example (auto-generated):**
 ```markdown
@@ -295,14 +295,6 @@ The process manager writes these files to each agent's worktree at creation and 
         "CONTROL_PLANE_AGENT_TOKEN": "<token>"
       }
     },
-    "soullayer": {
-      "type": "stdio",
-      "command": "soullayer-pg",
-      "env": {
-        "POSTGRES_URL": "<url>",
-        "SOULLAYER_AGENT_ID": "<agent-id>"
-      }
-    },
     "gitea": {
       "type": "http",
       "url": "http://gitea:3000/mcp"
@@ -322,7 +314,7 @@ The portal manages available MCP servers in the `mcp_servers` table. No external
 Two MCP servers are always included — no manual assignment needed:
 
 1. **Control Plane MCP** (`backend/src/mcp/server.ts`) — exposes control plane tools
-2. **SoulLayer-PG** (`packages/soullayer-pg`) — soul, memory, and lessons
+2. **Native memory tools** — exposed through the control-plane MCP and backed directly by Postgres tables in this service
 
 ### External MCP Servers (user-configured)
 
@@ -340,30 +332,18 @@ The agent form gains an **MCP Servers** section — checkboxes from the registry
 
 ---
 
-## 8. SoulLayer-PG
+## 8. Native Memory & Learning Layer
 
-A fork of [SoulLayer](https://github.com/phoenix0700/soullayer) maintained at `packages/soullayer-pg`. The only change: swap the SQLite storage adapter for Postgres + pgvector.
+The control plane owns soul, memory, lesson, pattern, and context assembly directly in Postgres. This layer is informed by [SoulLayer](https://github.com/phoenix0700/soullayer) and Octopoda: keep the useful agent-facing semantics, but avoid a second runtime, storage boundary, or competing system of record.
 
-### Why fork rather than use upstream
+### Design direction
 
-SoulLayer's semantic search (cosine similarity via Xenova embeddings) is retained — the embedding model runs locally in the SoulLayer process. Only storage is redirected to Postgres so all agent data lives in one place.
+- **Single source of truth** — agent state, memory, lessons, patterns, approvals, and delegations all stay in one Postgres schema
+- **Native tool surface** — agents use MCP tools from the control plane for memory operations rather than talking to a separate memory daemon
+- **Context assembly at delegation time** — the control plane prepends relevant patterns, memories, and lessons before each task
+- **Operational features inspired by Octopoda** — loop detection, retry awareness, snapshots, and richer observability are implemented as control-plane features, not third-party dependencies
 
-### Configuration
-
-`soullayer.json` written to each agent's worktree:
-```json
-{
-  "soulFile": "soul.md",
-  "transport": "stdio",
-  "postgres": {
-    "agentId": "<uuid>"
-  }
-}
-```
-
-`POSTGRES_URL` is passed as an env var at spawn.
-
-### Tools provided to agents
+### Agent-facing tools
 
 | Tool | Purpose |
 |------|---------|
@@ -375,6 +355,8 @@ SoulLayer's semantic search (cosine similarity via Xenova embeddings) is retaine
 | `lessons_log` | Record a lesson with context and severity |
 | `lessons_check` | Query past lessons relevant to current situation |
 | `context_get` | Assemble soul + memories + lessons into token-budgeted context |
+| `loop_check` | Inspect recent delegation traces and learnings for repetition/stall patterns |
+| `snapshot_create` | Persist a compact checkpoint of current memory and task context for recovery |
 
 ---
 
@@ -390,6 +372,7 @@ SoulLayer's semantic search (cosine similarity via Xenova embeddings) is retaine
 | `request_peer_review` | Ask another agent to review output |
 | `request_approval` | Escalate a decision to Prime or human |
 | `update_work_item` | Update status/notes on current work item |
+| `save_memory` | Persist a memory or lesson in the fleet database |
 
 ### Prime-only tools
 
@@ -498,12 +481,24 @@ Control plane assigns delegation → Adapter.execute(delegation, agent)
 
 ### Session start context injection
 
-Before posting the prompt, the adapter calls SoulLayer's `context_get` equivalent by querying Postgres directly and prepending:
+Before posting the prompt, the adapter assembles native context by querying Postgres directly and prepending:
 - Agent's assigned Prime-published patterns
 - Recent high-importance memories
 - Recent high-severity lessons
 
 This ensures agents start each delegation with relevant fleet knowledge.
+
+### Loop detection and recovery
+
+Inspired by Octopoda, the control plane also tracks:
+- repeated delegation failures with the same capability/prompt shape
+- rapid task restarts without meaningful new output
+- repeated approval requests for the same blocked action
+
+These signals become:
+- warnings in Prime views
+- candidate lessons for `agent_lessons`
+- future guardrails for automatic cooldowns or alternate routing
 
 ---
 
@@ -539,6 +534,7 @@ This ensures agents start each delegation with relevant fleet knowledge.
 - **Fleet Intelligence** tab: query fleet memories/lessons, pattern library
 - Per-pattern: which agents it's been published to, source lineage
 - **Memory Explorer**: per-agent memory and lesson browser with semantic search
+- **Loop Monitor**: repeated-failure and stall signals inspired by Octopoda
 
 ---
 
@@ -546,7 +542,6 @@ This ensures agents start each delegation with relevant fleet knowledge.
 
 ```dockerfile
 RUN npm install -g opencode@latest
-RUN npm install -g soullayer-pg   # our fork, published to local registry or installed from path
 ```
 
 ---
@@ -570,3 +565,16 @@ volumes:
 - **Multi-turn session resume after backend restart** — sessions restart fresh; history in trace log
 - **Rate limiting on control plane tools**
 - **Vector search tuning** — ivfflat index with defaults; tune `lists` parameter after data accumulates
+
+---
+
+## 17. References, Not Dependencies
+
+This design borrows ideas from:
+- **SoulLayer**: soul file semantics, memory/lesson primitives, context assembly patterns
+- **Octopoda**: loop detection, observability, recovery orientation, memory lifecycle ergonomics
+
+But the implementation direction is explicit:
+- no long-lived SoulLayer fork as a required subsystem
+- no Octopoda runtime or cloud dependency
+- Postgres-backed native control-plane features remain the system of record
