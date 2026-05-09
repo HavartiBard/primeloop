@@ -64,6 +64,13 @@ export interface LifecycleResult {
   output: string
 }
 
+export interface AgentControlPlaneToken {
+  agent_id: string
+  token: string
+  endpoint: string
+  auth_scheme: 'Bearer'
+}
+
 export interface WorkItem {
   id: string
   title: string

@@ -11,6 +11,7 @@ import { createPortalRouter } from './routes/portal.js'
 import { createRuntimeRouter } from './routes/runtime.js'
 import { createApprovalsRouter } from './routes/approvals.js'
 import { createCodexAuthRouter } from './routes/codex-auth.js'
+import { createControlPlaneRouter } from './routes/control-plane.js'
 import { createMcpServersRouter } from './routes/mcp-servers.js'
 import type { RegistryAgent } from './registry.js'
 import type WebSocket from 'ws'
@@ -91,6 +92,7 @@ export function createApp(deps: AppDeps): express.Express {
 
   app.use('/api/portal', createPortalRouter({ pool: deps.pool }))
   app.use('/api/approvals', createApprovalsRouter({ pool: deps.pool }))
+  app.use('/api/control-plane', createControlPlaneRouter({ pool: deps.pool }))
   app.use('/api', createRuntimeRouter({ pool: deps.pool }))
 
   // Serve React SPA — must come after all API routes

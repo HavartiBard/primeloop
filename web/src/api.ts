@@ -4,6 +4,7 @@ import type {
   Provider,
   RegistryAgent,
   LifecycleResult,
+  AgentControlPlaneToken,
   PortalState,
   RuntimeOverview,
   RuntimeThread,
@@ -145,6 +146,16 @@ export async function agentLifecycle(id: string, action: 'restart' | 'stop' | 's
   })
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   return res.json() as Promise<LifecycleResult>
+}
+
+export async function issueAgentControlPlaneToken(id: string, rotate = false): Promise<AgentControlPlaneToken> {
+  const res = await fetch(`${API_BASE}/agents/${id}/control-plane-token`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ rotate }),
+  })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json() as Promise<AgentControlPlaneToken>
 }
 
 export async function fetchMcpServers(): Promise<MCPServer[]> {

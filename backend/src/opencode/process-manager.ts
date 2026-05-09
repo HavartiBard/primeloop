@@ -1,9 +1,9 @@
 import { access, mkdir, writeFile } from 'node:fs/promises'
 import path from 'node:path'
 import { execFile, spawn } from 'node:child_process'
-import { randomBytes } from 'node:crypto'
 import { promisify } from 'node:util'
 import type pg from 'pg'
+import { getOrCreateAgentToken } from '../agent-tokens.js'
 import { decryptEnvVars } from '../mcp-registry.js'
 import { listControlPlaneTools, type McpToolDefinition } from '../mcp/service.js'
 import {
@@ -255,7 +255,7 @@ export class OpenCodeProcessManager {
     const worktreePath = agent.worktree_path
     if (!worktreePath) throw new Error(`worktree_path missing for agent ${agent.name}`)
     const assignedServers = await this.listAssignedMcpServers(agent.id)
-    const controlPlaneToken = await this.getOrCreateAgentToken(agent.id)
+    const controlPlaneToken = await getOrCreateAgentToken(this.pool, agent.id)
     const model = await this.resolveModel(agent)
     const controlPlaneTools = await listControlPlaneTools()
 
@@ -322,24 +322,6 @@ export class OpenCodeProcessManager {
     return rows
   }
 
-  private async getOrCreateAgentToken(agentId: string): Promise<string> {
-    const { rows } = await this.pool.query<{ token: string }>(
-      'SELECT token FROM agent_tokens WHERE agent_id = $1',
-      [agentId],
-    )
-    if (rows[0]?.token) return rows[0].token
-
-    const token = randomBytes(24).toString('hex')
-    const inserted = await this.pool.query<{ token: string }>(
-      `INSERT INTO agent_tokens (agent_id, token)
-       VALUES ($1, $2)
-       ON CONFLICT (agent_id) DO UPDATE SET token = agent_tokens.token
-       RETURNING token`,
-      [agentId, token],
-    )
-    return inserted.rows[0]?.token ?? token
-  }
-
   private renderToolsMarkdown(controlPlaneTools: McpToolDefinition[], assignedServers: MCPServerRecord[]): string {
     const sections = [renderControlPlaneToolsMarkdown(controlPlaneTools).trimEnd()]
     for (const server of assignedServers) {
@@ -372,7 +354,7 @@ export class OpenCodeProcessManager {
     const provider = await this.resolveProvider(agent)
     const providerKey = provider ? await getProviderApiKey(this.pool, provider.id) : null
     const providerEnv = providerEnvName(provider)
-    const controlPlaneToken = await this.getOrCreateAgentToken(agent.id)
+    const controlPlaneToken = await getOrCreateAgentToken(this.pool, agent.id)
 
     const child = this.spawnFn('opencode', ['serve', '--port', String(localPort)], {
       cwd: worktreePath,

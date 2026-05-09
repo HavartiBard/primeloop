@@ -1,5 +1,6 @@
 import { Router } from 'express'
 import pg from 'pg'
+import { getOrCreateAgentToken, rotateAgentToken } from '../agent-tokens.js'
 import { listAgents, getAgent, insertAgent, updateAgent, deleteAgent, RegistryAgent } from '../registry.js'
 import { makeExecOnAgent, dockerLifecycle, SshExecFn } from '../lifecycle.js'
 import { createAgentAdapter } from '../adapters/index.js'
@@ -143,6 +144,25 @@ export function createAgentsRouter(deps: AgentsRouterDeps) {
       if (!agent) return res.status(404).json({ error: 'agent not found' })
       const adapter = createAgentAdapter(agent)
       res.json(await adapter.health(agent))
+    } catch {
+      res.status(500).json({ error: 'internal error' })
+    }
+  })
+
+  router.post('/:id/control-plane-token', async (req, res) => {
+    try {
+      const agent = await getAgent(deps.pool, req.params.id)
+      if (!agent) return res.status(404).json({ error: 'agent not found' })
+      const rotate = req.body?.rotate === true
+      const token = rotate
+        ? await rotateAgentToken(deps.pool, agent.id)
+        : await getOrCreateAgentToken(deps.pool, agent.id)
+      res.json({
+        agent_id: agent.id,
+        token,
+        endpoint: '/api/control-plane/tools',
+        auth_scheme: 'Bearer',
+      })
     } catch {
       res.status(500).json({ error: 'internal error' })
     }

@@ -1,5 +1,13 @@
 # Handoff
 
+## Recent Progress
+
+- Native memory, loop detection, snapshots, and fleet learning views are implemented and deployed.
+- Added an HTTP control-plane bridge for external agents with bearer-token issuance and tool calls.
+- Reworked the `Agents` page so the registry is the selector, health is shown in-table, and edit flows open inline in the lower detail panel.
+- CP tokens are now masked by default with an explicit `Show` toggle in the bridge panel.
+- Live review stack is currently running on the `agent-cp-*` deployment path with `pgvector/pgvector:pg16` and `SECRET_ENCRYPTION_KEY` configured.
+
 ## Current direction
 
 The original "circuit canvas" concept has been abandoned.
@@ -91,4 +99,3 @@ If not running, restart the local dev server from `web/`.
 - sandboxing is working again in this environment
 - this latest room-centric rewrite is local work in `agent-control-plane`
 - no live deploy was done as part of this UI iteration
-

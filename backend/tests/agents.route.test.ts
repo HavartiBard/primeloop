@@ -117,6 +117,28 @@ describe('agents registry router', () => {
     expect(res.status).toBe(400)
   })
 
+  it('POST /:id/control-plane-token issues and rotates a token', async () => {
+    const create = await request(app).post('/api/agents').send({
+      name: 'external-tool-agent',
+      type: 'custom',
+      runtime_family: 'generic-http',
+      execution_mode: 'external',
+      capabilities: ['implementation'],
+    })
+    const agentId = create.body.id
+
+    const issued = await request(app).post(`/api/agents/${agentId}/control-plane-token`).send({})
+    expect(issued.status).toBe(200)
+    expect(issued.body.agent_id).toBe(agentId)
+    expect(typeof issued.body.token).toBe('string')
+    expect(issued.body.endpoint).toBe('/api/control-plane/tools')
+
+    const rotated = await request(app).post(`/api/agents/${agentId}/control-plane-token`).send({ rotate: true })
+    expect(rotated.status).toBe(200)
+    expect(rotated.body.agent_id).toBe(agentId)
+    expect(rotated.body.token).not.toBe(issued.body.token)
+  })
+
   it('DELETE /:id removes an agent', async () => {
     const list = await request(app).get('/api/agents')
     const agent = list.body.find((a: any) => a.name === 'test-agent')
