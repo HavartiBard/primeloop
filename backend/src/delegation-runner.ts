@@ -82,9 +82,12 @@ export async function runDelegation(pool: pg.Pool, delegationId: string): Promis
         },
       })
       delegation = await appendDelegationTrace(pool, delegation, {
-        type: 'policy.blocked',
-        reason: 'approval-required',
-        approval_id: approval.approval_id,
+        step: 'failed',
+        at: new Date().toISOString(),
+        detail: {
+          reason: 'approval-required',
+          approval_id: approval.approval_id,
+        },
       })
       const updated = await updateDelegation(pool, delegation.id, { status: 'blocked' })
       await insertRuntimeEvent(pool, {
@@ -109,8 +112,11 @@ export async function runDelegation(pool: pg.Pool, delegationId: string): Promis
     }
 
     delegation = await appendDelegationTrace(pool, delegation, {
-      type: 'policy.approved',
-      approval_id: existingApproval.approval_id,
+      step: 'scope_checked',
+      at: new Date().toISOString(),
+      detail: {
+        approval_id: existingApproval.approval_id,
+      },
     })
   }
 
@@ -156,9 +162,13 @@ export async function runDelegation(pool: pg.Pool, delegationId: string): Promis
   }
 
   delegation = await appendDelegationTrace(pool, delegation, {
-    type: 'delegation.started',
-    to_agent_id: agent.id,
-    agent: agent.name,
+    step: 'claimed',
+    at: new Date().toISOString(),
+    actor_agent_id: agent.id,
+    detail: {
+      agent: agent.name,
+      to_agent_id: agent.id,
+    },
   })
   delegation = await updateDelegation(pool, delegation.id, { status: 'running' }) ?? delegation
   if (delegation.work_item_id) {
@@ -192,9 +202,13 @@ export async function runDelegation(pool: pg.Pool, delegationId: string): Promis
     })) {
       resultEvents.push({ type: event.type, payload: event.payload })
       delegation = await appendDelegationTrace(pool, delegation, {
-        type: 'adapter.event',
-        adapter_event_type: event.type,
-        payload: event.payload,
+        step: event.type === 'task.complete' || event.type === 'task.failed' ? 'wait_returned' : 'prompt_sent',
+        at: new Date().toISOString(),
+        actor_agent_id: agent.id,
+        detail: {
+          adapter_event_type: event.type,
+          payload: event.payload,
+        },
       })
       await insertRuntimeEvent(pool, {
         event_type: `adapter.${event.type}`,
