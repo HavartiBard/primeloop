@@ -74,6 +74,8 @@ export async function runMigrations(pool: pg.Pool): Promise<void> {
     ALTER TABLE agents ADD COLUMN IF NOT EXISTS execution_mode TEXT NOT NULL DEFAULT 'external';
     ALTER TABLE agents ADD COLUMN IF NOT EXISTS endpoint TEXT;
     ALTER TABLE agents ADD COLUMN IF NOT EXISTS capabilities JSONB NOT NULL DEFAULT '[]';
+    ALTER TABLE agents ADD COLUMN IF NOT EXISTS is_prime BOOLEAN NOT NULL DEFAULT false;
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_agents_single_prime ON agents (is_prime) WHERE is_prime;
 
     CREATE TABLE IF NOT EXISTS chief_profiles (
       id                TEXT PRIMARY KEY DEFAULT 'default',
@@ -342,7 +344,81 @@ export async function runMigrations(pool: pg.Pool): Promise<void> {
     );
 
     CREATE INDEX IF NOT EXISTS idx_agent_snapshots_agent_created_at
-      ON agent_snapshots (agent_id, created_at DESC);
+    ON agent_snapshots (agent_id, created_at DESC);
+
+-- Prime Agent Configuration and Sessions tables
+CREATE TABLE IF NOT EXISTS prime_agent_config (
+  id TEXT PRIMARY KEY DEFAULT 'default',
+  enabled BOOLEAN NOT NULL DEFAULT false,
+  cron_fast_interval_seconds INT NOT NULL DEFAULT 300,
+  cron_slow_interval_seconds INT NOT NULL DEFAULT 3600,
+  debounce_window_ms INT NOT NULL DEFAULT 10000,
+  provider_routing JSONB NOT NULL DEFAULT '{}',
+  cost_controls JSONB NOT NULL DEFAULT '{}',
+  git_store JSONB NOT NULL DEFAULT '{}',
+  status TEXT NOT NULL DEFAULT 'stopped',
+  last_started_at TIMESTAMPTZ,
+  last_error TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS prime_agent_sessions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  trigger_type TEXT NOT NULL CHECK (trigger_type IN ('event', 'cron_fast', 'cron_slow', 'chief_message')),
+  trigger_payload JSONB NOT NULL,
+  module_name TEXT,
+  reasoning_summary TEXT,
+  actions_taken JSONB NOT NULL DEFAULT '[]',
+  token_count INT NOT NULL DEFAULT 0,
+  provider_used TEXT,
+  model_used TEXT,
+  status TEXT NOT NULL CHECK (status IN ('running', 'completed', 'failed', 'escalated')),
+  error TEXT,
+  started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  completed_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_prime_agent_sessions_started_at ON prime_agent_sessions (started_at DESC);
+
+CREATE TABLE IF NOT EXISTS prime_queue_items (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  event_type TEXT NOT NULL,
+  payload JSONB NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  actor_agent_id UUID REFERENCES agents(id) ON DELETE SET NULL,
+  attempt INT NOT NULL DEFAULT 0,
+  error TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_prime_queue_items_status_created_at
+ON prime_queue_items (status, created_at);
+
+CREATE TABLE IF NOT EXISTS checkpoint_continuations (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  owner_type TEXT NOT NULL CHECK (owner_type IN ('prime_session', 'delegation')),
+  owner_id UUID NOT NULL,
+  actor_agent_id UUID REFERENCES agents(id) ON DELETE SET NULL,
+  step TEXT NOT NULL,
+  context_hash TEXT NOT NULL,
+  context_snapshot JSONB NOT NULL,
+  continuation JSONB NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  expires_at TIMESTAMPTZ,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  resumed_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_checkpoint_continuations_owner_id_status
+ON checkpoint_continuations (owner_id, status);
+
+ALTER TABLE prime_agent_sessions
+  ADD COLUMN IF NOT EXISTS last_step TEXT;
+
+INSERT INTO prime_agent_config (id, enabled) VALUES ('default', false) ON CONFLICT (id) DO NOTHING;
+
   `)
 }
 

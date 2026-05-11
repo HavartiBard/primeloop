@@ -67,10 +67,26 @@ export interface Delegation {
   capability: string
   request: Record<string, unknown>
   result: Record<string, unknown>
-  trace: unknown[]
+  trace: DelegationTraceEntry[]
   created_at: string
   updated_at: string
   completed_at?: string
+}
+
+export interface DelegationTraceEntry {
+  step:
+    | 'queued'
+    | 'claimed'
+    | 'prompt_sent'
+    | 'wait_returned'
+    | 'scope_checked'
+    | 'result_routed'
+    | 'failed'
+  at: string
+  completed_at?: string
+  actor_agent_id?: string
+  tokens?: number
+  detail?: Record<string, unknown>
 }
 
 export interface AuditLoop {
@@ -416,7 +432,7 @@ export async function updateDelegation(
 export async function appendDelegationTrace(
   pool: pg.Pool,
   delegation: Delegation,
-  entry: Record<string, unknown>
+  entry: DelegationTraceEntry
 ): Promise<Delegation> {
   const trace = [
     ...(Array.isArray(delegation.trace) ? delegation.trace : []),
