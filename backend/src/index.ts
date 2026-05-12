@@ -10,6 +10,7 @@ import type { AgentEvent } from './events/types.js'
 import { startIntegration, stopIntegration } from './dispatch.js'
 import { startAuditScheduler } from './audits.js'
 import { OpenCodeProcessManager } from './opencode/process-manager.js'
+import { PostgresCheckpointStore } from './checkpoint-store.js'
 
 const {
   DATABASE_URL = '',
@@ -28,6 +29,12 @@ const pool = createPool(DATABASE_URL)
 await runMigrations(pool)
 await seedRegistry(pool, process.env)
 await upsertLocalCodexProvider(pool)
+
+const checkpointStore = new PostgresCheckpointStore(pool)
+const recoveredCount = await checkpointStore.recoverStaleItems()
+if (recoveredCount > 0) {
+  console.log(`Recovered ${recoveredCount} stale checkpoint item(s)`)
+}
 const processManager = new OpenCodeProcessManager(pool)
 await processManager.initialize()
 
