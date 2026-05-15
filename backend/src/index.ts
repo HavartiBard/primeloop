@@ -11,6 +11,7 @@ import { startIntegration, stopIntegration } from './dispatch.js'
 import { startAuditScheduler } from './audits.js'
 import { OpenCodeProcessManager } from './opencode/process-manager.js'
 import { PostgresCheckpointStore } from './checkpoint-store.js'
+import { createPrimeAgentService } from './prime-agent/service.js'
 
 const {
   DATABASE_URL = '',
@@ -35,6 +36,8 @@ const recoveredCount = await checkpointStore.recoverStaleItems()
 if (recoveredCount > 0) {
   console.log(`Recovered ${recoveredCount} stale checkpoint item(s)`)
 }
+const primeAgentService = createPrimeAgentService(pool, { checkpointStore })
+await primeAgentService.start()
 const processManager = new OpenCodeProcessManager(pool)
 await processManager.initialize()
 
@@ -74,6 +77,8 @@ const app = createApp({
   langgraphApiUrl: LANGGRAPH_API_URL,
   sshKeyPath: SSH_KEY_PATH,
   sshUser: SSH_USER,
+  primeQueue: primeAgentService.queue,
+  onPrimeConfigUpdated: () => primeAgentService.start(),
   onAgentCreated: (agent) => {
     startIntegration(agent, { pool, broadcast })
     void processManager.syncAgent(agent)
