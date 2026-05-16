@@ -12,6 +12,8 @@ import {
   type RegistryAgent,
   updateAgent,
 } from '../registry.js'
+import { PiHarness } from '../fleet-executor/pi-harness.js'
+import type { AgentHarness } from '../fleet-executor/harness.js'
 
 const execFileAsync = promisify(execFile)
 const DEFAULT_PORT_START = 4200
@@ -70,7 +72,11 @@ function slugify(name: string): string {
 function isManagedLocalAgent(agent: RegistryAgent): boolean {
   return agent.enabled
     && agent.execution_mode === 'local'
-    && (agent.runtime_family === 'opencode' || agent.runtime_family === 'codex-app-server')
+    && (
+      agent.runtime_family === 'opencode'
+      || agent.runtime_family === 'codex-app-server'
+      || agent.runtime_family === 'pi'
+    )
 }
 
 function defaultAgentInstructions(agent: RegistryAgent): string {
@@ -153,6 +159,7 @@ export class OpenCodeProcessManager {
   private readonly execFileFn: typeof execFileAsync
   private readonly sleepFn: (ms: number) => Promise<void>
   private readonly processes = new Map<string, ProcessState>()
+  private readonly piHarnesses = new Map<string, PiHarness>()
 
   constructor(
     private readonly pool: pg.Pool,
@@ -193,7 +200,16 @@ export class OpenCodeProcessManager {
     return preparedAgent
   }
 
+  getRunningHarness(agentId: string): AgentHarness | undefined {
+    return this.piHarnesses.get(agentId)
+  }
+
   stopAgent(agentId: string): void {
+    const piHarness = this.piHarnesses.get(agentId)
+    if (piHarness) {
+      void piHarness.close()
+      this.piHarnesses.delete(agentId)
+    }
     const running = this.processes.get(agentId)
     if (!running) return
     running.stopped = true
@@ -345,6 +361,10 @@ export class OpenCodeProcessManager {
   }
 
   private async startAgent(agent: RegistryAgent): Promise<void> {
+    if (agent.runtime_family === 'pi') {
+      return this.startPiAgent(agent)
+    }
+
     const localPort = agent.local_port
     const worktreePath = agent.worktree_path
     if (!localPort || !worktreePath) {
@@ -384,6 +404,21 @@ export class OpenCodeProcessManager {
     })
 
     await this.waitForHealth(localPort)
+  }
+
+  private async startPiAgent(agent: RegistryAgent): Promise<void> {
+    const worktreePath = agent.worktree_path
+    if (!worktreePath) throw new Error(`worktree_path missing for pi agent ${agent.name}`)
+
+    const provider = await this.resolveProvider(agent)
+    const model = await this.resolveModel(agent)
+
+    const harness = new PiHarness()
+    await harness.start({
+      cwd: worktreePath,
+      model: { providerID: provider?.type ?? 'openai', id: model },
+    })
+    this.piHarnesses.set(agent.id, harness)
   }
 
   private async retryStart(agent: RegistryAgent, restartAttempts: number): Promise<void> {
