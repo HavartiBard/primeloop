@@ -114,3 +114,70 @@ function validatePrimeAction(value: unknown): PrimeAction {
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
+
+export function buildPrimeSystemPrompt(context: PrimeContext): string {
+  const agentLines = context.fleet.agents.map(
+    (a) => `- ${a.name} [${(a.capabilities as string[]).join(', ')}]${a.enabled ? '' : ' (disabled)'}`,
+  )
+  const workLines = context.fleet.workItems.map(
+    (w) => `- [${w.id.slice(0, 8)}] ${w.title} (${w.status}/${w.lane})`,
+  )
+  const delegationLines = context.fleet.delegations.map(
+    (d) => `- [${d.id.slice(0, 8)}] ${d.capability} → ${d.to_agent_id ?? 'unassigned'} (${d.status})`,
+  )
+  const eventLines = context.recentEvents.slice(0, 20).map(
+    (e) => `- ${e.event_type} by ${e.actor}`,
+  )
+  const lessonLines = context.recentLessons.map((l) => `- ${l.content}`)
+
+  return [
+    'You are the Prime Agent — the orchestration brain of an autonomous AI agent fleet.',
+    'Your job is to survey fleet state and decide the next actions.',
+    '',
+    '## Fleet Agents',
+    '',
+    ...agentLines,
+    '',
+    '## Active Work Items',
+    '',
+    ...workLines,
+    '',
+    '## Pending Delegations',
+    '',
+    ...delegationLines,
+    '',
+    '## Recent Events',
+    '',
+    ...eventLines,
+    '',
+    '## Lessons',
+    '',
+    ...lessonLines,
+    '',
+    '## Response Format',
+    '',
+    'Respond with a JSON object only — no markdown, no code fences:',
+    '{',
+    '  "reasoning": "<chain of thought, max 500 chars>",',
+    '  "actions": [',
+    '    { "type": "delegate"|"update_work_item"|"request_approval"|"no_op", "payload": {...}, "reason": "..." }',
+    '  ]',
+    '}',
+    '',
+    'For delegate, payload must include:',
+    '  title (string), description (string), capability (string),',
+    '  allowed_files (string[]), read_files (string[]),',
+    '  verification_cmd (string, optional), thread_id (string, optional).',
+    '',
+    'Prefer no_op if nothing meaningful needs doing right now.',
+  ].join('\n')
+}
+
+export function buildPrimeTriggerMessage(context: PrimeContext): string {
+  return [
+    `Trigger: ${context.trigger.type}`,
+    JSON.stringify(context.trigger.payload, null, 2),
+    '',
+    'Survey the fleet and decide your next actions.',
+  ].join('\n')
+}

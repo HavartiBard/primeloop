@@ -1,9 +1,26 @@
 import { describe, expect, it } from 'vitest'
 import {
+  buildPrimeSystemPrompt,
+  buildPrimeTriggerMessage,
   createMockLlmRouter,
   createUnavailableLlmRouter,
   validatePrimeDecision,
 } from '../../src/prime-agent/llm-router.js'
+import type { PrimeContext } from '../../src/prime-agent/context.js'
+
+const minimalContext: PrimeContext = {
+  trigger: {
+    type: 'cron.fast',
+    payload: { triggered_at: '2026-01-01T00:00:00Z', source: 'cron' },
+  },
+  fleet: {
+    agents: [{ id: 'a1', name: 'Coder', capabilities: ['code'], enabled: true } as never],
+    workItems: [],
+    delegations: [],
+  },
+  recentEvents: [],
+  recentLessons: [],
+}
 
 describe('prime-agent llm router', () => {
   it('rejects invalid action types', () => {
@@ -112,5 +129,39 @@ describe('prime-agent llm router', () => {
         recentLessons: [],
       })
     ).rejects.toThrow('Prime LLM router is not configured in Phase A')
+  })
+})
+
+describe('buildPrimeSystemPrompt', () => {
+  it('includes the agent name and capabilities', () => {
+    const prompt = buildPrimeSystemPrompt(minimalContext)
+    expect(prompt).toContain('Coder')
+    expect(prompt).toContain('code')
+  })
+
+  it('includes instruction to return JSON with reasoning and actions', () => {
+    const prompt = buildPrimeSystemPrompt(minimalContext)
+    expect(prompt).toContain('"reasoning"')
+    expect(prompt).toContain('"actions"')
+  })
+
+  it('mentions all four allowed action types', () => {
+    const prompt = buildPrimeSystemPrompt(minimalContext)
+    expect(prompt).toContain('delegate')
+    expect(prompt).toContain('update_work_item')
+    expect(prompt).toContain('request_approval')
+    expect(prompt).toContain('no_op')
+  })
+})
+
+describe('buildPrimeTriggerMessage', () => {
+  it('includes the event type', () => {
+    const msg = buildPrimeTriggerMessage(minimalContext)
+    expect(msg).toContain('cron.fast')
+  })
+
+  it('ends with the survey instruction', () => {
+    const msg = buildPrimeTriggerMessage(minimalContext)
+    expect(msg).toContain('Survey the fleet')
   })
 })
