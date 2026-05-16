@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { PassThrough } from 'node:stream'
 import type { ChildProcess } from 'node:child_process'
+import type { HarnessEvent, TaskResult } from '../../src/fleet-executor/harness.js'
 
 const spawnMock = vi.hoisted(() => vi.fn())
 
@@ -96,5 +97,74 @@ describe('PiHarness', () => {
 
     await expect(harness.close()).resolves.toBeUndefined()
     expect(proc.kill).toHaveBeenCalledWith('SIGTERM')
+  })
+
+  it('dispatch() writes a prompt JSONL line to stdin', async () => {
+    const { proc, stdout } = makeProcess()
+    spawnMock.mockReturnValue(proc)
+
+    const startP = harness.start({ cwd: '/tmp', model: { providerID: 'anthropic', id: 'claude-opus-4-7' } })
+    stdout.write('{"type":"ready"}\n')
+    await startP
+
+    const chunks: Buffer[] = []
+    proc.stdin!.on('data', (c: Buffer) => chunks.push(c))
+
+    const handle = await harness.dispatch({
+      text: 'do the thing',
+      allowed_files: ['src/foo.ts'],
+      read_files: ['README.md'],
+    })
+
+    const written = JSON.parse(Buffer.concat(chunks).toString().trim())
+    expect(written.type).toBe('prompt')
+    expect(written.text).toBe('do the thing')
+    expect(written.allowed_files).toEqual(['src/foo.ts'])
+    expect(handle.id).toMatch(/^[0-9a-f-]{36}$/)
+  })
+
+  it('done resolves with TaskResult on agent_end event', async () => {
+    const { proc, stdout } = makeProcess()
+    spawnMock.mockReturnValue(proc)
+
+    const startP = harness.start({ cwd: '/tmp', model: { providerID: 'anthropic', id: 'claude-opus-4-7' } })
+    stdout.write('{"type":"ready"}\n')
+    await startP
+
+    const handle = await harness.dispatch({ text: 'go', allowed_files: [], read_files: [] })
+
+    const taskResult: TaskResult = { text: 'done', tokens: 42, changed_files: ['src/a.ts'] }
+
+    // consume events concurrently so the generator can run
+    void (async () => { for await (const _ of handle.events) {} })()
+
+    stdout.write(JSON.stringify({ type: 'agent_end', result: taskResult }) + '\n')
+
+    await expect(handle.done).resolves.toMatchObject({ text: 'done', tokens: 42 })
+  })
+
+  it('events iterable yields mapped HarnessEvents before agent_end', async () => {
+    const { proc, stdout } = makeProcess()
+    spawnMock.mockReturnValue(proc)
+
+    const startP = harness.start({ cwd: '/tmp', model: { providerID: 'anthropic', id: 'claude-opus-4-7' } })
+    stdout.write('{"type":"ready"}\n')
+    await startP
+
+    const handle = await harness.dispatch({ text: 'go', allowed_files: [], read_files: [] })
+
+    const collected: HarnessEvent[] = []
+    const consume = (async () => {
+      for await (const e of handle.events) collected.push(e)
+    })()
+
+    stdout.write('{"type":"tool_execution_start","tool":"read_file","args":{"path":"foo.ts"}}\n')
+    stdout.write('{"type":"message_update","delta":"working..."}\n')
+    stdout.write('{"type":"agent_end","result":{"text":"done","tokens":10}}\n')
+    await consume
+
+    expect(collected[0]).toMatchObject({ type: 'tool_call_start', tool: 'read_file' })
+    expect(collected[1]).toMatchObject({ type: 'message_update', delta: 'working...' })
+    expect(collected[2]).toMatchObject({ type: 'task_end' })
   })
 })
