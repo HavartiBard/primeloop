@@ -79,7 +79,7 @@ export const PRESET_RULES = [
   { key: 'humans_in_loop', label: 'Keep humans in the loop on external communications' },
 ]
 
-// ─── Step components (stubs — filled in by later tasks) ──────────────────────
+// ─── Step components ────────────────────────────────────────────────────────
 
 function ProviderCard({ draft, onChange, onToggle }: {
   draft: ProviderDraft
