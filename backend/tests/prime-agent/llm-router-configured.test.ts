@@ -61,7 +61,10 @@ const minimalContext: PrimeContext = {
 describe('createConfiguredLlmRouter', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    mockGetProvider.mockResolvedValue({ rows: [anthropicProvider] })
+    mockGetProvider.mockImplementation((sql: string) => {
+      if ((sql as string).includes('chief_profiles')) return Promise.resolve({ rows: [] })
+      return Promise.resolve({ rows: [anthropicProvider] })
+    })
     mockGetProviderApiKey.mockResolvedValue('sk-test')
     mockGetPrimeConfig.mockResolvedValue({
       provider_routing: { planning: [{ provider_id: 'prov-1', model: 'claude-opus-4-7' }] },
@@ -87,7 +90,10 @@ describe('createConfiguredLlmRouter', () => {
     mockGetPrimeConfig.mockResolvedValue({
       provider_routing: { planning: [{ provider_id: 'prov-2', model: 'gpt-4o' }] },
     })
-    mockGetProvider.mockResolvedValue({ rows: [openaiProvider] })
+    mockGetProvider.mockImplementation((sql: string) => {
+      if ((sql as string).includes('chief_profiles')) return Promise.resolve({ rows: [] })
+      return Promise.resolve({ rows: [openaiProvider] })
+    })
     mockOpenAICreate.mockResolvedValue({
       choices: [{ message: { content: JSON.stringify(validDecision) } }],
       usage: { total_tokens: 200 },
@@ -104,7 +110,10 @@ describe('createConfiguredLlmRouter', () => {
     mockGetPrimeConfig.mockResolvedValue({
       provider_routing: { planning: [{ provider_id: 'prov-3', model: 'my-model' }] },
     })
-    mockGetProvider.mockResolvedValue({ rows: [llmProvider] })
+    mockGetProvider.mockImplementation((sql: string) => {
+      if ((sql as string).includes('chief_profiles')) return Promise.resolve({ rows: [] })
+      return Promise.resolve({ rows: [llmProvider] })
+    })
     mockOpenAICreate.mockResolvedValue({
       choices: [{ message: { content: JSON.stringify(validDecision) } }],
       usage: { total_tokens: 80 },
@@ -124,9 +133,12 @@ describe('createConfiguredLlmRouter', () => {
         ],
       },
     })
-    mockGetProvider
-      .mockResolvedValueOnce({ rows: [anthropicProvider] })
-      .mockResolvedValueOnce({ rows: [openaiProvider] })
+    mockGetProvider.mockImplementation((sql: string, params?: unknown[]) => {
+      if ((sql as string).includes('chief_profiles')) return Promise.resolve({ rows: [] })
+      const providerId = params?.[0]
+      if (providerId === 'prov-1') return Promise.resolve({ rows: [anthropicProvider] })
+      return Promise.resolve({ rows: [openaiProvider] })
+    })
     mockGetProviderApiKey.mockResolvedValue('sk-test')
     mockAnthropicCreate.mockRejectedValue(new Error('rate limited'))
     mockOpenAICreate.mockResolvedValue({
