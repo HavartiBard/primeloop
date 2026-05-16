@@ -2,7 +2,7 @@ import type pg from 'pg'
 import { setPrimeCoordinatorQueue } from '../coordinator.js'
 import { getPrimeConfig } from './config.js'
 import { handlePrimeEvent } from './event-loop.js'
-import { createUnavailableLlmRouter, type LlmRouter } from './llm-router.js'
+import { createConfiguredLlmRouter, type LlmRouter } from './llm-router.js'
 import { createInMemoryPrimeQueue, createPostgresPrimeQueue, type PrimeQueue } from './queue.js'
 
 export interface PrimeAgentService {
@@ -28,7 +28,7 @@ export function createPrimeAgentService(
     queue = options.queue ?? createInMemoryPrimeQueue()
   }
 
-  const router = options.router ?? createUnavailableLlmRouter()
+  const router: LlmRouter = options.router ?? createConfiguredLlmRouter(pool)
 
   let started = false
   setPrimeCoordinatorQueue(queue)
