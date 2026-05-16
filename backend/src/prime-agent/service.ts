@@ -31,6 +31,8 @@ export function createPrimeAgentService(
   const router: LlmRouter = options.router ?? createConfiguredLlmRouter(pool)
 
   let started = false
+  let fastTimer: ReturnType<typeof setInterval> | undefined
+  let slowTimer: ReturnType<typeof setInterval> | undefined
   setPrimeCoordinatorQueue(queue)
 
   return {
@@ -39,11 +41,10 @@ export function createPrimeAgentService(
       if (started) return
 
       const config = await getPrimeConfig(pool)
-      if (!config.enabled) {
-        return
-      }
+      if (!config.enabled) return
 
       started = true
+
       queue.process(async (event) => {
         try {
           await handlePrimeEvent(pool, event, { router })
@@ -51,9 +52,27 @@ export function createPrimeAgentService(
           console.error('[prime-agent] event handling failed:', error)
         }
       })
+
+      fastTimer = setInterval(() => {
+        void queue.enqueue({
+          type: 'cron.fast',
+          payload: { triggered_at: new Date().toISOString(), source: 'cron' },
+        })
+      }, config.cron_fast_interval_seconds * 1000)
+
+      slowTimer = setInterval(() => {
+        void queue.enqueue({
+          type: 'cron.fast',
+          payload: { triggered_at: new Date().toISOString(), source: 'cron_slow' },
+        })
+      }, config.cron_slow_interval_seconds * 1000)
     },
     async close(): Promise<void> {
       started = false
+      clearInterval(fastTimer)
+      clearInterval(slowTimer)
+      fastTimer = undefined
+      slowTimer = undefined
       await queue.close()
     },
   }

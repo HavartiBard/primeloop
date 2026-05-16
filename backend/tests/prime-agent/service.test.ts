@@ -99,6 +99,53 @@ describe('prime-agent service', () => {
 
     expect(queue.close).toHaveBeenCalledTimes(1)
   })
+
+  it('enqueues cron.fast events at the configured fast interval', async () => {
+    vi.useFakeTimers()
+    configMocks.getPrimeConfig.mockResolvedValue({
+      enabled: true,
+      cron_fast_interval_seconds: 1,
+      cron_slow_interval_seconds: 3600,
+    })
+    eventLoopMocks.handlePrimeEvent.mockResolvedValue(undefined)
+
+    const { createInMemoryPrimeQueue } = await import('../../src/prime-agent/queue.js')
+    const queue = createInMemoryPrimeQueue()
+    const enqueueSpy = vi.spyOn(queue, 'enqueue')
+
+    const service = createPrimeAgentService(pool, { queue })
+    await service.start()
+
+    await vi.advanceTimersByTimeAsync(2500)
+
+    expect(enqueueSpy).toHaveBeenCalledTimes(2)
+    expect(enqueueSpy.mock.calls[0]![0]).toMatchObject({ type: 'cron.fast' })
+
+    await service.close()
+    vi.useRealTimers()
+  })
+
+  it('does not enqueue cron events after close()', async () => {
+    vi.useFakeTimers()
+    configMocks.getPrimeConfig.mockResolvedValue({
+      enabled: true,
+      cron_fast_interval_seconds: 1,
+      cron_slow_interval_seconds: 3600,
+    })
+    eventLoopMocks.handlePrimeEvent.mockResolvedValue(undefined)
+
+    const { createInMemoryPrimeQueue } = await import('../../src/prime-agent/queue.js')
+    const queue = createInMemoryPrimeQueue()
+    const enqueueSpy = vi.spyOn(queue, 'enqueue')
+
+    const service = createPrimeAgentService(pool, { queue })
+    await service.start()
+    await service.close()
+
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(enqueueSpy).not.toHaveBeenCalled()
+    vi.useRealTimers()
+  })
 })
 
 function createTestQueue() {
