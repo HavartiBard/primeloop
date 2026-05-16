@@ -220,19 +220,24 @@ async function callProvider(
   route: PrimeConfigRoute,
   context: PrimeContext,
 ): Promise<PrimeDecision> {
-  const { rows } = await pool.query('SELECT * FROM providers WHERE id = $1', [route.provider_id])
+  const { rows } = await pool.query(
+    'SELECT type, base_url, model FROM providers WHERE id = $1',
+    [route.provider_id],
+  )
   const provider = rows[0]
   if (!provider) throw new Error(`provider not found: ${route.provider_id}`)
 
   const apiKey = await getProviderApiKey(pool, route.provider_id)
+  if (!apiKey) throw new Error(`provider ${route.provider_id} has no API key configured`)
+
   const systemPrompt = buildPrimeSystemPrompt(context)
   const userMessage = buildPrimeTriggerMessage(context)
-  const model = route.model ?? provider.model ?? 'claude-opus-4-7'
+  const model = route.model
 
   if (provider.type === 'anthropic') {
-    return callAnthropic(apiKey ?? '', model, systemPrompt, userMessage, provider.type as string)
+    return callAnthropic(apiKey, model, systemPrompt, userMessage, provider.type)
   }
-  return callOpenAI(provider.base_url as string, apiKey ?? '', model, systemPrompt, userMessage, provider.type as string)
+  return callOpenAI(provider.base_url, apiKey, model, systemPrompt, userMessage, provider.type)
 }
 
 async function callAnthropic(

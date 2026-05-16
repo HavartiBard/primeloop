@@ -26,7 +26,6 @@ vi.mock('../../src/prime-agent/config.js', () => ({
 
 vi.mock('../../src/registry.js', () => ({
   getProviderApiKey: mockGetProviderApiKey,
-  listProviders: vi.fn().mockResolvedValue([]),
 }))
 
 import { createConfiguredLlmRouter } from '../../src/prime-agent/llm-router.js'
