@@ -1,3 +1,8 @@
+import Anthropic from '@anthropic-ai/sdk'
+import OpenAI from 'openai'
+import type pg from 'pg'
+import { getPrimeConfig, type PrimeConfigRoute } from './config.js'
+import { getProviderApiKey } from '../registry.js'
 import type { PrimeContext } from './context.js'
 
 export const PRIME_ACTION_TYPES = [
@@ -180,4 +185,113 @@ export function buildPrimeTriggerMessage(context: PrimeContext): string {
     '',
     'Survey the fleet and decide your next actions.',
   ].join('\n')
+}
+
+export function createConfiguredLlmRouter(pool: pg.Pool): LlmRouter {
+  return {
+    async decide(context: PrimeContext): Promise<PrimeDecision> {
+      const config = await getPrimeConfig(pool)
+      const routes: PrimeConfigRoute[] =
+        config.provider_routing?.['planning'] ??
+        config.provider_routing?.['routing'] ??
+        []
+
+      if (routes.length === 0) {
+        throw new Error('prime-agent: no provider routes configured in prime_agent_config')
+      }
+
+      let lastError: Error = new Error('no providers tried')
+
+      for (const route of routes) {
+        try {
+          return await callProvider(pool, route, context)
+        } catch (err) {
+          lastError = err instanceof Error ? err : new Error(String(err))
+        }
+      }
+
+      throw lastError
+    },
+  }
+}
+
+async function callProvider(
+  pool: pg.Pool,
+  route: PrimeConfigRoute,
+  context: PrimeContext,
+): Promise<PrimeDecision> {
+  const { rows } = await pool.query('SELECT * FROM providers WHERE id = $1', [route.provider_id])
+  const provider = rows[0]
+  if (!provider) throw new Error(`provider not found: ${route.provider_id}`)
+
+  const apiKey = await getProviderApiKey(pool, route.provider_id)
+  const systemPrompt = buildPrimeSystemPrompt(context)
+  const userMessage = buildPrimeTriggerMessage(context)
+  const model = route.model ?? provider.model ?? 'claude-opus-4-7'
+
+  if (provider.type === 'anthropic') {
+    return callAnthropic(apiKey ?? '', model, systemPrompt, userMessage, provider.type as string)
+  }
+  return callOpenAI(provider.base_url as string, apiKey ?? '', model, systemPrompt, userMessage, provider.type as string)
+}
+
+async function callAnthropic(
+  apiKey: string,
+  model: string,
+  systemPrompt: string,
+  userMessage: string,
+  providerType: string,
+): Promise<PrimeDecision> {
+  const client = new Anthropic({ apiKey })
+  const response = await client.messages.create({
+    model,
+    max_tokens: 1024,
+    system: systemPrompt,
+    messages: [{ role: 'user', content: userMessage }],
+  })
+
+  const text = response.content.find((b) => b.type === 'text')?.text ?? ''
+  const tokenCount = (response.usage?.input_tokens ?? 0) + (response.usage?.output_tokens ?? 0)
+  const decision = validatePrimeDecision(parseJsonDecision(text))
+  decision.provider_used = providerType
+  decision.model_used = response.model ?? model
+  decision.token_count = tokenCount
+  return decision
+}
+
+async function callOpenAI(
+  baseURL: string,
+  apiKey: string,
+  model: string,
+  systemPrompt: string,
+  userMessage: string,
+  providerType: string,
+): Promise<PrimeDecision> {
+  const client = new OpenAI({ apiKey, baseURL: baseURL || undefined })
+  const response = await client.chat.completions.create({
+    model,
+    response_format: { type: 'json_object' },
+    messages: [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userMessage },
+    ],
+  })
+
+  const text = response.choices[0]?.message?.content ?? ''
+  const tokenCount = response.usage?.total_tokens ?? 0
+  const decision = validatePrimeDecision(parseJsonDecision(text))
+  decision.provider_used = providerType
+  decision.model_used = response.model ?? model
+  decision.token_count = tokenCount
+  return decision
+}
+
+function parseJsonDecision(text: string): unknown {
+  const trimmed = text.trim()
+  const stripped = trimmed.replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '')
+  try {
+    return JSON.parse(stripped)
+  } catch {
+    throw new Error(`prime-agent: LLM returned non-JSON: ${stripped.slice(0, 200)}`)
+  }
 }
