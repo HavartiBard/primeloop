@@ -1,6 +1,5 @@
 import { Router } from 'express'
 import type pg from 'pg'
-import { encrypt } from '../crypto.js'
 
 export function createSetupRouter({ pool }: { pool: pg.Pool }) {
   const router = Router()
