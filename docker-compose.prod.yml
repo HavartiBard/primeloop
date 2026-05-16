@@ -17,6 +17,7 @@ services:
     image: code.klsll.com/havartibard/agent-control-plane:latest
     volumes:
       - /mnt/user/appdata/agent-cp/codex:/root/.codex
+      - /mnt/user/appdata/agent-cp/workspace:/workspace
     environment:
       DATABASE_URL: postgresql://agent_cp:${POSTGRES_PASSWORD}@postgres:5432/agent_cp
       SECRET_ENCRYPTION_KEY: ${SECRET_ENCRYPTION_KEY:?required}
@@ -27,6 +28,10 @@ services:
       SLACK_APP_TOKEN: ${SLACK_APP_TOKEN:-}
       SLACK_CHANNEL_ID: ${SLACK_CHANNEL_ID:-C0AU0620ATX}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      AGENT_REPO_ROOT: ${AGENT_REPO_ROOT:-/workspace/repo}
+      AGENT_WORKTREE_ROOT: ${AGENT_WORKTREE_ROOT:-/workspace/agents}
+      GITEA_TOKEN: ${GITEA_TOKEN:-}
     ports:
       - "3100:3100"
     depends_on:

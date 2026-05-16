@@ -22,6 +22,11 @@ describe('app smoke tests', () => {
       langgraphApiUrl: 'http://localhost:9999',
       sshKeyPath: '/dev/null',
       sshUser: 'root',
+      primeQueue: {
+        enqueue: vi.fn(async () => {}),
+        process: vi.fn(),
+        close: vi.fn(async () => {}),
+      },
       onAgentCreated: vi.fn(),
       onAgentDeleted: vi.fn(),
     })

@@ -1,5 +1,7 @@
 import type pg from 'pg'
+import { getPrimeConfig } from './prime-agent/config.js'
 import type { RegistryAgent } from './registry.js'
+import type { PrimeQueue } from './prime-agent/queue.js'
 import {
   appendThreadMessage,
   createDelegation,
@@ -10,6 +12,16 @@ import {
   type ThreadMessage,
   type WorkItem,
 } from './runtime.js'
+
+let primeQueue: PrimeQueue | undefined
+
+export function setPrimeCoordinatorQueue(queue: PrimeQueue): void {
+  primeQueue = queue
+}
+
+export function getPrimeCoordinatorQueue(): PrimeQueue | undefined {
+  return primeQueue
+}
 
 export interface ChiefRoute {
   capability: string
@@ -154,14 +166,79 @@ export async function handleChiefMessage(
   content: string,
   sender = 'james'
 ): Promise<ChiefMessageResult> {
-  const route = classifyChiefRequest(content)
-
   const userMessage = await appendThreadMessage(pool, threadId, {
     role: 'user',
     sender,
     content,
     metadata: { source: 'chief-desk' },
   })
+
+  const primeConfig = primeQueue ? await getPrimeConfig(pool) : null
+  if (primeQueue && primeConfig?.enabled) {
+    const route: ChiefRoute = {
+      capability: 'coordination',
+      lane: 'intake',
+      priority: 'normal',
+      status: 'active',
+      requiresApproval: false,
+      reason: 'Prime Agent intake is enabled for chief message routing.',
+    }
+
+    const workItem = await createWorkItem(pool, {
+      title: titleFromContent(content),
+      description: content,
+      status: route.status,
+      priority: route.priority,
+      lane: route.lane,
+      owner_label: 'Prime Agent',
+      thread_id: threadId,
+      metadata: {
+        source: 'prime-agent-intake',
+        message_id: userMessage.id,
+      },
+    })
+
+    await primeQueue.enqueue({
+      type: 'chief.message',
+      payload: {
+        thread_id: threadId,
+        message_id: userMessage.id,
+        content,
+        sender,
+      },
+    })
+
+    const chiefMessage = await appendThreadMessage(pool, threadId, {
+      role: 'assistant',
+      sender: 'Chief of Staff',
+      content: 'I queued this for Prime Agent planning.',
+      metadata: {
+        route,
+        work_item_id: workItem.id,
+        prime_queued: true,
+      },
+    })
+
+    await insertRuntimeEvent(pool, {
+      event_type: 'chief.routed.prime',
+      actor: 'Chief of Staff',
+      thread_id: threadId,
+      work_item_id: workItem.id,
+      payload: {
+        message_id: userMessage.id,
+        prime_enabled: true,
+      },
+    })
+
+    return {
+      user_message: userMessage,
+      chief_message: chiefMessage,
+      work_item: workItem,
+      route,
+    }
+  }
+
+  const route = classifyChiefRequest(content)
 
   const selectedAgent = await selectAgentForCapability(pool, route)
   const workItem = await createWorkItem(pool, {

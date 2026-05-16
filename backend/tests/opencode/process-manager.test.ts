@@ -186,4 +186,10 @@ describe('OpenCodeProcessManager', () => {
 
     expect(child.kill).toHaveBeenCalled()
   })
+
+  it('getRunningHarness returns undefined for an agent that has not started yet', () => {
+    const manager = new OpenCodeProcessManager({} as unknown as pg.Pool)
+    const result = manager.getRunningHarness('unknown-agent-id')
+    expect(result).toBeUndefined()
+  })
 })

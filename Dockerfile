@@ -21,7 +21,8 @@ RUN apk add --no-cache tini
 WORKDIR /app
 COPY backend/package*.json ./
 RUN npm ci --omit=dev && \
-    npm install -g @openai/codex
+    npm install -g @openai/codex && \
+    npm install -g @earendil-works/pi-coding-agent
 
 COPY --from=backend-builder /app/dist ./dist
 COPY --from=web-builder /web/dist ./public

@@ -10,6 +10,9 @@ import type { AgentEvent } from './events/types.js'
 import { startIntegration, stopIntegration } from './dispatch.js'
 import { startAuditScheduler } from './audits.js'
 import { OpenCodeProcessManager } from './opencode/process-manager.js'
+import { PostgresCheckpointStore } from './checkpoint-store.js'
+import { createPrimeAgentService } from './prime-agent/service.js'
+import { FleetDispatcher } from './fleet-executor/dispatcher.js'
 
 const {
   DATABASE_URL = '',
@@ -28,8 +31,24 @@ const pool = createPool(DATABASE_URL)
 await runMigrations(pool)
 await seedRegistry(pool, process.env)
 await upsertLocalCodexProvider(pool)
+
+const checkpointStore = new PostgresCheckpointStore(pool)
+const recoveredCount = await checkpointStore.recoverStaleItems()
+if (recoveredCount > 0) {
+  console.log(`Recovered ${recoveredCount} stale checkpoint item(s)`)
+}
+const primeAgentService = createPrimeAgentService(pool, { checkpointStore })
+await primeAgentService.start()
 const processManager = new OpenCodeProcessManager(pool)
 await processManager.initialize()
+
+const fleetDispatcher = new FleetDispatcher({
+  pool,
+  primeQueue: primeAgentService.queue,
+  getHarness: (agentId) => processManager.getRunningHarness(agentId),
+})
+fleetDispatcher.start()
+console.log('Fleet dispatcher started')
 
 const { broadcast: rawBroadcast, addClient } = createBroadcaster()
 
@@ -67,6 +86,8 @@ const app = createApp({
   langgraphApiUrl: LANGGRAPH_API_URL,
   sshKeyPath: SSH_KEY_PATH,
   sshUser: SSH_USER,
+  primeQueue: primeAgentService.queue,
+  onPrimeConfigUpdated: () => primeAgentService.start(),
   onAgentCreated: (agent) => {
     startIntegration(agent, { pool, broadcast })
     void processManager.syncAgent(agent)
@@ -105,4 +126,12 @@ if (SLACK_BOT_TOKEN && SLACK_APP_TOKEN) {
 
 server.listen(parseInt(PORT), () => {
   console.log(`Agent control plane backend listening on :${PORT}`)
+})
+
+process.on('SIGTERM', async () => {
+  await fleetDispatcher.stop()
+  await primeAgentService.close()
+  server.close()
+  await pool.end()
+  process.exit(0)
 })
