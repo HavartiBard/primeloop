@@ -12,6 +12,7 @@ import { startAuditScheduler } from './audits.js'
 import { OpenCodeProcessManager } from './opencode/process-manager.js'
 import { PostgresCheckpointStore } from './checkpoint-store.js'
 import { createPrimeAgentService } from './prime-agent/service.js'
+import { FleetDispatcher } from './fleet-executor/dispatcher.js'
 
 const {
   DATABASE_URL = '',
@@ -40,6 +41,14 @@ const primeAgentService = createPrimeAgentService(pool, { checkpointStore })
 await primeAgentService.start()
 const processManager = new OpenCodeProcessManager(pool)
 await processManager.initialize()
+
+const fleetDispatcher = new FleetDispatcher({
+  pool,
+  primeQueue: primeAgentService.queue,
+  getHarness: (agentId) => processManager.getRunningHarness(agentId),
+})
+fleetDispatcher.start()
+console.log('Fleet dispatcher started')
 
 const { broadcast: rawBroadcast, addClient } = createBroadcaster()
 
@@ -117,4 +126,12 @@ if (SLACK_BOT_TOKEN && SLACK_APP_TOKEN) {
 
 server.listen(parseInt(PORT), () => {
   console.log(`Agent control plane backend listening on :${PORT}`)
+})
+
+process.on('SIGTERM', async () => {
+  await fleetDispatcher.stop()
+  await primeAgentService.close()
+  server.close()
+  await pool.end()
+  process.exit(0)
 })
