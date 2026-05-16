@@ -26,7 +26,7 @@ export class PiHarness implements AgentHarness {
         let msg: Record<string, unknown>
         try { msg = JSON.parse(line) } catch { return }
         if (msg['type'] === 'ready') {
-          rl.off('line', onLine)
+          rl.close()
           resolve()
         }
       }
@@ -34,6 +34,7 @@ export class PiHarness implements AgentHarness {
       rl.on('line', onLine)
 
       proc.on('close', (code) => {
+        rl.close()
         reject(new Error(`pi process exited before ready (code ${code})`))
       })
     })
