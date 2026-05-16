@@ -43,9 +43,7 @@ export class PiHarness implements AgentHarness {
     if (!this.proc) throw new Error('PiHarness not started')
 
     const id = crypto.randomUUID()
-    const stdin = this.proc.stdin!
-
-    stdin.write(
+    this.proc.stdin!.write(
       JSON.stringify({
         type: 'prompt',
         text: prompt.text,
@@ -55,21 +53,44 @@ export class PiHarness implements AgentHarness {
     )
 
     const proc = this.proc
-    const events = this.makeEventIterable(proc)
-
-    const done = new Promise<TaskResult>((resolve, reject) => {
-      ;(async () => {
-        for await (const event of this.makeEventIterable(proc)) {
-          if (event.type === 'task_end') {
-            resolve(event.result)
-            return
-          }
-        }
-        reject(new Error('pi process closed without agent_end'))
-      })()
+    let resolveDone!: (r: TaskResult) => void
+    let rejectDone!: (e: Error) => void
+    const done = new Promise<TaskResult>((res, rej) => {
+      resolveDone = res
+      rejectDone = rej
     })
 
-    return { id, events, done }
+    async function* generateEvents(): AsyncIterable<HarnessEvent> {
+      const rl = createInterface({ input: proc.stdout! })
+      try {
+        for await (const line of rl) {
+          let msg: Record<string, unknown>
+          try { msg = JSON.parse(line) } catch { continue }
+
+          switch (msg['type']) {
+            case 'tool_execution_start':
+              yield { type: 'tool_call_start', tool: String(msg['tool']), args: (msg['args'] ?? {}) as Record<string, unknown> }
+              break
+            case 'tool_execution_end':
+              yield { type: 'tool_call_end', tool: String(msg['tool']), result: msg['result'], error: msg['error'] as string | undefined }
+              break
+            case 'message_update':
+              yield { type: 'message_update', delta: String(msg['delta'] ?? '') }
+              break
+            case 'agent_end': {
+              const result = msg['result'] as TaskResult
+              resolveDone(result)
+              yield { type: 'task_end', result }
+              return
+            }
+          }
+        }
+      } finally {
+        rejectDone(new Error('pi process closed without agent_end'))
+      }
+    }
+
+    return { id, events: generateEvents(), done }
   }
 
   async abort(_taskId: string): Promise<void> {
@@ -85,28 +106,5 @@ export class PiHarness implements AgentHarness {
       const timer = setTimeout(() => { proc.kill('SIGKILL'); resolve() }, 5000)
       proc.on('close', () => { clearTimeout(timer); resolve() })
     })
-  }
-
-  private async *makeEventIterable(proc: ChildProcess): AsyncIterable<HarnessEvent> {
-    const rl = createInterface({ input: proc.stdout! })
-    for await (const line of rl) {
-      let msg: Record<string, unknown>
-      try { msg = JSON.parse(line) } catch { continue }
-
-      switch (msg['type']) {
-        case 'tool_execution_start':
-          yield { type: 'tool_call_start', tool: String(msg['tool']), args: (msg['args'] ?? {}) as Record<string, unknown> }
-          break
-        case 'tool_execution_end':
-          yield { type: 'tool_call_end', tool: String(msg['tool']), result: msg['result'], error: msg['error'] as string | undefined }
-          break
-        case 'message_update':
-          yield { type: 'message_update', delta: String(msg['delta'] ?? '') }
-          break
-        case 'agent_end':
-          yield { type: 'task_end', result: msg['result'] as TaskResult }
-          return
-      }
-    }
   }
 }
