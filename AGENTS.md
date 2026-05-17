@@ -45,9 +45,7 @@ Changed: <list of changed files, or "none">
 Verification: <command run and result, or "none">
 ```
 
-After outputting TASK COMPLETE:
-- Make no further tool calls.
-- If you receive any further prompt, respond with a single empty line and nothing else.
-- Do not summarize, ask what to do next, or generate a Goal/Progress template.
-- Silence is the correct response after TASK COMPLETE.
-
+After outputting TASK COMPLETE for the current task:
+- Make no further tool calls for that task.
+- Do not append any extra summary, next steps, or Goal/Progress template after the block.
+- On a later user prompt, treat it as a new task and respond normally.
