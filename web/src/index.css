@@ -120,6 +120,20 @@ html[data-theme='light'] {
 @keyframes circuit-march   { to { stroke-dashoffset: -28; } }
 @keyframes circuit-throb   { 0%,100%{ opacity:1 } 50%{ opacity:0.28 } }
 @keyframes circuit-sdpulse { 0%,100%{ opacity:1 } 50%{ opacity:0.4  } }
+@keyframes wizard-segment-scan {
+  0% { transform: translateX(-130%) skewX(-18deg); opacity: 0; }
+  18% { opacity: 0.95; }
+  52% { opacity: 0.7; }
+  100% { transform: translateX(210%) skewX(-18deg); opacity: 0; }
+}
+@keyframes wizard-segment-flicker {
+  0%, 100% { opacity: 0.92; filter: saturate(1); }
+  10% { opacity: 0.72; }
+  13% { opacity: 0.98; }
+  41% { opacity: 0.82; }
+  44% { opacity: 0.98; }
+  73% { opacity: 0.76; }
+}
 
 .e-flow       { stroke-dasharray: 10 7; animation: circuit-march 0.65s linear infinite; }
 .e-flow-slow  { stroke-dasharray: 8 8;  animation: circuit-march 1.1s  linear infinite; }
@@ -128,6 +142,8 @@ html[data-theme='light'] {
 .sd-run-pulse { animation: circuit-sdpulse 2.0s infinite; }
 .sd-blk-pulse { animation: circuit-sdpulse 1.4s infinite; }
 .sd-att-pulse { animation: circuit-sdpulse 1.0s infinite; }
+.wizard-segment-active { animation: wizard-segment-flicker 1.8s steps(6, end) infinite; }
+.wizard-segment-scan { animation: wizard-segment-scan 2.2s linear infinite; }
 
 body {
   min-height: 100vh;

@@ -173,6 +173,11 @@ function CodexAuthModal({ provider, onClose }: { provider: Provider; onClose: ()
     setDeviceCode(null)
     try {
       const result = await startCodexDeviceAuth(provider.id)
+      if (result.already_authenticated || !result.url) {
+        setDeviceStep('complete')
+        invalidateStatus()
+        return
+      }
       sessionRef.current = result.session_id
       setDeviceUrl(result.url)
       setDeviceCode(result.code)

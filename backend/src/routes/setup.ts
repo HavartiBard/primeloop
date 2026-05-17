@@ -39,6 +39,65 @@ export function createSetupRouter({ pool }: { pool: pg.Pool }) {
     }
   })
 
+  router.post('/provider-models', async (req, res) => {
+    const body = req.body as { type?: string; base_url?: string; api_key?: string }
+    const type = body.type?.trim()
+    const baseUrl = body.base_url?.trim().replace(/\/+$/, '')
+    const apiKey = body.api_key?.trim()
+
+    if (!type || !baseUrl) {
+      return res.status(400).json({ error: 'type and base_url are required' })
+    }
+
+    try {
+      const controller = new AbortController()
+      const timeout = setTimeout(() => controller.abort(), 5_000)
+      let upstream: Response
+
+      if (type === 'ollama') {
+        upstream = await fetch(`${baseUrl}/api/tags`, { signal: controller.signal })
+        clearTimeout(timeout)
+        const data = await upstream.json() as { models?: Array<{ name?: string }> }
+        const models = (data.models ?? []).map((m) => m.name).filter(Boolean)
+        return res.json({ models })
+      }
+
+      if (type === 'anthropic') {
+        if (!apiKey) {
+          clearTimeout(timeout)
+          return res.status(400).json({ error: 'api_key is required for anthropic model discovery' })
+        }
+        upstream = await fetch(`${baseUrl}/v1/models`, {
+          signal: controller.signal,
+          headers: {
+            'x-api-key': apiKey,
+            'anthropic-version': '2023-06-01',
+          },
+        })
+      } else {
+        if (!apiKey && type !== 'litellm' && type !== 'llm') {
+          clearTimeout(timeout)
+          return res.status(400).json({ error: 'api_key is required for model discovery' })
+        }
+        upstream = await fetch(`${baseUrl}/models`, {
+          signal: controller.signal,
+          headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : undefined,
+        })
+      }
+
+      clearTimeout(timeout)
+      if (!upstream.ok) {
+        return res.status(upstream.status).json({ error: 'provider rejected model discovery request' })
+      }
+
+      const data = await upstream.json() as { data?: Array<{ id?: string }> }
+      const models = (data.data ?? []).map((m) => m.id).filter(Boolean).sort()
+      res.json({ models })
+    } catch {
+      res.json({ error: 'unreachable', models: [] })
+    }
+  })
+
   const PRESET_LABELS: Record<string, string> = {
     test_before_delegate: 'Always run tests before delegating work to agents',
     no_force_push: 'Never force-push to main or protected branches',

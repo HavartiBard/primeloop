@@ -23,7 +23,11 @@ export function createProvidersRouter({ pool }: { pool: pg.Pool }) {
       const provider = await insertProvider(pool, { name, type, base_url, api_key, model })
       res.status(201).json(provider)
     } catch (err) {
-      res.status(500).json({ error: 'internal error' })
+      const code = (err as { code?: string }).code
+      if (code === '23505') {
+        return res.status(409).json({ error: 'provider name already exists' })
+      }
+      res.status(500).json({ error: (err as Error).message || 'internal error' })
     }
   })
 

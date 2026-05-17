@@ -146,9 +146,11 @@ function Layout() {
 
 function AppInner() {
   const { data: setupStatus, isLoading } = useSetupStatus()
+  const forceSetup = new URLSearchParams(window.location.search).get('setup') === '1'
   const [skipped, setSkipped] = useState(
     () => sessionStorage.getItem('setup-skipped') === '1'
   )
+  const effectiveSkipped = forceSetup ? false : skipped
 
   if (isLoading) {
     return (
@@ -158,7 +160,7 @@ function AppInner() {
     )
   }
 
-  if (!setupStatus?.complete && !skipped) {
+  if ((forceSetup || !setupStatus?.complete) && !effectiveSkipped) {
     return (
       <Setup
         onSkip={() => {

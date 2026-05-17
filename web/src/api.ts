@@ -33,6 +33,16 @@ import type {
 const BASE = '/api/approvals'
 const API_BASE = '/api'
 
+export async function readResponseBody<T>(res: Response): Promise<T | { error?: string; raw?: string } | null> {
+  const text = await res.text()
+  if (!text) return null
+  try {
+    return JSON.parse(text) as T
+  } catch {
+    return { error: text, raw: text }
+  }
+}
+
 export async function fetchPendingApprovals(): Promise<Approval[]> {
   const res = await fetch(`${BASE}/pending`)
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
@@ -77,8 +87,10 @@ export async function createProvider(data: Omit<Provider, 'id' | 'created_at'>):
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
   })
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
-  return res.json() as Promise<Provider>
+  const body = await readResponseBody<Partial<Provider> & { error?: string }>(res) as Partial<Provider> & { error?: string } | null
+  if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`)
+  if (!body) throw new Error('Empty response from provider create endpoint')
+  return body as Provider
 }
 
 export async function updateProvider(id: string, data: Partial<Omit<Provider, 'id' | 'created_at'>>): Promise<Provider> {
@@ -104,6 +116,22 @@ export async function replaceProviderKey(id: string, api_key: string): Promise<P
 export async function deleteProvider(id: string): Promise<void> {
   const res = await fetch(`${API_BASE}/providers/${id}`, { method: 'DELETE' })
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
+}
+
+export async function fetchSetupProviderModels(data: {
+  type: string
+  base_url: string
+  api_key?: string
+}): Promise<{ models: string[]; error?: string }> {
+  const res = await fetch(`${API_BASE}/setup/provider-models`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+  const body = await readResponseBody<{ models?: string[]; error?: string }>(res) as { models?: string[]; error?: string } | null
+  if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`)
+  if (!body) throw new Error('Empty response from model discovery endpoint')
+  return { models: body.models ?? [], error: body.error }
 }
 
 // Agent Registry
@@ -430,14 +458,18 @@ export async function fetchCodexAuthStatus(providerId: string): Promise<CodexAut
 
 export async function startCodexDeviceAuth(providerId: string): Promise<CodexDeviceAuthResult> {
   const res = await fetch(`${API_BASE}/providers/${providerId}/codex/auth/device`, { method: 'POST' })
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
-  return res.json() as Promise<CodexDeviceAuthResult>
+  const body = await readResponseBody<Partial<CodexDeviceAuthResult> & { error?: string; raw?: string }>(res) as Partial<CodexDeviceAuthResult> & { error?: string; raw?: string } | null
+  if (!res.ok) throw new Error(body?.error ?? body?.raw ?? `HTTP ${res.status}`)
+  if (!body) throw new Error('Empty response from device auth endpoint')
+  return body as CodexDeviceAuthResult
 }
 
 export async function pollCodexDeviceAuth(providerId: string, sessionId: string): Promise<CodexDeviceAuthPoll> {
   const res = await fetch(`${API_BASE}/providers/${providerId}/codex/auth/device/${sessionId}`)
-  if (!res.ok) throw new Error(`HTTP ${res.status}`)
-  return res.json() as Promise<CodexDeviceAuthPoll>
+  const body = await readResponseBody<CodexDeviceAuthPoll & { error?: string }>(res) as CodexDeviceAuthPoll & { error?: string } | null
+  if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`)
+  if (!body) throw new Error('Empty response from device auth poll endpoint')
+  return body
 }
 
 export async function codexApiKeyAuth(providerId: string, apiKey: string): Promise<{ ok: boolean; error?: string }> {
@@ -446,7 +478,9 @@ export async function codexApiKeyAuth(providerId: string, apiKey: string): Promi
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ api_key: apiKey }),
   })
-  return res.json()
+  const body = await readResponseBody<{ ok: boolean; error?: string }>(res) as { ok: boolean; error?: string } | null
+  if (!body) return { ok: false, error: 'Empty response from API key auth endpoint' }
+  return body
 }
 
 export async function codexLogout(providerId: string): Promise<{ ok: boolean }> {
