@@ -417,6 +417,9 @@ ON checkpoint_continuations (owner_id, status);
 ALTER TABLE prime_agent_sessions
   ADD COLUMN IF NOT EXISTS last_step TEXT;
 
+    ALTER TABLE prime_agent_config
+      ADD COLUMN IF NOT EXISTS setup_complete BOOLEAN NOT NULL DEFAULT false;
+
 INSERT INTO prime_agent_config (id, enabled) VALUES ('default', false) ON CONFLICT (id) DO NOTHING;
 
   `)

@@ -14,6 +14,7 @@ import { createCodexAuthRouter } from './routes/codex-auth.js'
 import { createControlPlaneRouter } from './routes/control-plane.js'
 import { createMcpServersRouter } from './routes/mcp-servers.js'
 import { createPrimeAgentRouter } from './routes/prime-agent.js'
+import { createSetupRouter } from './routes/setup.js'
 import type { PrimeQueue } from './prime-agent/queue.js'
 import type { RegistryAgent } from './registry.js'
 import type WebSocket from 'ws'
@@ -102,6 +103,7 @@ export function createApp(deps: AppDeps): express.Express {
     queue: deps.primeQueue,
     onConfigUpdated: deps.onPrimeConfigUpdated,
   }))
+  app.use('/api/setup', createSetupRouter({ pool: deps.pool }))
   app.use('/api', createRuntimeRouter({ pool: deps.pool }))
 
   // Serve React SPA — must come after all API routes

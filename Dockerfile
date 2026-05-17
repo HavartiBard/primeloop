@@ -16,7 +16,7 @@ RUN npm run build
 
 # ── Stage 3: production image ─────────────────────────────────────────────────
 FROM node:22-alpine
-RUN apk add --no-cache tini
+RUN apk add --no-cache tini git
 
 WORKDIR /app
 COPY backend/package*.json ./
@@ -27,9 +27,10 @@ RUN npm ci --omit=dev && \
 COPY --from=backend-builder /app/dist ./dist
 COPY --from=web-builder /web/dist ./public
 COPY entrypoint.sh ./entrypoint.sh
-RUN chmod +x ./entrypoint.sh
+COPY entrypoint-setup.sh ./entrypoint-setup.sh
+RUN chmod +x ./entrypoint.sh ./entrypoint-setup.sh
 
 ENV NODE_ENV=production
 EXPOSE 3100
 
-ENTRYPOINT ["/sbin/tini", "--", "./entrypoint.sh"]
+ENTRYPOINT ["/sbin/tini", "--", "./entrypoint-setup.sh"]

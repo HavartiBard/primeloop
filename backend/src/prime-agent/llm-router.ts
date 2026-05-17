@@ -120,7 +120,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-export function buildPrimeSystemPrompt(context: PrimeContext): string {
+export async function buildPrimeSystemPrompt(context: PrimeContext, pool: pg.Pool): Promise<string> {
+  const { rows } = await pool.query(
+    "SELECT persona, operating_policy FROM chief_profiles WHERE id = 'default'"
+  )
+
   const agentLines = context.fleet.agents.map(
     (a) => `- ${a.name} [${(a.capabilities as string[]).join(', ')}]${a.enabled ? '' : ' (disabled)'}`,
   )
@@ -135,7 +139,7 @@ export function buildPrimeSystemPrompt(context: PrimeContext): string {
   )
   const lessonLines = context.recentLessons.map((l) => `- ${l.content}`)
 
-  return [
+  const corePrompt = [
     'You are the Prime Agent — the orchestration brain of an autonomous AI agent fleet.',
     'Your job is to survey fleet state and decide the next actions.',
     '',
@@ -176,6 +180,22 @@ export function buildPrimeSystemPrompt(context: PrimeContext): string {
     '',
     'Prefer no_op if nothing meaningful needs doing right now.',
   ].join('\n')
+
+  const profile = rows[0]
+  if (!profile?.persona) return corePrompt
+
+  const prefix = [
+    profile.persona,
+    '',
+    '## Standing Rules',
+    '',
+    profile.operating_policy,
+    '',
+    '---',
+    '',
+  ].join('\n')
+
+  return prefix + corePrompt
 }
 
 export function buildPrimeTriggerMessage(context: PrimeContext): string {
@@ -230,7 +250,7 @@ async function callProvider(
   const apiKey = await getProviderApiKey(pool, route.provider_id)
   if (!apiKey) throw new Error(`provider ${route.provider_id} has no API key configured`)
 
-  const systemPrompt = buildPrimeSystemPrompt(context)
+  const systemPrompt = await buildPrimeSystemPrompt(context, pool)
   const userMessage = buildPrimeTriggerMessage(context)
   const model = route.model
 

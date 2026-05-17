@@ -11,6 +11,8 @@ import { McpServers } from './pages/McpServers'
 import { Providers } from './pages/Providers'
 import { Governance } from './pages/Governance'
 import { useApprovals } from './hooks/useApprovals'
+import { useSetupStatus } from './hooks/useSetupStatus.js'
+import { Setup } from './pages/Setup.js'
 
 const queryClient = new QueryClient()
 
@@ -142,10 +144,40 @@ function Layout() {
   )
 }
 
+function AppInner() {
+  const { data: setupStatus, isLoading } = useSetupStatus()
+  const forceSetup = new URLSearchParams(window.location.search).get('setup') === '1'
+  const [skipped, setSkipped] = useState(
+    () => sessionStorage.getItem('setup-skipped') === '1'
+  )
+  const effectiveSkipped = forceSetup ? false : skipped
+
+  if (isLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[var(--bg)]">
+        <div className="h-6 w-6 animate-spin rounded-full border-2 border-[var(--border-soft)] border-t-[var(--accent)]" />
+      </div>
+    )
+  }
+
+  if ((forceSetup || !setupStatus?.complete) && !effectiveSkipped) {
+    return (
+      <Setup
+        onSkip={() => {
+          sessionStorage.setItem('setup-skipped', '1')
+          setSkipped(true)
+        }}
+      />
+    )
+  }
+
+  return <Layout />
+}
+
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <Layout />
+      <AppInner />
     </QueryClientProvider>
   )
 }

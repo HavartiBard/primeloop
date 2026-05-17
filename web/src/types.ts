@@ -349,8 +349,9 @@ export interface CodexAuthStatus {
 
 export interface CodexDeviceAuthResult {
   session_id: string
-  url: string
+  url: string | null
   code: string | null
+  already_authenticated?: boolean
 }
 
 export interface CodexDeviceAuthPoll {

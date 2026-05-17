@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
+import type pg from 'pg'
 import {
   buildPrimeSystemPrompt,
   buildPrimeTriggerMessage,
@@ -7,6 +8,8 @@ import {
   validatePrimeDecision,
 } from '../../src/prime-agent/llm-router.js'
 import type { PrimeContext } from '../../src/prime-agent/context.js'
+
+const mockPool = { query: vi.fn().mockResolvedValue({ rows: [] }) } as unknown as pg.Pool
 
 const minimalContext: PrimeContext = {
   trigger: {
@@ -133,20 +136,20 @@ describe('prime-agent llm router', () => {
 })
 
 describe('buildPrimeSystemPrompt', () => {
-  it('includes the agent name and capabilities', () => {
-    const prompt = buildPrimeSystemPrompt(minimalContext)
+  it('includes the agent name and capabilities', async () => {
+    const prompt = await buildPrimeSystemPrompt(minimalContext, mockPool)
     expect(prompt).toContain('Coder')
     expect(prompt).toContain('code')
   })
 
-  it('includes instruction to return JSON with reasoning and actions', () => {
-    const prompt = buildPrimeSystemPrompt(minimalContext)
+  it('includes instruction to return JSON with reasoning and actions', async () => {
+    const prompt = await buildPrimeSystemPrompt(minimalContext, mockPool)
     expect(prompt).toContain('"reasoning"')
     expect(prompt).toContain('"actions"')
   })
 
-  it('mentions all four allowed action types', () => {
-    const prompt = buildPrimeSystemPrompt(minimalContext)
+  it('mentions all four allowed action types', async () => {
+    const prompt = await buildPrimeSystemPrompt(minimalContext, mockPool)
     expect(prompt).toContain('delegate')
     expect(prompt).toContain('update_work_item')
     expect(prompt).toContain('request_approval')

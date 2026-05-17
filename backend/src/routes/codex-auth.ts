@@ -14,6 +14,24 @@ function stripAnsi(s: string): string {
   return s.replace(/\x1b\[[0-9;]*[mGKHFJA-Z]/g, '')
 }
 
+function parseDeviceAuthOutput(output: string): { url?: string; code?: string | null } {
+  const clean = stripAnsi(output)
+  const urlMatch = clean.match(/https?:\/\/[^\s\]]+/)
+  const codeMatch = clean.match(/\b([A-Z0-9]{4,}-[A-Z0-9]{4,})\b/)
+  return {
+    url: urlMatch?.[0]?.replace(/[.,;!]$/, ''),
+    code: codeMatch?.[1] ?? null,
+  }
+}
+
+function parseLoginStatus(output: string): 'chatgpt' | 'api_key' | 'unauthenticated' {
+  const text = output.toLowerCase()
+  const notLoggedIn = text.includes('not logged') || text.includes('not authenticated')
+  if (text.includes('chatgpt')) return 'chatgpt'
+  if (!notLoggedIn && (text.includes('logged in') || text.includes('api key'))) return 'api_key'
+  return 'unauthenticated'
+}
+
 const deviceSessions = new Map<string, DeviceSession>()
 
 function runCodex(args: string[], stdinData?: string): Promise<{ code: number | null; output: string }> {
@@ -22,6 +40,7 @@ function runCodex(args: string[], stdinData?: string): Promise<{ code: number | 
     let output = ''
     child.stdout.on('data', (d: Buffer) => { output += d.toString() })
     child.stderr.on('data', (d: Buffer) => { output += d.toString() })
+    child.on('error', (err) => resolve({ code: null, output: String(err.message ?? err) }))
     child.on('close', (code) => resolve({ code, output }))
     if (stdinData != null) { child.stdin.write(stdinData); child.stdin.end() }
   })
@@ -34,12 +53,11 @@ export function createCodexAuthRouter() {
   router.get('/', async (_req, res) => {
     try {
       const { output } = await runCodex(['login', 'status'])
-      const text = output.toLowerCase()
-      const notLoggedIn = text.includes('not logged') || text.includes('not authenticated')
-      if (text.includes('chatgpt')) {
+      const status = parseLoginStatus(output)
+      if (status === 'chatgpt') {
         const email = output.match(/[a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,}/i)?.[0] ?? null
         res.json({ status: 'chatgpt', mode: 'chatgpt', email, raw: output.trim() })
-      } else if (!notLoggedIn && (text.includes('logged in') || text.includes('api key'))) {
+      } else if (status === 'api_key') {
         res.json({ status: 'api_key', mode: 'api_key', email: null, raw: output.trim() })
       } else {
         res.json({ status: 'unauthenticated', mode: null, email: null, raw: output.trim() })
@@ -50,10 +68,16 @@ export function createCodexAuthRouter() {
   })
 
   // POST /api/providers/:providerId/codex/auth/device — start device auth flow
-  router.post('/device', (req, res) => {
+  router.post('/device', async (_req, res) => {
     const sessionId = crypto.randomUUID()
     const session: DeviceSession = { status: 'pending' }
     deviceSessions.set(sessionId, session)
+
+    const currentStatus = await runCodex(['login', 'status'])
+    if (parseLoginStatus(currentStatus.output) !== 'unauthenticated') {
+      session.status = 'complete'
+      return res.json({ session_id: sessionId, url: null, code: null, already_authenticated: true })
+    }
 
     const child = spawn('codex', ['login', '--device-auth'], { stdio: ['ignore', 'pipe', 'pipe'] })
     session.child = child
@@ -61,36 +85,67 @@ export function createCodexAuthRouter() {
     let output = ''
     let responded = false
 
-    child.stdout.on('data', (d: Buffer) => { output += d.toString() })
-    child.stderr.on('data', (d: Buffer) => { output += d.toString() })
+    const maybeRespondWithDeviceCode = () => {
+      if (responded) return
+      const parsed = parseDeviceAuthOutput(output)
+      if (!parsed.url) return
+      responded = true
+      session.url = parsed.url
+      session.code = parsed.code
+      res.json({ session_id: sessionId, url: parsed.url, code: parsed.code, already_authenticated: false })
+    }
 
-    // Wait 4s for the CLI to print both URL and code (they appear in the first few lines)
-    const collectTimer = setTimeout(() => {
+    child.stdout.on('data', (d: Buffer) => {
+      output += d.toString()
+      maybeRespondWithDeviceCode()
+    })
+    child.stderr.on('data', (d: Buffer) => {
+      output += d.toString()
+      maybeRespondWithDeviceCode()
+    })
+    child.on('error', (err) => {
       if (responded) return
       responded = true
-      const clean = stripAnsi(output)
-      const urlMatch = clean.match(/https?:\/\/[^\s\]]+/)
-      if (!urlMatch) {
-        res.status(500).json({ error: 'no auth URL produced', raw: clean.trim() })
+      session.status = 'error'
+      session.error = String(err.message ?? err)
+      res.status(500).json({ error: session.error })
+    })
+
+    const collectTimer = setTimeout(() => {
+      if (responded) return
+      const parsed = parseDeviceAuthOutput(output)
+      if (parsed.url) {
+        responded = true
+        session.url = parsed.url
+        session.code = parsed.code
+        res.json({ session_id: sessionId, url: parsed.url, code: parsed.code, already_authenticated: false })
         return
       }
-      const url = urlMatch[0].replace(/[.,;!]$/, '')
-      // Device code format: 4+ uppercase alphanumeric chars, dash, 4+ more (e.g. OMLV-WWFMB)
-      const codeMatch = clean.match(/\b([A-Z0-9]{4,}-[A-Z0-9]{4,})\b/)
-      const code = codeMatch?.[1] ?? null
-      session.url = url
-      session.code = code
-      res.json({ session_id: sessionId, url, code })
-    }, 4_000)
+      responded = true
+      res.status(500).json({ error: 'no auth URL produced', raw: stripAnsi(output).trim() })
+    }, 15_000)
 
-    child.on('close', (code) => {
+    child.on('close', async (code) => {
       clearTimeout(collectTimer)
       session.status = code === 0 ? 'complete' : 'error'
       if (code !== 0) session.error = `exited ${code}`
       if (!responded) {
+        const parsed = parseDeviceAuthOutput(output)
+        if (parsed.url) {
+          responded = true
+          session.url = parsed.url
+          session.code = parsed.code
+          return res.json({ session_id: sessionId, url: parsed.url, code: parsed.code, already_authenticated: false })
+        }
+        const statusCheck = await runCodex(['login', 'status'])
+        if (parseLoginStatus(statusCheck.output) !== 'unauthenticated') {
+          responded = true
+          session.status = 'complete'
+          return res.json({ session_id: sessionId, url: null, code: null, already_authenticated: true })
+        }
         responded = true
-        const clean = stripAnsi(output)
-        res.status(500).json({ error: 'no auth URL produced', raw: clean.trim() })
+        const clean = stripAnsi(output).trim()
+        res.status(500).json({ error: clean || session.error || 'no auth URL produced' })
       }
     })
 
