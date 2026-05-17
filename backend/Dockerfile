@@ -9,7 +9,7 @@ FROM node:22-alpine
 RUN apk add --no-cache git
 WORKDIR /app
 COPY package*.json ./
-RUN npm ci --omit=dev
+RUN npm ci --omit=dev && npm install -g opencode-ai
 COPY --from=builder /app/dist ./dist
 ENV NODE_ENV=production
 EXPOSE 3100
