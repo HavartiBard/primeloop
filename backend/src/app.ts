@@ -35,6 +35,27 @@ interface AppDeps {
 
 export function createApp(deps: AppDeps): express.Express {
   const app = express()
+
+  const allowedOrigins = getAllowedCorsOrigins()
+
+  app.use((req, res, next) => {
+    const origin = req.headers.origin
+    if (origin && allowedOrigins.has(origin)) {
+      res.header('Access-Control-Allow-Origin', origin)
+      res.header('Vary', 'Origin')
+      res.header('Access-Control-Allow-Credentials', 'true')
+      res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization')
+      res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS')
+    }
+
+    if (req.method === 'OPTIONS') {
+      res.sendStatus(204)
+      return
+    }
+
+    next()
+  })
+
   app.use(express.json())
 
   app.get('/health', (_req, res) => {
@@ -113,4 +134,20 @@ export function createApp(deps: AppDeps): express.Express {
   app.get('*', (_req, res) => res.sendFile(path.join(uiDir, 'index.html')))
 
   return app
+}
+
+function getAllowedCorsOrigins(): Set<string> {
+  const configured = process.env['ACP_CORS_ORIGINS']
+    ?.split(',')
+    .map((value) => value.trim())
+    .filter(Boolean)
+
+  return new Set(
+    configured && configured.length > 0
+      ? configured
+      : [
+          'http://192.168.20.60:4176',
+          'http://localhost:4176',
+        ]
+  )
 }

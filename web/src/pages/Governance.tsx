@@ -1,6 +1,8 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
+  fetchAgentWorkspace,
+  fetchAgentWorkspaceFile,
   fetchLoopWarningDrilldown,
   fetchFleetLoopWarnings,
   fetchFleetLearnings,
@@ -11,6 +13,9 @@ import {
   fetchRuntimeOverview,
   publishFleetPattern,
   resolveApprovalAsPrime,
+  saveAgentWorkspaceFile,
+  updateAgentWorkspace,
+  initAgentWorkspace,
 } from '../api'
 import { useAgentRegistry } from '../hooks/useAgentRegistry'
 import { useApprovals } from '../hooks/useApprovals'
@@ -76,11 +81,93 @@ function SectionHeader({
   )
 }
 
+function topLevelFolder(file: string): WorkspaceCategory {
+  const [folder] = file.split('/', 1)
+  switch (folder) {
+    case 'prompts':
+    case 'agents':
+    case 'skills':
+    case 'policies':
+    case 'memory':
+    case 'config':
+      return folder
+    default:
+      return 'all'
+  }
+}
+
+function inferWorkspaceScope(file: string): WorkspaceScope {
+  if (file === 'agents/prime.md' || file.startsWith('prompts/prime/')) {
+    return 'prime'
+  }
+  if (file.startsWith('agents/') || file.startsWith('prompts/agents/')) {
+    return 'agents'
+  }
+  return 'shared'
+}
+
+type SettingsTab =
+  | 'workspace'
+  | 'governance'
+  | 'approvals'
+  | 'patterns'
+  | 'memory'
+  | 'audits'
+  | 'loops'
+  | 'learnings'
+  | 'snapshots'
+
+const SETTINGS_TABS: Array<{ id: SettingsTab; label: string }> = [
+  { id: 'workspace', label: 'Workspace' },
+  { id: 'governance', label: 'Governance' },
+  { id: 'approvals', label: 'Approvals' },
+  { id: 'patterns', label: 'Patterns' },
+  { id: 'memory', label: 'Memory' },
+  { id: 'audits', label: 'Audits' },
+  { id: 'loops', label: 'Loop Monitor' },
+  { id: 'learnings', label: 'Learnings' },
+  { id: 'snapshots', label: 'Snapshots' },
+]
+
+type WorkspaceScope = 'all' | 'prime' | 'agents' | 'shared'
+type WorkspaceCategory = 'all' | 'prompts' | 'agents' | 'skills' | 'policies' | 'memory' | 'config'
+
+const WORKSPACE_SCOPE_OPTIONS: Array<{ value: WorkspaceScope; label: string }> = [
+  { value: 'all', label: 'All scopes' },
+  { value: 'prime', label: 'Prime' },
+  { value: 'agents', label: 'Agents' },
+  { value: 'shared', label: 'Shared' },
+]
+
+const WORKSPACE_CATEGORY_OPTIONS: Array<{ value: WorkspaceCategory; label: string }> = [
+  { value: 'all', label: 'All folders' },
+  { value: 'prompts', label: 'Prompts' },
+  { value: 'agents', label: 'Agents' },
+  { value: 'skills', label: 'Skills' },
+  { value: 'policies', label: 'Policies' },
+  { value: 'memory', label: 'Memory' },
+  { value: 'config', label: 'Config' },
+]
+
 export function Governance() {
   const queryClient = useQueryClient()
   const { approvals } = useApprovals()
   const { agents } = useAgentRegistry()
+  const [activeTab, setActiveTab] = useState<SettingsTab>('workspace')
   const [selectedLoopWarning, setSelectedLoopWarning] = useState<{ agentId: string; warningId: string } | null>(null)
+  const [selectedWorkspaceFile, setSelectedWorkspaceFile] = useState('prompts/prime/system.md')
+  const [workspaceDraft, setWorkspaceDraft] = useState('')
+  const [workspaceVersion, setWorkspaceVersion] = useState('')
+  const [workspaceSaveError, setWorkspaceSaveError] = useState('')
+  const [workspaceScope, setWorkspaceScope] = useState<WorkspaceScope>('all')
+  const [workspaceCategory, setWorkspaceCategory] = useState<WorkspaceCategory>('all')
+  const [workspaceSearch, setWorkspaceSearch] = useState('')
+  const [workspaceSettings, setWorkspaceSettings] = useState({
+    mode: 'local' as 'local' | 'git',
+    root_path: '/var/lib/agent-cp/workspace',
+    remote_url: '',
+    branch: 'main',
+  })
   const [patternDraft, setPatternDraft] = useState({
     type: 'best_practice',
     severity: 'info',
@@ -128,6 +215,16 @@ export function Governance() {
     enabled: Boolean(selectedLoopWarning),
     refetchInterval: 30_000,
   })
+  const { data: workspace } = useQuery({
+    queryKey: ['agent-workspace'],
+    queryFn: fetchAgentWorkspace,
+    refetchInterval: 30_000,
+  })
+  const { data: workspaceFile } = useQuery({
+    queryKey: ['agent-workspace-file', selectedWorkspaceFile],
+    queryFn: () => fetchAgentWorkspaceFile(selectedWorkspaceFile),
+    enabled: Boolean(selectedWorkspaceFile),
+  })
   const publishPatternMutation = useMutation({
     mutationFn: publishFleetPattern,
     onSuccess: () => {
@@ -143,6 +240,51 @@ export function Governance() {
       void queryClient.invalidateQueries({ queryKey: ['runtime-overview'] })
     },
   })
+  const saveWorkspaceMutation = useMutation({
+    mutationFn: ({ filePath, content, expectedVersion }: { filePath: string; content: string; expectedVersion?: string }) =>
+      saveAgentWorkspaceFile(filePath, content, expectedVersion),
+    onSuccess: async (savedFile) => {
+      setWorkspaceVersion(savedFile.version)
+      setWorkspaceSaveError('')
+      await queryClient.invalidateQueries({ queryKey: ['agent-workspace'] })
+      await queryClient.invalidateQueries({ queryKey: ['agent-workspace-file', selectedWorkspaceFile] })
+    },
+    onError: (error) => {
+      setWorkspaceSaveError(error instanceof Error ? error.message : 'Failed to save workspace file')
+    },
+  })
+  const initWorkspaceMutation = useMutation({
+    mutationFn: initAgentWorkspace,
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['agent-workspace'] })
+      await queryClient.invalidateQueries({ queryKey: ['agent-workspace-file', selectedWorkspaceFile] })
+    },
+  })
+  const updateWorkspaceMutation = useMutation({
+    mutationFn: (data: { mode: 'local' | 'git'; root_path: string; remote_url?: string | null; branch: string }) =>
+      updateAgentWorkspace(data),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['agent-workspace'] })
+    },
+  })
+
+  useEffect(() => {
+    if (workspaceFile) {
+      setWorkspaceDraft(workspaceFile.content)
+      setWorkspaceVersion(workspaceFile.version)
+      setWorkspaceSaveError('')
+    }
+  }, [workspaceFile])
+  useEffect(() => {
+    if (workspace) {
+      setWorkspaceSettings({
+        mode: workspace.mode,
+        root_path: workspace.root_path,
+        remote_url: workspace.remote_url ?? '',
+        branch: workspace.branch,
+      })
+    }
+  }, [workspace])
 
   const profile: ChiefProfile = useMemo(() => {
     const current = runtimeOverview?.chief
@@ -165,11 +307,63 @@ export function Governance() {
   const pendingApprovals = approvals.filter((approval) => approval.status === 'pending')
   const primeAgents = agents.filter((agent) => agent.capabilities.includes('prime'))
   const selectedWarningKey = selectedLoopWarning ? `${selectedLoopWarning.agentId}:${selectedLoopWarning.warningId}` : null
+  const tabButtonClass = (tab: SettingsTab) =>
+    `relative -mb-px shrink-0 border-b-2 px-4 py-2.5 text-sm font-medium transition ${
+      activeTab === tab
+        ? 'border-[var(--accent)] text-[var(--text)]'
+        : 'border-transparent text-[var(--muted)] hover:border-[var(--border-soft)] hover:text-[var(--text)]'
+    }`
+  const workspaceFiles = workspace?.files ?? []
+  const filteredWorkspaceFiles = useMemo(() => {
+    return workspaceFiles.filter((file) => {
+      if (workspaceCategory !== 'all' && topLevelFolder(file) !== workspaceCategory) {
+        return false
+      }
+      if (workspaceScope !== 'all' && inferWorkspaceScope(file) !== workspaceScope) {
+        return false
+      }
+      if (workspaceSearch.trim()) {
+        const query = workspaceSearch.trim().toLowerCase()
+        if (!file.toLowerCase().includes(query)) {
+          return false
+        }
+      }
+      return true
+    })
+  }, [workspaceCategory, workspaceFiles, workspaceScope, workspaceSearch])
+
+  useEffect(() => {
+    if (!filteredWorkspaceFiles.includes(selectedWorkspaceFile) && filteredWorkspaceFiles.length > 0) {
+      setSelectedWorkspaceFile(filteredWorkspaceFiles[0])
+    }
+  }, [filteredWorkspaceFiles, selectedWorkspaceFile])
+
+  useEffect(() => {
+    setWorkspaceSaveError('')
+  }, [selectedWorkspaceFile])
 
   return (
     <div className="min-h-screen px-4 py-4 sm:px-6 lg:px-8">
-      <section className="grid gap-5 xl:grid-cols-[0.95fr_1.05fr]">
-        <div className="grid gap-5">
+      <section className="space-y-5">
+        <div className={cardClass('p-5 sm:p-6')}>
+          <SectionHeader eyebrow="Settings" title="Control Plane Settings" detail={SETTINGS_TABS.find((tab) => tab.id === activeTab)?.label} />
+          <div className="overflow-x-auto border-b border-[var(--border-soft)]">
+            <div className="flex min-w-max gap-1">
+              {SETTINGS_TABS.map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setActiveTab(tab.id)}
+                  className={tabButtonClass(tab.id)}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {activeTab === 'governance' && (
           <div className={`${cardClass()} p-5 sm:p-6`}>
             <SectionHeader eyebrow="Controls" title="Governance" detail={`${DEFAULT_RULES.length} active rules`} />
             <div className="space-y-3">
@@ -184,7 +378,184 @@ export function Governance() {
               ))}
             </div>
           </div>
+        )}
 
+        {activeTab === 'workspace' && (
+          <div className={`${cardClass()} p-5 sm:p-6`}>
+            <SectionHeader
+              eyebrow="Workspace"
+              title="Agent Workspace"
+              detail={workspace ? `${workspace.files.length} files` : 'loading'}
+            />
+            <div className="space-y-4">
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div>
+                  <div className="text-[11px] uppercase tracking-[0.22em] text-[var(--muted)]">Mode</div>
+                  <div className="mt-2 flex gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setWorkspaceSettings((current) => ({ ...current, mode: 'local' }))}
+                      className={`rounded-full border px-3 py-1.5 text-xs transition ${
+                        workspaceSettings.mode === 'local'
+                          ? 'border-[var(--sel-bd)] bg-[var(--sel-bg)] text-blue-300'
+                          : 'border-[var(--border-soft)] bg-[var(--panel)] text-[var(--muted)]'
+                      }`}
+                    >
+                      Local
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setWorkspaceSettings((current) => ({ ...current, mode: 'git' }))}
+                      className={`rounded-full border px-3 py-1.5 text-xs transition ${
+                        workspaceSettings.mode === 'git'
+                          ? 'border-[var(--sel-bd)] bg-[var(--sel-bg)] text-blue-300'
+                          : 'border-[var(--border-soft)] bg-[var(--panel)] text-[var(--muted)]'
+                      }`}
+                    >
+                      Git
+                    </button>
+                  </div>
+                </div>
+                <div className="rounded-[1rem] border border-[var(--border-soft)] bg-[var(--panel-subtle)] px-4 py-3 text-xs text-[var(--muted)]">
+                  <div>Status: <span className="text-[var(--text)]">{workspace?.sync_status ?? 'loading'}</span></div>
+                  <div className="mt-1">Dirty: <span className="text-[var(--text)]">{workspace?.dirty ? 'yes' : 'no'}</span></div>
+                  <div className="mt-1">Revision: <span className="text-[var(--text)]">{workspace?.last_commit?.slice(0, 12) ?? 'none'}</span></div>
+                </div>
+              </div>
+              <div>
+                <div className="text-[11px] uppercase tracking-[0.22em] text-[var(--muted)]">Workspace Root</div>
+                <input
+                  value={workspaceSettings.root_path}
+                  onChange={(e) => setWorkspaceSettings((current) => ({ ...current, root_path: e.target.value }))}
+                  className="mt-2 w-full rounded border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-2 text-sm text-[var(--text)]"
+                />
+              </div>
+              {workspaceSettings.mode === 'git' && (
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <div>
+                    <div className="text-[11px] uppercase tracking-[0.22em] text-[var(--muted)]">Remote URL</div>
+                    <input
+                      value={workspaceSettings.remote_url}
+                      onChange={(e) => setWorkspaceSettings((current) => ({ ...current, remote_url: e.target.value }))}
+                      className="mt-2 w-full rounded border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-2 text-sm text-[var(--text)]"
+                    />
+                  </div>
+                  <div>
+                    <div className="text-[11px] uppercase tracking-[0.22em] text-[var(--muted)]">Branch</div>
+                    <input
+                      value={workspaceSettings.branch}
+                      onChange={(e) => setWorkspaceSettings((current) => ({ ...current, branch: e.target.value }))}
+                      className="mt-2 w-full rounded border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-2 text-sm text-[var(--text)]"
+                    />
+                  </div>
+                </div>
+              )}
+              <div className="flex flex-wrap gap-2">
+                <button
+                  onClick={() => updateWorkspaceMutation.mutate(workspaceSettings)}
+                  disabled={updateWorkspaceMutation.isPending}
+                  className="rounded-full border border-[var(--sel-bd)] bg-[var(--sel-bg)] px-4 py-1.5 text-xs text-blue-300 transition hover:bg-blue-500/20 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  Save Workspace Settings
+                </button>
+                <button
+                  onClick={() => initWorkspaceMutation.mutate()}
+                  disabled={initWorkspaceMutation.isPending}
+                  className="rounded-full border border-[var(--border-soft)] bg-[var(--panel)] px-4 py-1.5 text-xs text-[var(--text)] transition hover:bg-[var(--panel-subtle)] disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  Scaffold Files
+                </button>
+              </div>
+              <div className="grid gap-3 rounded-[1rem] border border-[var(--border-soft)] bg-[var(--panel-subtle)] p-3 lg:grid-cols-[180px_180px_minmax(0,1fr)]">
+                <select
+                  value={workspaceScope}
+                  onChange={(e) => setWorkspaceScope(e.target.value as WorkspaceScope)}
+                  className="rounded border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-2 text-sm text-[var(--text)]"
+                >
+                  {WORKSPACE_SCOPE_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+                <select
+                  value={workspaceCategory}
+                  onChange={(e) => setWorkspaceCategory(e.target.value as WorkspaceCategory)}
+                  className="rounded border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-2 text-sm text-[var(--text)]"
+                >
+                  {WORKSPACE_CATEGORY_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+                <input
+                  value={workspaceSearch}
+                  onChange={(e) => setWorkspaceSearch(e.target.value)}
+                  placeholder="Search files by path"
+                  className="rounded border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-2 text-sm text-[var(--text)]"
+                />
+              </div>
+              <div className="grid gap-4 xl:grid-cols-[0.42fr_0.58fr]">
+                <div className="rounded-[1rem] border border-[var(--border-soft)] bg-[var(--panel-subtle)] p-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="text-[11px] uppercase tracking-[0.22em] text-[var(--muted)]">Files</div>
+                    <div className="text-[11px] text-[var(--muted)]">{filteredWorkspaceFiles.length} shown</div>
+                  </div>
+                  <div className="mt-3 space-y-2">
+                    {filteredWorkspaceFiles.map((file) => (
+                      <button
+                        key={file}
+                        type="button"
+                        onClick={() => setSelectedWorkspaceFile(file)}
+                        className={`block w-full rounded-lg border px-3 py-2 text-left text-xs transition ${
+                          selectedWorkspaceFile === file
+                            ? 'border-[var(--sel-bd)] bg-[var(--sel-bg)] text-[var(--text)]'
+                            : 'border-[var(--border-soft)] bg-[var(--panel)] text-[var(--muted)]'
+                        }`}
+                      >
+                        {file}
+                      </button>
+                    ))}
+                    {workspaceFiles.length === 0 && (
+                      <div className="text-xs text-[var(--muted)]">No workspace files found yet.</div>
+                    )}
+                    {workspaceFiles.length > 0 && filteredWorkspaceFiles.length === 0 && (
+                      <div className="text-xs text-[var(--muted)]">No files match the current filters.</div>
+                    )}
+                  </div>
+                </div>
+                <div className="rounded-[1rem] border border-[var(--border-soft)] bg-[var(--panel-subtle)] p-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="text-[11px] uppercase tracking-[0.22em] text-[var(--muted)]">
+                      {selectedWorkspaceFile}
+                    </div>
+                    <button
+                      onClick={() => saveWorkspaceMutation.mutate({
+                        filePath: selectedWorkspaceFile,
+                        content: workspaceDraft,
+                        expectedVersion: workspaceVersion,
+                      })}
+                      disabled={saveWorkspaceMutation.isPending || !selectedWorkspaceFile}
+                      className="rounded-full border border-[var(--sel-bd)] bg-[var(--sel-bg)] px-3 py-1.5 text-[11px] text-blue-300 transition hover:bg-blue-500/20 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      Save File
+                    </button>
+                  </div>
+                  {workspaceSaveError && (
+                    <div className="mt-3 rounded-lg border border-amber-300/20 bg-amber-300/10 px-3 py-2 text-xs text-amber-100">
+                      {workspaceSaveError}
+                    </div>
+                  )}
+                  <textarea
+                    value={workspaceDraft}
+                    onChange={(e) => setWorkspaceDraft(e.target.value)}
+                    rows={18}
+                    className="mt-3 w-full rounded border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-2 font-mono text-xs text-[var(--text)]"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'approvals' && (
           <div className={`${cardClass()} p-5 sm:p-6`}>
             <SectionHeader eyebrow="Approvals" title="Pending Escalations" detail={`${pendingApprovals.length} pending`} />
             <div className="space-y-3">
@@ -217,9 +588,9 @@ export function Governance() {
               )}
             </div>
           </div>
-        </div>
+        )}
 
-        <div className="grid gap-5">
+        {activeTab === 'patterns' && (
           <div className={`${cardClass()} p-5 sm:p-6`}>
             <SectionHeader eyebrow="Fleet" title="Pattern Library" detail={`${patterns.length} patterns`} />
             <div className="mb-4 rounded-[1rem] border border-[var(--border-soft)] bg-[var(--panel-subtle)] p-4">
@@ -302,7 +673,9 @@ export function Governance() {
               )}
             </div>
           </div>
+        )}
 
+        {activeTab === 'memory' && (
           <div className={`${cardClass()} p-5 sm:p-6`}>
             <SectionHeader eyebrow="Context" title="Persistent Memory" detail={`${profile.preferences.length + profile.recurringDuties.length + profile.priorDecisions.length} entries`} />
             <div className="space-y-4">
@@ -326,7 +699,9 @@ export function Governance() {
               </div>
             </div>
           </div>
+        )}
 
+        {activeTab === 'audits' && (
           <div className={`${cardClass()} p-5 sm:p-6`}>
             <SectionHeader eyebrow="Background" title="Audit Loops" detail={`${auditLoops.length} loops`} />
             <div className="space-y-3">
@@ -350,7 +725,9 @@ export function Governance() {
               )}
             </div>
           </div>
+        )}
 
+        {activeTab === 'loops' && (
           <div className={`${cardClass()} p-5 sm:p-6`}>
             <SectionHeader eyebrow="Fleet" title="Loop Monitor" detail={`${loopWarnings.length} warnings`} />
             <div className="space-y-3">
@@ -471,7 +848,9 @@ export function Governance() {
               )}
             </div>
           </div>
+        )}
 
+        {activeTab === 'learnings' && (
           <div className={`${cardClass()} p-5 sm:p-6`}>
             <SectionHeader eyebrow="Fleet" title="Recent Learnings" detail={`${learnings.length} entries`} />
             <div className="space-y-3">
@@ -513,7 +892,9 @@ export function Governance() {
               )}
             </div>
           </div>
+        )}
 
+        {activeTab === 'snapshots' && (
           <div className={`${cardClass()} p-5 sm:p-6`}>
             <SectionHeader eyebrow="Recovery" title="Recent Snapshots" detail={`${snapshots.length} snapshots`} />
             <div className="space-y-3">
@@ -531,7 +912,7 @@ export function Governance() {
               )}
             </div>
           </div>
-        </div>
+        )}
       </section>
     </div>
   )
