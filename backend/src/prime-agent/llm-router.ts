@@ -5,7 +5,6 @@ import { getPrimeConfig, type PrimeConfigRoute } from './config.js'
 import { getProviderApiKey } from '../registry.js'
 import type { PrimeContext } from './context.js'
 import { loadPrimeWorkspaceTemplates, renderTemplate } from '../workspace.js'
-import { assessModelCapability } from './model-capability.js'
 
 export const PRIME_ACTION_TYPES = [
   'delegate',
@@ -258,21 +257,6 @@ export function createConfiguredLlmRouter(pool: pg.Pool): LlmRouter {
         throw new Error('prime-agent: no provider routes configured in prime_agent_config')
       }
 
-      // Validate model capability for each route
-      for (const route of resolvedRoutes) {
-        const assessment = assessModelCapability(route.model)
-        if (assessment.isBlocked) {
-          throw new Error(
-            `prime-agent: model "${route.model}" is blocked from Prime routing. ${assessment.warning}`
-          )
-        }
-        if (assessment.tier === 'warned') {
-          console.warn(
-            `prime-agent: model "${route.model}" may produce unreliable decisions. ${assessment.warning}`
-          )
-        }
-      }
-
       let lastError: Error = new Error('no providers tried')
 
       for (const route of resolvedRoutes) {
@@ -432,9 +416,35 @@ function formatConversationTranscript(messages: { sender?: string; role: string;
   return messages.map((m, i) => {
     const speaker = m.sender || m.role
     const label = speaker.toLowerCase() === 'assistant' ? 'Prime' : speaker
-    const content = m.content.length > 300 ? m.content.slice(0, 297) + '...' : m.content
+    const content = m.content.length > 300 ? truncateAtBoundary(m.content, 300) : m.content
     return `[${i + 1}] ${label}: ${content}`
   }).join('\n')
+}
+
+/** Truncate text at a sentence or paragraph boundary to avoid cutting mid-thought. */
+function truncateAtBoundary(text: string, maxLen: number): string {
+  const truncated = text.slice(0, maxLen)
+  // Try paragraph break first (best boundary)
+  const lastParagraphBreak = truncated.lastIndexOf('\n\n')
+  if (lastParagraphBreak > maxLen * 0.4) {
+    return truncated.slice(0, lastParagraphBreak).trim() + '...'
+  }
+  // Try sentence boundary (. ! ? followed by space)
+  const lastSentenceEnd = Math.max(
+    truncated.lastIndexOf('. '),
+    truncated.lastIndexOf('! '),
+    truncated.lastIndexOf('? ')
+  )
+  if (lastSentenceEnd > maxLen * 0.4) {
+    return truncated.slice(0, lastSentenceEnd + 1).trim() + '...'
+  }
+  // Fallback: hard cut at word boundary
+  const lastSpace = truncated.lastIndexOf(' ')
+  if (lastSpace > maxLen * 0.4) {
+    return truncated.slice(0, lastSpace).trim() + '...'
+  }
+  // Last resort: hard cut
+  return truncated.trim() + '...'
 }
 
 function normalizeOpenAiBaseUrl(baseUrl: string): string {
