@@ -46,14 +46,18 @@ export function createPrimeAgentService(
       started = true
 
       const processEvent = async (event: Parameters<typeof handlePrimeEvent>[1]) => {
+        await handlePrimeEvent(pool, event, { router })
+      }
+
+      const processCoordinatorEvent = async (event: Parameters<typeof handlePrimeEvent>[1]) => {
         try {
-          await handlePrimeEvent(pool, event, { router })
+          await processEvent(event)
         } catch (error) {
           console.error('[prime-agent] event handling failed:', error)
         }
       }
 
-      setPrimeCoordinatorProcessor(processEvent)
+      setPrimeCoordinatorProcessor(processCoordinatorEvent)
       queue.process(processEvent)
 
       fastTimer = setInterval(() => {

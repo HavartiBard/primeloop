@@ -1,8 +1,7 @@
 import type pg from 'pg'
-import { hashContextSnapshot } from '../checkpoint-store.js'
 import { appendThreadMessage, getPrimeProfile } from '../runtime.js'
 import type { PrimeActionDispatchResult } from './actions.js'
-import { buildContextSnapshot, type PrimeContext } from './context.js'
+import type { PrimeContext } from './context.js'
 import type { PrimeEvent } from './events.js'
 import type { LlmRouter, PrimeDecision } from './llm-router.js'
 import { listPrimeModules, runPrimeModules, summarizePrimeModules } from './modules/registry.js'
@@ -71,7 +70,7 @@ export async function handlePrimeEvent(
 
     const context = requireContext(state)
     const decision = requireDecision(state)
-    const actions = await saveActionContinuations(pool, context, decision, session.id, state.actions)
+    const actions = state.actions
 
     if (event.type === 'prime.message') {
       const primeProfile = await getPrimeProfile(pool)
@@ -143,22 +142,6 @@ async function updateIntakeWorkItemStatus(
   )
 }
 
-async function saveActionContinuations(
-  pool: pg.Pool,
-  ctx: PrimeContext,
-  decision: PrimeDecision,
-  sessionId: string,
-  results: PrimeActionDispatchResult[]
-): Promise<PrimeActionDispatchResult[]> {
-  for (const result of results) {
-    if (result.approval && !result.approval.status.includes('approved')) {
-      await saveApprovalContinuation(pool, sessionId, ctx, decision)
-    }
-  }
-
-  return results
-}
-
 function requireContext(state: PrimeLoopState): PrimeContext {
   if (!state.context) {
     throw new Error('Prime loop completed without assembled context')
@@ -171,25 +154,6 @@ function requireDecision(state: PrimeLoopState): PrimeDecision {
     throw new Error('Prime loop completed without a decision')
   }
   return state.decision
-}
-
-async function saveApprovalContinuation(
-  pool: pg.Pool,
-  sessionId: string,
-  context: PrimeContext,
-  decision: PrimeDecision
-): Promise<void> {
-  const snapshot = buildContextSnapshot(context)
-  await pool.query(
-    `INSERT INTO checkpoint_continuations (owner_type, owner_id, step, context_hash, context_snapshot, continuation, status)
-     VALUES ('prime_session', $1, 'awaiting_approval', $2, $3, $4, 'pending')`,
-    [
-      sessionId,
-      hashContextSnapshot(snapshot),
-      JSON.stringify(snapshot),
-      JSON.stringify({ decision }),
-    ]
-  )
 }
 
 function mapTriggerType(event: PrimeEvent): PrimeSessionTriggerType {
