@@ -22,6 +22,7 @@ export interface Provider {
   base_url: string
   api_key?: string
   model?: string
+  timeout_ms?: number
   created_at: string
 }
 
@@ -182,6 +183,26 @@ export interface RuntimeDelegation {
   completed_at?: string
 }
 
+export interface PrimeSession {
+  id: string
+  trigger_type: string
+  trigger_payload: Record<string, unknown>
+  module_name?: string
+  workspace_root?: string
+  workspace_revision?: string
+  prompt_templates: Record<string, string>
+  reasoning_summary?: string
+  actions_taken: unknown[]
+  token_count: number
+  provider_used?: string
+  model_used?: string
+  status: 'running' | 'completed' | 'failed' | 'escalated'
+  error?: string
+  started_at: string
+  completed_at?: string
+  last_step?: string
+}
+
 export interface RuntimeMemory {
   id: string
   category: string
@@ -331,6 +352,30 @@ export interface RuntimeOverview {
   recent_events: RuntimeEvent[]
 }
 
+export interface AgentWorkspaceStatus {
+  id: string
+  mode: 'local' | 'git'
+  root_path: string
+  remote_url?: string
+  branch: string
+  sync_status: string
+  last_sync_at?: string
+  last_commit?: string
+  dirty: boolean
+  exists: boolean
+  effective_root: string
+  files: string[]
+  created_at: string
+  updated_at: string
+}
+
+export interface AgentWorkspaceFile {
+  path: string
+  content: string
+  version: string
+  updated_at: string
+}
+
 export interface ChiefRoute {
   capability: string
   lane: string
@@ -363,7 +408,7 @@ export interface CodexDeviceAuthPoll {
 
 export interface ChiefMessageResult {
   user_message: ThreadMessage
-  chief_message: ThreadMessage
+  chief_message?: ThreadMessage
   work_item: RuntimeWorkItem
   delegation?: RuntimeDelegation
   selected_agent?: RegistryAgent

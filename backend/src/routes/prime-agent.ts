@@ -4,6 +4,15 @@ import { getPrimeConfig, updatePrimeConfig } from '../prime-agent/config.js'
 import type { PrimeEvent } from '../prime-agent/events.js'
 import type { PrimeQueue } from '../prime-agent/queue.js'
 import { listPrimeSessions } from '../prime-agent/session.js'
+import {
+  ensureWorkspaceScaffold,
+  getWorkspaceStatus,
+  listWorkspaceFiles,
+  readWorkspaceFile,
+  updateWorkspaceConfig,
+  WorkspaceVersionConflictError,
+  writeWorkspaceFile,
+} from '../workspace.js'
 
 export function createPrimeAgentRouter(
   { pool, queue, onConfigUpdated }: { pool: pg.Pool; queue: PrimeQueue; onConfigUpdated?: () => Promise<void> | void }
@@ -66,6 +75,77 @@ export function createPrimeAgentRouter(
         return res.status(400).json({ error: message })
       }
       res.status(500).json({ error: 'internal error' })
+    }
+  })
+
+  router.get('/workspace', async (_req, res) => {
+    try {
+      res.json(await getWorkspaceStatus(pool))
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message ?? 'internal error' })
+    }
+  })
+
+  router.post('/workspace/init', async (_req, res) => {
+    try {
+      res.json(await ensureWorkspaceScaffold(pool))
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message ?? 'internal error' })
+    }
+  })
+
+  router.patch('/workspace', async (req, res) => {
+    const body = req.body as {
+      mode?: 'local' | 'git'
+      root_path?: string
+      remote_url?: string | null
+      branch?: string
+    }
+
+    try {
+      const config = await updateWorkspaceConfig(pool, {
+        ...(body.mode ? { mode: body.mode } : {}),
+        ...(body.root_path ? { root_path: body.root_path } : {}),
+        ...(body.remote_url !== undefined ? { remote_url: body.remote_url } : {}),
+        ...(body.branch ? { branch: body.branch } : {}),
+      })
+      await ensureWorkspaceScaffold(pool)
+      res.json(config)
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message ?? 'internal error' })
+    }
+  })
+
+  router.get('/workspace/files', async (_req, res) => {
+    try {
+      res.json({ files: await listWorkspaceFiles(pool) })
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message ?? 'internal error' })
+    }
+  })
+
+  router.get('/workspace/file', async (req, res) => {
+    const targetPath = typeof req.query.path === 'string' ? req.query.path : ''
+    if (!targetPath) return res.status(400).json({ error: 'path required' })
+    try {
+      res.json(await readWorkspaceFile(pool, targetPath))
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message ?? 'internal error' })
+    }
+  })
+
+  router.put('/workspace/file', async (req, res) => {
+    const body = req.body as { path?: string; content?: string; expected_version?: string }
+    if (!body.path || typeof body.content !== 'string') {
+      return res.status(400).json({ error: 'path and content required' })
+    }
+    try {
+      res.json(await writeWorkspaceFile(pool, body.path, body.content, body.expected_version))
+    } catch (err) {
+      if (err instanceof WorkspaceVersionConflictError) {
+        return res.status(409).json({ error: err.message })
+      }
+      res.status(500).json({ error: (err as Error).message ?? 'internal error' })
     }
   })
 

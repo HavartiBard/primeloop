@@ -23,6 +23,9 @@ import type {
   FleetSnapshot,
   RuntimeAuditLoop,
   RuntimeEvent,
+  PrimeSession,
+  AgentWorkspaceStatus,
+  AgentWorkspaceFile,
   ChiefMessageResult,
   CodexAuthStatus,
   CodexDeviceAuthResult,
@@ -30,8 +33,14 @@ import type {
   MCPServer,
 } from './types'
 
-const BASE = '/api/approvals'
-const API_BASE = '/api'
+const API_ORIGIN = ((import.meta.env.VITE_API_BASE as string | undefined) ?? '').replace(/\/+$/, '')
+const ROOT_BASE = API_ORIGIN || ''
+const BASE = `${ROOT_BASE}/api/approvals`
+const API_BASE = `${ROOT_BASE}/api`
+
+export function getApiOrigin(): string {
+  return API_ORIGIN
+}
 
 export async function readResponseBody<T>(res: Response): Promise<T | { error?: string; raw?: string } | null> {
   const text = await res.text()
@@ -63,13 +72,13 @@ export async function fetchEvents(params?: { agent?: string; limit?: number }): 
   const qs = new URLSearchParams()
   if (params?.agent) qs.set('agent', params.agent)
   if (params?.limit != null) qs.set('limit', String(params.limit))
-  const res = await fetch(`/events?${qs}`)
+  const res = await fetch(`${ROOT_BASE}/events?${qs}`)
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   return res.json()
 }
 
 export async function fetchAgents(): Promise<{ agent: string; last_seen: string; healthy: boolean }[]> {
-  const res = await fetch('/agents')
+  const res = await fetch(`${ROOT_BASE}/agents`)
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   return res.json()
 }
@@ -243,6 +252,62 @@ export async function fetchRuntimeEvents(limit = 100): Promise<RuntimeEvent[]> {
   const res = await fetch(`${API_BASE}/runtime/events?limit=${limit}`)
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   return res.json() as Promise<RuntimeEvent[]>
+}
+
+export async function fetchPrimeSessions(limit = 50): Promise<PrimeSession[]> {
+  const res = await fetch(`${API_BASE}/prime-agent/sessions?limit=${limit}`)
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json() as Promise<PrimeSession[]>
+}
+
+export async function fetchAgentWorkspace(): Promise<AgentWorkspaceStatus> {
+  const res = await fetch(`${API_BASE}/prime-agent/workspace`)
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json() as Promise<AgentWorkspaceStatus>
+}
+
+export async function updateAgentWorkspace(data: {
+  mode?: 'local' | 'git'
+  root_path?: string
+  remote_url?: string | null
+  branch?: string
+}): Promise<AgentWorkspaceStatus> {
+  const res = await fetch(`${API_BASE}/prime-agent/workspace`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json() as Promise<AgentWorkspaceStatus>
+}
+
+export async function initAgentWorkspace(): Promise<AgentWorkspaceStatus> {
+  const res = await fetch(`${API_BASE}/prime-agent/workspace/init`, { method: 'POST' })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json() as Promise<AgentWorkspaceStatus>
+}
+
+export async function fetchAgentWorkspaceFile(filePath: string): Promise<AgentWorkspaceFile> {
+  const res = await fetch(`${API_BASE}/prime-agent/workspace/file?path=${encodeURIComponent(filePath)}`)
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json() as Promise<AgentWorkspaceFile>
+}
+
+export async function saveAgentWorkspaceFile(
+  filePath: string,
+  content: string,
+  expectedVersion?: string
+): Promise<AgentWorkspaceFile> {
+  const res = await fetch(`${API_BASE}/prime-agent/workspace/file`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path: filePath, content, expected_version: expectedVersion }),
+  })
+  if (!res.ok) {
+    const body = await readResponseBody<{ error?: string }>(res)
+    throw new Error(body && typeof body === 'object' && 'error' in body && body.error ? body.error : `HTTP ${res.status}`)
+  }
+  return res.json() as Promise<AgentWorkspaceFile>
 }
 
 export async function fetchThreads(): Promise<RuntimeThread[]> {
