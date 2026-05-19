@@ -285,6 +285,7 @@ function presentPrimeResponse(
   // Always use response as the user-facing content. Never fall back to reasoning.
   const base = decision.response?.trim()
   if (!base) {
+    console.warn('prime-agent: missing response in Prime decision, using fallback')
     return 'I\'ve processed your request.'
   }
 
@@ -294,13 +295,19 @@ function presentPrimeResponse(
     return base
   }
 
-  const actionDescriptions = dispatched.map((result) => {
+  // If base ends with terminal punctuation, capitalize the first action description.
+  const baseEndsWithPunctuation = /[.!?]$/.test(base)
+  const actionDescriptions = dispatched.map((result, index) => {
     const reason = result.action.reason?.trim()
     if (!reason) {
       return `I've taken action: ${result.action.type.replace(/_/g, ' ')}`
     }
-    // Use the action's reason as a natural-language description
-    return reason[0].toLowerCase() + reason.slice(1)
+    // Capitalize first character if base ends with terminal punctuation
+    // or if this is the first description (to start a new sentence).
+    const shouldCapitalize = index === 0 && baseEndsWithPunctuation
+    return shouldCapitalize
+      ? reason[0].toUpperCase() + reason.slice(1)
+      : reason[0].toLowerCase() + reason.slice(1)
   })
 
   return `${base} ${actionDescriptions.join(' ')}`
