@@ -54,7 +54,6 @@ const KNOWN_MODELS: Array<{ pattern: RegExp; entry: ModelEntry }> = [
   { pattern: /llama-3\.2-11b|llama3\.2-11b/i, entry: { params: 11, jsonMode: true } },
   { pattern: /llama-3\.2-8b|llama3\.2-8b/i, entry: { params: 8, jsonMode: true } },
   { pattern: /llama-3\.2-3b|llama3\.2-3b/i, entry: { params: 3, jsonMode: false } },
-  { pattern: /llama-3\.1-70b|llama3\.1-70b/i, entry: { params: 70, jsonMode: true } },
 
   // ── Qwen family (Alibaba) ──────────────────────────────────────────────
   { pattern: /qwen2\.5-coder-32b|qwen2\.5-32b/i, entry: { params: 32, jsonMode: true } },

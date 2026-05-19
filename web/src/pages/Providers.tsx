@@ -32,20 +32,28 @@ function ProviderModal({ mode, provider, onClose, onSubmit }: {
   const [replacingKey, setReplacingKey] = useState(false)
   const [modelAssessment, setModelAssessment] = useState<ModelCapabilityAssessment | null>(null)
   const [modelAssessing, setModelAssessing] = useState(false)
+  const assessTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const set = (field: keyof FormState) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
     setForm((f) => ({ ...f, [field]: e.target.value }))
   const hasMaskedKey = provider?.api_key === '••••••••'
 
-  // Assess model capability when model name changes
+  // Assess model capability when model name changes (debounced 300ms)
   useEffect(() => {
-    if (!form.model.trim()) { setModelAssessment(null); return }
+    if (assessTimerRef.current) { clearTimeout(assessTimerRef.current); assessTimerRef.current = null }
+    const trimmed = form.model.trim()
+    if (!trimmed) { setModelAssessment(null); setModelAssessing(false); return }
     let cancelled = false
     setModelAssessing(true)
-    fetchModelCapability(form.model)
-      .then((result) => { if (!cancelled) setModelAssessment(result) })
-      .catch(() => { if (!cancelled) setModelAssessment(null) })
-      .finally(() => { if (!cancelled) setModelAssessing(false) })
-    return () => { cancelled = true }
+    assessTimerRef.current = setTimeout(() => {
+      fetchModelCapability(trimmed)
+        .then((result) => { if (!cancelled) setModelAssessment(result) })
+        .catch(() => { if (!cancelled) setModelAssessment(null) })
+        .finally(() => { if (!cancelled) setModelAssessing(false) })
+    }, 300)
+    return () => {
+      cancelled = true
+      if (assessTimerRef.current) { clearTimeout(assessTimerRef.current); assessTimerRef.current = null }
+    }
   }, [form.model])
 
   return (

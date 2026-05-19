@@ -702,6 +702,7 @@ function RoutingRow({ label, entries, providers, onChange }: {
 }) {
   const activeProviders = providers.filter((p) => p.active)
   const [modelAssessments, setModelAssessments] = useState<Record<number, ModelCapabilityAssessment>>({})
+  const assessTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const addFallback = () => onChange([...entries, { provider_name: activeProviders[0]?.name ?? '', model: '' }])
   const update = (i: number, patch: Partial<RoutingEntry>) => {
     onChange(entries.map((e, idx) => (idx === i ? { ...e, ...patch } : e)))
@@ -712,17 +713,24 @@ function RoutingRow({ label, entries, providers, onChange }: {
     ? entries
     : [{ provider_name: activeProviders[0]?.name ?? '', model: activeProviders[0]?.model ?? '' }]
 
-  // Assess model capability for each entry when model changes
+  // Assess model capability for each entry when model changes (debounced 300ms)
+  const modelsKey = defaultEntries.map((e, i) => `${i}:${e.model}`).join(',')
   useEffect(() => {
+    if (assessTimerRef.current) { clearTimeout(assessTimerRef.current); assessTimerRef.current = null }
     let cancelled = false
-    defaultEntries.forEach((entry, i) => {
-      if (!entry.model.trim()) return
-      fetchModelCapability(entry.model)
-        .then((result) => { if (!cancelled) setModelAssessments((prev) => ({ ...prev, [i]: result })) })
-        .catch(() => {})
-    })
-    return () => { cancelled = true }
-  }, [defaultEntries.map((e, i) => `${i}:${e.model}`).join(',')])
+    assessTimerRef.current = setTimeout(() => {
+      defaultEntries.forEach((entry, i) => {
+        if (!entry.model.trim()) return
+        fetchModelCapability(entry.model)
+          .then((result) => { if (!cancelled) setModelAssessments((prev) => ({ ...prev, [i]: result })) })
+          .catch(() => {})
+      })
+    }, 300)
+    return () => {
+      cancelled = true
+      if (assessTimerRef.current) { clearTimeout(assessTimerRef.current); assessTimerRef.current = null }
+    }
+  }, [modelsKey])
 
   return (
     <div className="grid grid-cols-[100px_1fr] gap-3 items-start">
