@@ -73,7 +73,7 @@ function nodePt(node: NodeDef, side: 'top' | 'bottom'): [number, number] {
 // ─── Graph builder ────────────────────────────────────────────────────────────
 
 function buildGraph(
-  chiefName: string,
+  primeName: string,
   agents: RegistryAgent[],
   threads: RuntimeThread[],
   workItems: RuntimeWorkItem[],
@@ -84,20 +84,20 @@ function buildGraph(
   const nodes = new Map<string, NodeDef>()
   const edges: EdgeDef[] = []
 
-  // Row 0 — Chief
+  // Row 0 — Prime
   const activeCount  = workItems.filter(i => i.status === 'active').length
   const blockedCount = workItems.filter(i => i.status === 'blocked').length
-  const chiefChips: Chip[] = []
-  if (activeCount)  chiefChips.push({ label: `${activeCount} active`,  variant: 'ok'  })
-  if (blockedCount) chiefChips.push({ label: `${blockedCount} blocked`, variant: 'blk' })
-  if (!chiefChips.length) chiefChips.push({ label: 'idle', variant: 'neu' })
+  const primeChips: Chip[] = []
+  if (activeCount)  primeChips.push({ label: `${activeCount} active`,  variant: 'ok'  })
+  if (blockedCount) primeChips.push({ label: `${blockedCount} blocked`, variant: 'blk' })
+  if (!primeChips.length) primeChips.push({ label: 'idle', variant: 'neu' })
 
-  nodes.set('chief', {
-    id: 'chief', type: 'agent', state: blockedCount > 0 ? 'blocked' : 'active',
+  nodes.set('prime', {
+    id: 'prime', type: 'agent', state: blockedCount > 0 ? 'blocked' : 'active',
     x: Math.round(CANVAS_W / 2 - NODE_W / 2), y: ROW_Y[0],
-    title: chiefName,
+    title: primeName,
     summary: 'coordinator · delegate · approve',
-    chips: chiefChips,
+    chips: primeChips,
   })
 
   // Row 1 — Agents
@@ -121,7 +121,7 @@ function buildGraph(
       summary: [agent.type, agent.runtime_family].filter(Boolean).join(' · '),
       chips,
     })
-    edges.push({ from: 'chief', to: id, style: 'coord' })
+    edges.push({ from: 'prime', to: id, style: 'coord' })
   })
 
   // Row 2 — Threads / Rooms
@@ -151,7 +151,7 @@ function buildGraph(
       chips,
       wide: true,
     })
-    edges.push({ from: 'chief', to: id, style: 'coord' })
+    edges.push({ from: 'prime', to: id, style: 'coord' })
 
     agents.forEach(agent => {
       if (items.some(wi => wi.owner_agent_id === agent.id)) {
@@ -184,7 +184,7 @@ function buildGraph(
     if (item.thread_id && nodes.has(`thread-${item.thread_id}`)) {
       edges.push({ from: `thread-${item.thread_id}`, to: id, style: item.status === 'active' ? 'owns' : 'queued' })
     } else {
-      edges.push({ from: 'chief', to: id, style: 'coord' })
+      edges.push({ from: 'prime', to: id, style: 'coord' })
     }
   })
 
@@ -199,7 +199,7 @@ function buildGraph(
       summary: (loop.purpose || '').slice(0, 44),
       chips: [{ label: loop.cadence_cron }],
     })
-    edges.push({ from: 'chief', to: id, style: 'audit' })
+    edges.push({ from: 'prime', to: id, style: 'audit' })
   })
 
   return { nodes, edges }
@@ -454,11 +454,11 @@ export function CircuitView({ onNavigate }: CircuitViewProps) {
     [healthData],
   )
 
-  const chiefName = runtimeOverview?.chief?.name ?? 'Chief of Staff'
+  const primeName = runtimeOverview?.prime?.name ?? 'Prime'
 
   const { nodes, edges } = useMemo(
-    () => buildGraph(chiefName, agentRegistry, threads, workItems, delegations, auditLoops, healthMap),
-    [chiefName, agentRegistry, threads, workItems, delegations, auditLoops, healthMap],
+    () => buildGraph(primeName, agentRegistry, threads, workItems, delegations, auditLoops, healthMap),
+    [primeName, agentRegistry, threads, workItems, delegations, auditLoops, healthMap],
   )
 
   return (

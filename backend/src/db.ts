@@ -80,7 +80,7 @@ export async function runMigrations(pool: pg.Pool): Promise<void> {
 
     CREATE TABLE IF NOT EXISTS chief_profiles (
       id                TEXT PRIMARY KEY DEFAULT 'default',
-      name              TEXT NOT NULL DEFAULT 'Chief of Staff',
+      name              TEXT NOT NULL DEFAULT 'Prime',
       persona           TEXT NOT NULL,
       operating_policy  TEXT NOT NULL,
       delegation_policy JSONB NOT NULL DEFAULT '{}',
@@ -132,7 +132,7 @@ export async function runMigrations(pool: pg.Pool): Promise<void> {
       priority       TEXT NOT NULL DEFAULT 'normal',
       lane           TEXT NOT NULL DEFAULT 'operations',
       owner_agent_id UUID REFERENCES agents(id) ON DELETE SET NULL,
-      owner_label    TEXT NOT NULL DEFAULT 'Chief of Staff',
+      owner_label    TEXT NOT NULL DEFAULT 'Prime',
       thread_id      UUID REFERENCES threads(id) ON DELETE SET NULL,
       parent_id      UUID REFERENCES work_items(id) ON DELETE SET NULL,
       blocked_by     TEXT,
@@ -367,7 +367,7 @@ CREATE TABLE IF NOT EXISTS prime_agent_config (
 
 CREATE TABLE IF NOT EXISTS prime_agent_sessions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  trigger_type TEXT NOT NULL CHECK (trigger_type IN ('event', 'cron_fast', 'cron_slow', 'chief_message')),
+  trigger_type TEXT NOT NULL CHECK (trigger_type IN ('event', 'cron_fast', 'cron_slow', 'prime_message')),
   trigger_payload JSONB NOT NULL,
   module_name TEXT,
   workspace_root TEXT,
@@ -385,6 +385,48 @@ CREATE TABLE IF NOT EXISTS prime_agent_sessions (
 );
 
 CREATE INDEX IF NOT EXISTS idx_prime_agent_sessions_started_at ON prime_agent_sessions (started_at DESC);
+
+CREATE TABLE IF NOT EXISTS prime_agent_modules (
+  module_id TEXT PRIMARY KEY,
+  stage TEXT NOT NULL CHECK (stage IN ('trigger', 'debounce', 'context', 'decision', 'policy', 'action', 'feedback', 'learning', 'observer')),
+  default_version TEXT NOT NULL,
+  pinned_version TEXT,
+  enabled BOOLEAN NOT NULL DEFAULT true,
+  rollout_mode TEXT NOT NULL DEFAULT 'active' CHECK (rollout_mode IN ('active', 'shadow')),
+  config JSONB NOT NULL DEFAULT '{}',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS prime_agent_module_audits (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  module_id TEXT NOT NULL REFERENCES prime_agent_modules(module_id) ON DELETE CASCADE,
+  actor TEXT NOT NULL,
+  changed_fields JSONB NOT NULL DEFAULT '[]',
+  previous_config JSONB NOT NULL,
+  next_config JSONB NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_prime_agent_module_audits_module_created_at
+ON prime_agent_module_audits (module_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS prime_agent_module_runs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  session_id UUID NOT NULL REFERENCES prime_agent_sessions(id) ON DELETE CASCADE,
+  run_index INT NOT NULL,
+  module_id TEXT NOT NULL,
+  stage TEXT NOT NULL CHECK (stage IN ('trigger', 'debounce', 'context', 'decision', 'policy', 'action', 'feedback', 'learning', 'observer')),
+  version TEXT NOT NULL,
+  mode TEXT NOT NULL DEFAULT 'active' CHECK (mode IN ('active', 'shadow')),
+  status TEXT NOT NULL CHECK (status IN ('completed', 'failed')),
+  detail TEXT,
+  started_at TIMESTAMPTZ NOT NULL,
+  completed_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_prime_agent_module_runs_session_index
+ON prime_agent_module_runs (session_id, run_index);
 
 CREATE TABLE IF NOT EXISTS prime_queue_items (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -430,6 +472,19 @@ ALTER TABLE prime_agent_sessions
 
 ALTER TABLE prime_agent_sessions
   ADD COLUMN IF NOT EXISTS prompt_templates JSONB NOT NULL DEFAULT '{}';
+
+ALTER TABLE prime_agent_sessions DROP CONSTRAINT IF EXISTS prime_agent_sessions_trigger_type_check;
+
+UPDATE prime_agent_sessions
+SET trigger_type = 'prime_message'
+WHERE trigger_type = 'chief_message';
+
+ALTER TABLE prime_agent_sessions
+  ADD CONSTRAINT prime_agent_sessions_trigger_type_check
+  CHECK (trigger_type IN ('event', 'cron_fast', 'cron_slow', 'prime_message'));
+
+ALTER TABLE prime_agent_module_runs
+  ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'active';
 
     ALTER TABLE prime_agent_config
       ADD COLUMN IF NOT EXISTS setup_complete BOOLEAN NOT NULL DEFAULT false;

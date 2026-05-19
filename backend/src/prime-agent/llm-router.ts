@@ -23,6 +23,7 @@ export interface PrimeAction {
 
 export interface PrimeDecision {
   reasoning: string
+  response?: string
   actions: PrimeAction[]
   token_count?: number
   provider_used?: string
@@ -38,7 +39,9 @@ export function validatePrimeDecision(value: unknown): PrimeDecision {
     throw new Error('Prime decision must be an object')
   }
 
-  if (typeof value.reasoning !== 'string' || value.reasoning.trim() === '') {
+  const normalized = normalizePrimeDecisionTextFields(value)
+
+  if (typeof normalized.reasoning !== 'string' || normalized.reasoning.trim() === '') {
     throw new Error('Prime decision reasoning must be a non-empty string')
   }
 
@@ -50,8 +53,12 @@ export function validatePrimeDecision(value: unknown): PrimeDecision {
     .map(validatePrimeActionOrNull)
     .filter((action): action is PrimeAction => action !== null)
   const decision: PrimeDecision = {
-    reasoning: value.reasoning,
+    reasoning: normalized.reasoning,
     actions,
+  }
+
+  if (normalized.response) {
+    decision.response = normalized.response
   }
 
   if ('token_count' in value) {
@@ -123,6 +130,56 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
+function normalizePrimeDecisionTextFields(value: Record<string, unknown>): {
+  reasoning: string
+  response?: string
+} {
+  const explicitReasoning = typeof value.reasoning === 'string' ? value.reasoning.trim() : ''
+  const explicitResponse = typeof value.response === 'string' ? value.response.trim() : ''
+
+  if (explicitResponse) {
+    return {
+      reasoning: explicitReasoning,
+      response: explicitResponse,
+    }
+  }
+
+  const labeled = parseLabeledReasoningAndResponse(explicitReasoning)
+  if (labeled) {
+    return labeled
+  }
+
+  return {
+    reasoning: explicitReasoning,
+  }
+}
+
+function parseLabeledReasoningAndResponse(text: string): {
+  reasoning: string
+  response?: string
+} | null {
+  if (!text) return null
+
+  const reasoningMatch = text.match(/(?:^|\n)\s*reasoning:\s*([\s\S]*?)(?=(?:\n\s*response:)|$)/i)
+  const responseMatch = text.match(/(?:^|\n)\s*response:\s*([\s\S]*?)$/i)
+
+  if (!reasoningMatch && !responseMatch) {
+    return null
+  }
+
+  const prelude = text
+    .replace(/(?:^|\n)\s*reasoning:\s*[\s\S]*?(?=(?:\n\s*response:)|$)/i, '')
+    .replace(/(?:^|\n)\s*response:\s*[\s\S]*$/i, '')
+    .trim()
+  const reasoning = (reasoningMatch?.[1] ?? prelude).trim() || prelude || text
+  const response = responseMatch?.[1]?.trim() || prelude || undefined
+
+  return {
+    reasoning,
+    ...(response ? { response } : {}),
+  }
+}
+
 export async function buildPrimeSystemPrompt(context: PrimeContext, pool: pg.Pool): Promise<string> {
   const { rows } = await pool.query(
     "SELECT persona, operating_policy FROM chief_profiles WHERE id = 'default'"
@@ -155,7 +212,7 @@ export async function buildPrimeSystemPrompt(context: PrimeContext, pool: pg.Poo
 
 export async function buildPrimeTriggerMessage(context: PrimeContext, pool: pg.Pool): Promise<string> {
   const templates = await loadPrimeWorkspaceTemplates(pool)
-  if (context.trigger.type === 'chief.message') {
+  if (context.trigger.type === 'prime.message') {
     return renderTemplate(templates.templates.request, {
       sender: context.trigger.payload.sender,
       thread_id: context.trigger.payload.thread_id,
@@ -279,6 +336,7 @@ async function callLlamaCpp(
         type: 'object',
         properties: {
           reasoning: { type: 'string' },
+          response: { type: 'string' },
           actions: {
             type: 'array',
             items: {

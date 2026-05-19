@@ -1,13 +1,18 @@
 import type pg from 'pg'
-import { hashContextSnapshot } from '../checkpoint-store.js'
-import { appendThreadMessage, getChiefProfile } from '../runtime.js'
-import { dispatchPrimeActions, type PrimeActionDispatchResult } from './actions.js'
-import { assemblePrimeContext, buildContextSnapshot, type PrimeContext } from './context.js'
+import { appendThreadMessage, getPrimeProfile } from '../runtime.js'
+import type { PrimeActionDispatchResult } from './actions.js'
+import type { PrimeContext } from './context.js'
 import type { PrimeEvent } from './events.js'
-import { validatePrimeDecision, type LlmRouter, type PrimeDecision } from './llm-router.js'
+import type { LlmRouter, PrimeDecision } from './llm-router.js'
+import { listConfiguredPrimeModules, runPrimeModules, runShadowPrimeModules } from './modules/registry.js'
+import { PRIME_MODULE_STAGES, type PrimeConfiguredModule, type PrimeLoopState } from './modules/types.js'
 import {
   completePrimeSession,
+  failRunningPrimeMessageSessions,
+  failPrimeMessageSessionsExcept,
   failPrimeSession,
+  listPrimeMessageSessionsByMessageId,
+  savePrimeSessionModuleRuns,
   startPrimeSession,
   type PrimeSession,
   type PrimeSessionTriggerType,
@@ -24,6 +29,8 @@ export interface PrimeEventHandleResult {
   actions: PrimeActionDispatchResult[]
 }
 
+const STALE_DUPLICATE_MESSAGE_SESSION_MS = 5 * 60 * 1000
+
 async function updateLastStep(pool: pg.Pool, sessionId: string, step: string): Promise<void> {
   await pool.query(
     `UPDATE prime_agent_sessions SET last_step = $2 WHERE id = $1`,
@@ -36,37 +43,100 @@ export async function handlePrimeEvent(
   event: PrimeEvent,
   deps: PrimeEventLoopDeps
 ): Promise<PrimeEventHandleResult> {
+  const duplicate = event.type === 'prime.message'
+    ? await reconcilePrimeMessageSession(pool, event.payload.message_id)
+    : null
+  if (duplicate?.kind === 'completed') {
+    return {
+      session: duplicate.session,
+      decision: {
+        reasoning: 'Duplicate Prime message suppressed because it was already completed.',
+        actions: [],
+      },
+      actions: [],
+    }
+  }
+  if (duplicate?.kind === 'running') {
+    return {
+      session: duplicate.session,
+      decision: {
+        reasoning: 'Duplicate Prime message suppressed because it is already being processed.',
+        actions: [],
+      },
+      actions: [],
+    }
+  }
+
   const workspace = await loadPrimeWorkspaceTemplates(pool)
+  const configuredModules = await listConfiguredPrimeModules(pool)
+  const activeModules = configuredModules.filter((entry) => entry.rollout_mode === 'active')
+  const shadowModules = configuredModules.filter((entry) => entry.rollout_mode === 'shadow')
   const session = await startPrimeSession(pool, {
     trigger_type: mapTriggerType(event),
     trigger_payload: event.payload,
     workspace_root: workspace.effectiveRoot,
     workspace_revision: workspace.revision,
-    prompt_templates: workspace.templatePaths,
+    prompt_templates: {
+      ...workspace.templatePaths,
+      prime_modules: summarizeConfiguredPrimeModules(configuredModules),
+    },
   })
+  const state: PrimeLoopState = {
+    event,
+    session,
+    actions: [],
+    diagnostics: [],
+    moduleRuns: [],
+    budget: {
+      llmCalls: 0,
+      actionsDispatched: 0,
+    },
+  }
 
   try {
-    await updateLastStep(pool, session.id, 'assembling_context')
-    const context = await assemblePrimeContext(pool, event)
+    for (const stage of PRIME_MODULE_STAGES) {
+      const stageActiveModules = activeModules.filter((entry) => entry.module.stage === stage)
+      const stageShadowModules = shadowModules.filter((entry) => entry.module.stage === stage)
 
-    await updateLastStep(pool, session.id, 'deciding')
-    const decision = validatePrimeDecision(await deps.router.decide(context))
+      for (const configured of stageActiveModules) {
+        await updateLastStep(pool, session.id, `module:${configured.module.id}`)
+        await runPrimeModules(state, {
+          pool,
+          router: deps.router,
+          sessionId: session.id,
+          executionMode: 'active',
+          moduleConfig: configured.config,
+        }, [configured.module])
+      }
 
-    await updateLastStep(pool, session.id, 'dispatching')
-    const actions = await dispatchPrimeActionsWithContinuation(
-      pool,
-      context,
-      decision,
-      session.id,
-      event
-    )
+      for (const configured of stageShadowModules) {
+        await updateLastStep(pool, session.id, `shadow:${configured.module.id}`)
+        await runShadowPrimeModules(
+          state,
+          {
+            pool,
+            router: deps.router,
+            sessionId: session.id,
+            executionMode: 'shadow',
+            moduleConfig: configured.config,
+          },
+          [configured.module]
+        )
+      }
+    }
 
-    if (event.type === 'chief.message') {
-      const chiefProfile = await getChiefProfile(pool)
+    const context = requireContext(state)
+    const decision = requireDecision(state)
+    const actions = state.actions
+
+    await savePrimeSessionModuleRuns(pool, session.id, state.moduleRuns)
+
+    if (event.type === 'prime.message') {
+      const primeProfile = await getPrimeProfile(pool)
       await appendThreadMessage(pool, event.payload.thread_id, {
         role: 'assistant',
-        sender: chiefProfile.name.trim() || 'Prime',
-        content: summarizeChiefResponse(decision, actions),
+        sender: primeProfile.name.trim() || 'Prime',
+        content: presentPrimeResponse(decision, actions),
         metadata: {
           source: 'prime-agent',
           session_id: session.id,
@@ -86,7 +156,13 @@ export async function handlePrimeEvent(
     if (!completed) {
       throw new Error(`failed to complete prime session: ${session.id}`)
     }
-    if (event.type === 'chief.message') {
+    if (event.type === 'prime.message') {
+      await failPrimeMessageSessionsExcept(
+        pool,
+        event.payload.message_id,
+        session.id,
+        `duplicate prime.message session superseded by ${session.id}`
+      )
       await updateIntakeWorkItemStatus(pool, event.payload.message_id, 'review')
     }
 
@@ -96,15 +172,16 @@ export async function handlePrimeEvent(
       actions,
     }
   } catch (error) {
+    await savePrimeSessionModuleRuns(pool, session.id, state.moduleRuns)
     await updateLastStep(pool, session.id, 'failed')
     const message = error instanceof Error ? error.message : String(error)
     const failed = await failPrimeSession(pool, session.id, message)
-    if (event.type === 'chief.message') {
+    if (event.type === 'prime.message') {
       await updateIntakeWorkItemStatus(pool, event.payload.message_id, 'blocked')
-      const chiefProfile = await getChiefProfile(pool)
+      const primeProfile = await getPrimeProfile(pool)
       await appendThreadMessage(pool, event.payload.thread_id, {
         role: 'assistant',
-        sender: chiefProfile.name.trim() || 'Prime',
+        sender: primeProfile.name.trim() || 'Prime',
         content: `I could not process that yet: ${message}`,
         metadata: {
           source: 'prime-agent',
@@ -115,6 +192,50 @@ export async function handlePrimeEvent(
     }
     throw new PrimeEventLoopError(message, failed ?? session)
   }
+}
+
+async function reconcilePrimeMessageSession(
+  pool: pg.Pool,
+  messageId: string
+): Promise<
+  | { kind: 'completed'; session: PrimeSession }
+  | { kind: 'running'; session: PrimeSession }
+  | null
+> {
+  const sessions = await listPrimeMessageSessionsByMessageId(pool, messageId)
+  const completed = sessions.find((session) => session.status === 'completed' || session.status === 'escalated')
+  if (completed) {
+    await failPrimeMessageSessionsExcept(
+      pool,
+      messageId,
+      completed.id,
+      `duplicate prime.message session superseded by completed session ${completed.id}`
+    )
+    return { kind: 'completed', session: completed }
+  }
+
+  const running = sessions.find((session) => session.status === 'running')
+  if (!running) {
+    return null
+  }
+
+  const startedAt = new Date(running.started_at).getTime()
+  if (Number.isFinite(startedAt) && Date.now() - startedAt >= STALE_DUPLICATE_MESSAGE_SESSION_MS) {
+    await failRunningPrimeMessageSessions(
+      pool,
+      messageId,
+      `stale duplicate prime.message session timed out after ${STALE_DUPLICATE_MESSAGE_SESSION_MS}ms`
+    )
+    return null
+  }
+
+  return { kind: 'running', session: running }
+}
+
+function summarizeConfiguredPrimeModules(modules: PrimeConfiguredModule[]): string {
+  return modules
+    .map(({ module, rollout_mode }) => `${rollout_mode}:${module.stage}:${module.id}@${module.version}`)
+    .join(', ')
 }
 
 async function updateIntakeWorkItemStatus(
@@ -131,47 +252,24 @@ async function updateIntakeWorkItemStatus(
   )
 }
 
-async function dispatchPrimeActionsWithContinuation(
-  pool: pg.Pool,
-  ctx: PrimeContext,
-  decision: PrimeDecision,
-  sessionId: string,
-  event: PrimeEvent
-): Promise<PrimeActionDispatchResult[]> {
-  const results = await dispatchPrimeActions(pool, ctx, decision)
-
-  for (const result of results) {
-    if (result.approval && !result.approval.status.includes('approved')) {
-      await saveApprovalContinuation(pool, sessionId, ctx, decision)
-    }
+function requireContext(state: PrimeLoopState): PrimeContext {
+  if (!state.context) {
+    throw new Error('Prime loop completed without assembled context')
   }
-
-  return results
+  return state.context
 }
 
-async function saveApprovalContinuation(
-  pool: pg.Pool,
-  sessionId: string,
-  context: PrimeContext,
-  decision: PrimeDecision
-): Promise<void> {
-  const snapshot = buildContextSnapshot(context)
-  await pool.query(
-    `INSERT INTO checkpoint_continuations (owner_type, owner_id, step, context_hash, context_snapshot, continuation, status)
-     VALUES ('prime_session', $1, 'awaiting_approval', $2, $3, $4, 'pending')`,
-    [
-      sessionId,
-      hashContextSnapshot(snapshot),
-      JSON.stringify(snapshot),
-      JSON.stringify({ decision }),
-    ]
-  )
+function requireDecision(state: PrimeLoopState): PrimeDecision {
+  if (!state.decision) {
+    throw new Error('Prime loop completed without a decision')
+  }
+  return state.decision
 }
 
 function mapTriggerType(event: PrimeEvent): PrimeSessionTriggerType {
   switch (event.type) {
-    case 'chief.message':
-      return 'chief_message'
+    case 'prime.message':
+      return 'prime_message'
     case 'cron.fast':
       return 'cron_fast'
     case 'fleet.delegation.completed':
@@ -180,16 +278,16 @@ function mapTriggerType(event: PrimeEvent): PrimeSessionTriggerType {
   }
 }
 
-function summarizeChiefResponse(
+function presentPrimeResponse(
   decision: PrimeDecision,
   actions: PrimeActionDispatchResult[]
 ): string {
+  const base = decision.response?.trim() || decision.reasoning.trim()
   const dispatched = actions.map((result) => result.action.type)
-  const summary = decision.reasoning.trim()
   if (dispatched.length === 0) {
-    return summary
+    return base
   }
-  return `${summary} Actions: ${dispatched.join(', ')}.`
+  return `${base} Actions: ${dispatched.join(', ')}.`
 }
 
 export class PrimeEventLoopError extends Error {

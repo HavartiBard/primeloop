@@ -8,6 +8,8 @@
 
 **Tech Stack:** TypeScript ESM (`.js` extensions on all imports), Express + PostgreSQL backend (`backend/src/`), React + TanStack Query + Tailwind CSS variables frontend (`web/src/`), vitest + supertest for backend tests.
 
+**Dev runtime note:** the setup flow depends on backend `/api/setup/*` routes, so frontend-only Vite startup is not sufficient. Start local development with `./scripts/dev-up.sh`, which clears stale listeners, binds Vite on `0.0.0.0:5173`, and boots the backend against the expected dev database.
+
 ---
 
 ## File Map

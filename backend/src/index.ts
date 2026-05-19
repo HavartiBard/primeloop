@@ -122,6 +122,7 @@ const app = createApp({
   sshUser: SSH_USER,
   primeQueue: primeAgentService.queue,
   onPrimeConfigUpdated: () => primeAgentService.start(),
+  onSetupCompleted: () => primeAgentService.start(),
   onAgentCreated: (agent) => {
     startIntegration(agent, { pool, broadcast })
     void processManager.syncAgent(agent)

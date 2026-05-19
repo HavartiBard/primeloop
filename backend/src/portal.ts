@@ -15,7 +15,7 @@ export interface StatusUpdate {
   created_at: string
 }
 
-export interface ChiefProfile {
+export interface PrimeProfile {
   name: string
   persona: string
   policy: string
@@ -40,7 +40,7 @@ export interface AuditLoop {
 }
 
 export interface PortalState {
-  chief_profile: ChiefProfile
+  chief_profile: PrimeProfile
   work_items: WorkItem[]
   status_updates: StatusUpdate[]
   permission_rules: PermissionRule[]
@@ -50,7 +50,7 @@ export interface PortalState {
 
 export const DEFAULT_PORTAL_STATE: PortalState = {
   chief_profile: {
-    name: 'Chief of Staff',
+    name: 'Prime',
     persona: 'Pragmatic executive operations agent for homelab planning, delegation, and approvals.',
     policy: 'Keep work moving with bounded delegation, durable memory, scoped escalation, and concise status reporting.',
     preferences: [
@@ -74,7 +74,7 @@ export const DEFAULT_PORTAL_STATE: PortalState = {
       id: 'wk-1',
       title: 'Rework dashboard into executive multi-agent portal',
       status: 'active',
-      owner: 'Chief of Staff',
+      owner: 'Prime',
       lane: 'Implementation',
       updated_at: new Date(0).toISOString(),
     },
@@ -98,7 +98,7 @@ export const DEFAULT_PORTAL_STATE: PortalState = {
   status_updates: [
     {
       id: 'su-1',
-      text: 'Portal bootstrap started. Chief of Staff is assembling live context from agents, tools, and approvals.',
+      text: 'Portal bootstrap started. Prime is assembling live context from agents, tools, and approvals.',
       created_at: new Date(0).toISOString(),
     },
   ],
@@ -129,7 +129,7 @@ export const DEFAULT_PORTAL_STATE: PortalState = {
 }
 
 interface PortalRow {
-  chief_profile: ChiefProfile
+  chief_profile: PrimeProfile
   work_items: WorkItem[]
   status_updates: StatusUpdate[]
   permission_rules: PermissionRule[]

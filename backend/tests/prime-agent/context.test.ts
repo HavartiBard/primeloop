@@ -61,6 +61,23 @@ describe('prime-agent context', () => {
         }
       }
 
+      if (sql.includes('FROM thread_messages')) {
+        expect(params).toEqual(['thread-1', 8])
+        return {
+          rows: [
+            {
+              id: 'msg-1',
+              thread_id: 'thread-1',
+              role: 'user',
+              sender: 'james',
+              content: 'Investigate the queue stall and watchdog behavior',
+              metadata: {},
+              created_at: '2026-05-09T22:06:00.000Z',
+            },
+          ],
+        }
+      }
+
       if (sql.includes('FROM information_schema.tables')) {
         return { rows: [{ exists: true }] }
       }
@@ -97,7 +114,7 @@ describe('prime-agent context', () => {
     const pool = { query } as unknown as pg.Pool
 
     const context = await assemblePrimeContext(pool, {
-      type: 'chief.message',
+      type: 'prime.message',
       payload: {
         thread_id: 'thread-1',
         message_id: 'message-1',
@@ -113,6 +130,7 @@ describe('prime-agent context', () => {
     expect(context.recentEvents).toHaveLength(1)
     expect(context.recentLessons).toHaveLength(1)
     expect(context.recentLessons[0]?.id).toBe('lesson-1')
+    expect(context.threadMessages).toHaveLength(1)
   })
 
   it('handles empty state gracefully when lessons table is unavailable', async () => {

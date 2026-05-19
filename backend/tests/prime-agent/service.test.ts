@@ -12,6 +12,7 @@ const eventLoopMocks = vi.hoisted(() => ({
 
 const coordinatorMocks = vi.hoisted(() => ({
   setPrimeCoordinatorQueue: vi.fn(),
+  setPrimeCoordinatorProcessor: vi.fn(),
 }))
 
 vi.mock('../../src/prime-agent/config.js', () => ({
@@ -24,6 +25,7 @@ vi.mock('../../src/prime-agent/event-loop.js', () => ({
 
 vi.mock('../../src/coordinator.js', () => ({
   setPrimeCoordinatorQueue: coordinatorMocks.setPrimeCoordinatorQueue,
+  setPrimeCoordinatorProcessor: coordinatorMocks.setPrimeCoordinatorProcessor,
 }))
 
 import { createPrimeAgentService } from '../../src/prime-agent/service.js'
@@ -72,6 +74,23 @@ describe('prime-agent service', () => {
         router: expect.any(Object),
       })
     )
+  })
+
+  it('rethrows queue processing errors so the queue can mark the item failed', async () => {
+    configMocks.getPrimeConfig.mockResolvedValue({ enabled: true })
+    eventLoopMocks.handlePrimeEvent.mockRejectedValue(new Error('loop failed'))
+
+    const queue = createTestQueue()
+    const service = createPrimeAgentService(pool, { queue })
+    await service.start()
+
+    const handler = queue.process.mock.calls[0]?.[0] as (event: PrimeEvent) => Promise<void>
+    await expect(handler({
+      type: 'cron.fast',
+      payload: {
+        triggered_at: '2026-05-09T23:30:00.000Z',
+      },
+    })).rejects.toThrow('loop failed')
   })
 
   it('can start later after an initial disabled boot', async () => {

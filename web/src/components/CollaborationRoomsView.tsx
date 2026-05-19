@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { fetchPrimeSessions, fetchThreadMessages, sendChiefMessage } from '../api'
+import { fetchPrimeSession, fetchPrimeSessions, fetchThreadMessages, sendPrimeMessage } from '../api'
 import type { RegistryAgent, RuntimeAuditLoop, RuntimeDelegation, RuntimeThread, RuntimeWorkItem } from '../types'
 
 type AgentHealth = {
@@ -10,7 +10,7 @@ type AgentHealth = {
 }
 
 type CollaborationRoomsViewProps = {
-  chiefName: string
+  primeName: string
   connected: boolean
   agents: RegistryAgent[]
   healthData: AgentHealth[]
@@ -105,7 +105,7 @@ function filterTabCls(current: FilterTab, tab: FilterTab): string {
 }
 
 function speakerCls(speaker: string): string {
-  if (speaker === 'chief')  return 'text-violet-400'
+  if (speaker === 'prime')  return 'text-violet-400'
   if (speaker === 'system') return 'text-[var(--s-blk-tx)]'
   return 'text-[var(--terminal-speaker)]'
 }
@@ -130,6 +130,11 @@ function primePhaseLabel(step?: string, status?: string): string {
   if (step === 'completed') return 'responding'
   if (step === 'failed') return 'reporting'
   return 'processing'
+}
+
+function summarizeModuleRun(detail?: string): string {
+  if (!detail) return 'completed without detail'
+  return truncate(detail, 84)
 }
 
 // ─── Data derivation ───────────────────────────────────────────────────────
@@ -199,7 +204,7 @@ const GRID_BG = {
 }
 
 export function CollaborationRoomsView({
-  chiefName,
+  primeName,
   agents,
   healthData,
   workItems,
@@ -284,7 +289,7 @@ export function CollaborationRoomsView({
   })
 
   const roomPrimeSessions = primeSessions.filter((session) =>
-    session.trigger_type === 'chief_message' &&
+    session.trigger_type === 'prime_message' &&
     session.trigger_payload?.['thread_id'] === activeRoomId
   )
   const runningPrimeSessions = roomPrimeSessions.filter((session) => session.status === 'running')
@@ -327,7 +332,7 @@ export function CollaborationRoomsView({
     ? Array.from(new Set([
         ...selectedRoom.workItems.map((i) => i.owner_label).filter(Boolean) as string[],
         ...selectedRoom.participants,
-        ...(selectedRoom.isOnboarding ? [chiefName] : []),
+        ...(selectedRoom.isOnboarding ? [primeName] : []),
       ]))
     : []
   const healthByName = useMemo(() => new Map(healthData.map((entry) => [entry.agent.toLowerCase(), entry])), [healthData])
@@ -343,7 +348,7 @@ export function CollaborationRoomsView({
             title: item.title,
             status: item.status,
             lane: item.lane,
-            owner: item.owner_label || chiefName,
+            owner: item.owner_label || primeName,
             kind: 'work',
             messageId: typeof item.metadata?.['message_id'] === 'string' ? item.metadata['message_id'] : undefined,
             updatedAt: item.updated_at ?? item.created_at,
@@ -375,7 +380,7 @@ export function CollaborationRoomsView({
             title: item.title,
             status: item.status,
             lane: item.lane,
-            owner: item.owner_label || chiefName,
+            owner: item.owner_label || primeName,
             kind: 'work',
             messageId: typeof item.metadata?.['message_id'] === 'string' ? item.metadata['message_id'] : undefined,
             updatedAt: item.updated_at ?? item.created_at,
@@ -445,8 +450,8 @@ export function CollaborationRoomsView({
     selectedRoom.workItems.some((item) => item.status === 'active' || item.status === 'blocked')
     || selectedRoom.delegations.some((delegation) => delegation.status === 'queued' || delegation.status === 'running')
   )
-  const processingOwners = Array.from(new Set(runningPrimeWork.map((item) => item.owner_label || chiefName))).filter(Boolean)
-  const processingLabel = processingOwners.length > 0 ? processingOwners.join(', ') : chiefName
+  const processingOwners = Array.from(new Set(runningPrimeWork.map((item) => item.owner_label || primeName))).filter(Boolean)
+  const processingLabel = processingOwners.length > 0 ? processingOwners.join(', ') : primeName
   const processingSummary = runningPrimeWork.length > 0
     ? runningPrimeWork.slice(0, 2).map((item) => item.title).join(' · ')
     : 'thinking through the latest request'
@@ -460,6 +465,13 @@ export function CollaborationRoomsView({
   const selectedWorkSession = selectedFocus?.messageId
     ? roomPrimeSessions.find((session) => session.trigger_payload?.['message_id'] === selectedFocus.messageId)
     : undefined
+  const { data: selectedWorkSessionDetail } = useQuery({
+    queryKey: ['prime-agent-session', selectedWorkSession?.id],
+    queryFn: () => fetchPrimeSession(selectedWorkSession!.id),
+    enabled: Boolean(selectedWorkSession?.id),
+    refetchInterval: selectedWorkSession?.status === 'running' ? 2_000 : false,
+  })
+  const inspectedPrimeSession = selectedWorkSessionDetail ?? selectedWorkSession
   const selectedWorkResponse = selectedWorkSession
     ? rawMessages.find((message) => message.metadata?.['session_id'] === selectedWorkSession.id)
     : undefined
@@ -468,7 +480,7 @@ export function CollaborationRoomsView({
       if (!activeRoomId) throw new Error('No active room')
       const content = draftMessage.trim()
       if (!content) throw new Error('Message is empty')
-      return sendChiefMessage(activeRoomId, { content, sender: 'james' })
+      return sendPrimeMessage(activeRoomId, { content, sender: 'james' })
     },
     onSuccess: async () => {
       setDraftMessage('')
@@ -751,7 +763,7 @@ export function CollaborationRoomsView({
                     <span className="h-2.5 w-2.5 rounded-full bg-[#28c840]" />
                   </div>
                   <span className="font-mono text-[11px] uppercase tracking-widest text-[#6e7681]">
-                    Agent activity — {selectedRoom.participants[0] ?? chiefName}
+                    Agent activity — {selectedRoom.participants[0] ?? primeName}
                   </span>
                   <span className="ml-auto text-[11px] text-[#6e7681]">{termExpanded ? '▲' : '▼'}</span>
                 </div>
@@ -763,36 +775,46 @@ export function CollaborationRoomsView({
                         <div className="flex gap-2.5"><span className="text-[#58a6ff]">{selectedFocus.owner} $</span><span className="text-[#79c0ff]">inspect selected work</span></div>
                         <div className="pl-4 text-[#c9d1d9]">{selectedFocus.title}</div>
                         <div className="pl-4 text-[#8b949e]">status={selectedFocus.status} lane={selectedFocus.lane} kind={selectedFocus.kind}</div>
-                        {selectedWorkSession && (
+                        {inspectedPrimeSession && (
                           <>
-                            <div className="mt-2 flex gap-2.5"><span className="text-[#58a6ff]">prime $</span><span className="text-[#79c0ff]">session {selectedWorkSession.status}</span></div>
-                            <div className="pl-4 text-[#8b949e]">step={selectedWorkSession.last_step ?? 'n/a'} model={selectedWorkSession.model_used ?? 'pending'}</div>
-                            {selectedWorkSession.workspace_revision && (
-                              <div className="pl-4 text-[#8b949e]">workspace revision: {selectedWorkSession.workspace_revision.slice(0, 12)}</div>
+                            <div className="mt-2 flex gap-2.5"><span className="text-[#58a6ff]">prime $</span><span className="text-[#79c0ff]">session {inspectedPrimeSession.status}</span></div>
+                            <div className="pl-4 text-[#8b949e]">step={inspectedPrimeSession.last_step ?? 'n/a'} model={inspectedPrimeSession.model_used ?? 'pending'}</div>
+                            {inspectedPrimeSession.workspace_revision && (
+                              <div className="pl-4 text-[#8b949e]">workspace revision: {inspectedPrimeSession.workspace_revision.slice(0, 12)}</div>
                             )}
-                            {selectedWorkSession.workspace_root && (
-                              <div className="pl-4 text-[#8b949e]">workspace root: {selectedWorkSession.workspace_root}</div>
+                            {inspectedPrimeSession.workspace_root && (
+                              <div className="pl-4 text-[#8b949e]">workspace root: {inspectedPrimeSession.workspace_root}</div>
                             )}
-                            {Object.keys(selectedWorkSession.prompt_templates ?? {}).length > 0 && (
+                            {Object.keys(inspectedPrimeSession.prompt_templates ?? {}).length > 0 && (
                               <>
                                 <div className="pl-4 text-[#79c0ff]">templates used:</div>
                                 <div className="pl-8 text-[#8b949e]">
-                                  {Object.entries(selectedWorkSession.prompt_templates)
+                                  {Object.entries(inspectedPrimeSession.prompt_templates)
                                     .map(([name, filePath]) => `${name}=${filePath}`)
                                     .join(' | ')}
                                 </div>
                               </>
                             )}
-                            {selectedWorkSession.reasoning_summary && (
-                              <div className="pl-4 text-[#c9d1d9]">reasoning: {selectedWorkSession.reasoning_summary}</div>
+                            {inspectedPrimeSession.module_runs && inspectedPrimeSession.module_runs.length > 0 && (
+                              <>
+                                <div className="pl-4 text-[#79c0ff]">module runs:</div>
+                                {inspectedPrimeSession.module_runs.map((run) => (
+                                  <div key={run.id} className="pl-8 text-[#8b949e]">
+                                    [{String(run.run_index).padStart(2, '0')}] {run.stage}/{run.module_id}@{run.version} → {run.status} ({formatShortTime(run.completed_at)}) {summarizeModuleRun(run.detail)}
+                                  </div>
+                                ))}
+                              </>
                             )}
-                            {selectedWorkSession.actions_taken.length > 0 && (
+                            {inspectedPrimeSession.reasoning_summary && (
+                              <div className="pl-4 text-[#c9d1d9]">reasoning: {inspectedPrimeSession.reasoning_summary}</div>
+                            )}
+                            {inspectedPrimeSession.actions_taken.length > 0 && (
                               <div className="pl-4 text-[#c9d1d9]">
-                                actions: {selectedWorkSession.actions_taken.map((action) => typeof action === 'object' && action !== null && 'type' in action ? String(action.type) : 'action').join(', ')}
+                                actions: {inspectedPrimeSession.actions_taken.map((action) => typeof action === 'object' && action !== null && 'type' in action ? String(action.type) : 'action').join(', ')}
                               </div>
                             )}
-                            {selectedWorkSession.error && (
-                              <div className="pl-4 text-[#f85149]">error: {selectedWorkSession.error}</div>
+                            {inspectedPrimeSession.error && (
+                              <div className="pl-4 text-[#f85149]">error: {inspectedPrimeSession.error}</div>
                             )}
                             {selectedWorkResponse && (
                               <div className="pl-4 text-[#c9d1d9]">response: {selectedWorkResponse.content}</div>
@@ -803,16 +825,16 @@ export function CollaborationRoomsView({
                       </>
                     ) : hasLiveActivity ? (
                       <>
-                        <div className="flex gap-2.5"><span className="text-[#58a6ff]">{selectedRoom.participants[0] ?? chiefName} $</span><span className="text-[#79c0ff]">monitor coordination state</span></div>
+                        <div className="flex gap-2.5"><span className="text-[#58a6ff]">{selectedRoom.participants[0] ?? primeName} $</span><span className="text-[#79c0ff]">monitor coordination state</span></div>
                         <div className="pl-4 text-[#c9d1d9]">{selectedRoom.summary}</div>
-                        <div className="mt-1.5 flex gap-2.5"><span className="text-[#58a6ff]">{selectedRoom.participants[0] ?? chiefName} $</span><span className="text-[#d29922]">▌</span></div>
+                        <div className="mt-1.5 flex gap-2.5"><span className="text-[#58a6ff]">{selectedRoom.participants[0] ?? primeName} $</span><span className="text-[#d29922]">▌</span></div>
                       </>
                     ) : (
                       <>
-                        <div className="flex gap-2.5"><span className="text-[#58a6ff]">{chiefName} $</span><span className="text-[#79c0ff]">await first instruction</span></div>
+                        <div className="flex gap-2.5"><span className="text-[#58a6ff]">{primeName} $</span><span className="text-[#79c0ff]">await first instruction</span></div>
                         <div className="pl-4 text-[#c9d1d9]">Use this room to kick off the first task, incident, or repo workflow.</div>
                         <div className="pl-4 text-[#c9d1d9]">Once you send a message, this room becomes the live coordination thread.</div>
-                        <div className="mt-1.5 flex gap-2.5"><span className="text-[#58a6ff]">{chiefName} $</span><span className="text-[#d29922]">▌</span></div>
+                        <div className="mt-1.5 flex gap-2.5"><span className="text-[#58a6ff]">{primeName} $</span><span className="text-[#d29922]">▌</span></div>
                       </>
                     )}
                   </div>
@@ -849,7 +871,7 @@ export function CollaborationRoomsView({
                       }`}
                     >
                       <div className="truncate text-sm font-medium text-[var(--text)]">{item.title}</div>
-                      <div className="mt-1 font-mono text-[11px] text-[var(--muted)]">{item.owner_label || chiefName} · {laneLabel(item.status)}</div>
+                      <div className="mt-1 font-mono text-[11px] text-[var(--muted)]">{item.owner_label || primeName} · {laneLabel(item.status)}</div>
                     </button>
                   ))}
                   {attentionWork.length === 0 && pendingApprovals === 0 && (

@@ -8,7 +8,7 @@ import {
   createDelegation,
   createMemory,
   createWorkItem,
-  getChiefProfile,
+  getPrimeProfile,
   insertRuntimeEvent,
   type Delegation,
   type ThreadMessage,
@@ -30,7 +30,7 @@ export function setPrimeCoordinatorProcessor(processor: ((event: PrimeEvent) => 
   primeProcessor = processor
 }
 
-export interface ChiefRoute {
+export interface PrimeRoute {
   capability: string
   lane: string
   priority: string
@@ -39,13 +39,13 @@ export interface ChiefRoute {
   reason: string
 }
 
-export interface ChiefMessageResult {
+export interface PrimeMessageResult {
   user_message: ThreadMessage
-  chief_message?: ThreadMessage
+  prime_message?: ThreadMessage
   work_item: WorkItem
   delegation?: Delegation
   selected_agent?: RegistryAgent
-  route: ChiefRoute
+  route: PrimeRoute
 }
 
 const ROUTES: Array<{ capability: string; lane: string; patterns: RegExp[]; reason: string }> = [
@@ -101,7 +101,7 @@ const APPROVAL_PATTERNS = [
   /credential/i,
 ]
 
-export function classifyChiefRequest(content: string): ChiefRoute {
+export function classifyPrimeRequest(content: string): PrimeRoute {
   const route = ROUTES.find((candidate) => candidate.patterns.some((pattern) => pattern.test(content)))
   const requiresApproval = APPROVAL_PATTERNS.some((pattern) => pattern.test(content))
 
@@ -131,7 +131,7 @@ function titleFromContent(content: string): string {
   return title.length > 96 ? `${title.slice(0, 93)}...` : title || 'Operations request'
 }
 
-async function selectAgentForCapability(pool: pg.Pool, route: ChiefRoute): Promise<RegistryAgent | undefined> {
+async function selectAgentForCapability(pool: pg.Pool, route: PrimeRoute): Promise<RegistryAgent | undefined> {
   const { rows } = await pool.query<RegistryAgent>(
     `SELECT *
      FROM agents
@@ -155,8 +155,8 @@ async function selectAgentForCapability(pool: pg.Pool, route: ChiefRoute): Promi
   return rows[0]
 }
 
-function chiefResponse(
-  route: ChiefRoute,
+function primeResponse(
+  route: PrimeRoute,
   workItem: WorkItem,
   coordinatorName: string,
   agent?: RegistryAgent,
@@ -173,24 +173,24 @@ function chiefResponse(
   return `${routeText} ${approvalText} ${delegationText}`
 }
 
-export async function handleChiefMessage(
+export async function handlePrimeMessage(
   pool: pg.Pool,
   threadId: string,
   content: string,
   sender = 'james'
-): Promise<ChiefMessageResult> {
-  const chiefProfile = await getChiefProfile(pool)
-  const coordinatorName = chiefProfile.name.trim() || 'Prime'
+): Promise<PrimeMessageResult> {
+  const primeProfile = await getPrimeProfile(pool)
+  const coordinatorName = primeProfile.name.trim() || 'Prime'
   const userMessage = await appendThreadMessage(pool, threadId, {
     role: 'user',
     sender,
     content,
-    metadata: { source: 'chief-desk' },
+    metadata: { source: 'prime-desk' },
   })
 
   const primeConfig = primeQueue ? await getPrimeConfig(pool) : null
   if (primeQueue && primeConfig?.enabled) {
-    const route: ChiefRoute = {
+    const route: PrimeRoute = {
       capability: 'coordination',
       lane: 'intake',
       priority: 'normal',
@@ -214,7 +214,7 @@ export async function handleChiefMessage(
     })
 
     const primeEvent: PrimeEvent = {
-      type: 'chief.message',
+      type: 'prime.message',
       payload: {
         thread_id: threadId,
         message_id: userMessage.id,
@@ -222,14 +222,10 @@ export async function handleChiefMessage(
         sender,
       },
     }
-    if (primeProcessor) {
-      void primeProcessor(primeEvent)
-    } else {
-      await primeQueue.enqueue(primeEvent)
-    }
+    await primeQueue.enqueue(primeEvent)
 
     await insertRuntimeEvent(pool, {
-      event_type: 'chief.routed.prime',
+      event_type: 'prime.routed',
       actor: coordinatorName,
       thread_id: threadId,
       work_item_id: workItem.id,
@@ -239,9 +235,9 @@ export async function handleChiefMessage(
       },
     })
 
-    let chiefMessage: ThreadMessage | undefined
+    let primeMessage: ThreadMessage | undefined
     if (!primeProcessor) {
-      chiefMessage = await appendThreadMessage(pool, threadId, {
+      primeMessage = await appendThreadMessage(pool, threadId, {
         role: 'assistant',
         sender: coordinatorName,
         content: 'I could not process that yet because Prime processing is not running.',
@@ -255,13 +251,13 @@ export async function handleChiefMessage(
 
     return {
       user_message: userMessage,
-      ...(chiefMessage ? { chief_message: chiefMessage } : {}),
+      ...(primeMessage ? { prime_message: primeMessage } : {}),
       work_item: workItem,
       route,
     }
   }
 
-  const route = classifyChiefRequest(content)
+  const route = classifyPrimeRequest(content)
 
   const selectedAgent = await selectAgentForCapability(pool, route)
   const workItem = await createWorkItem(pool, {
@@ -274,7 +270,7 @@ export async function handleChiefMessage(
     owner_label: selectedAgent?.name ?? coordinatorName,
     thread_id: threadId,
     metadata: {
-      source: 'chief-desk',
+      source: 'prime-desk',
       route,
       selected_agent_id: selectedAgent?.id,
     },
@@ -301,12 +297,12 @@ export async function handleChiefMessage(
       category: /prefer|preference/i.test(content) ? 'preference' : 'note',
       content,
       source_thread_id: threadId,
-      metadata: { source: 'chief-desk' },
+      metadata: { source: 'prime-desk' },
     })
   }
 
-  const response = chiefResponse(route, workItem, coordinatorName, selectedAgent, delegation)
-  const chiefMessage = await appendThreadMessage(pool, threadId, {
+  const response = primeResponse(route, workItem, coordinatorName, selectedAgent, delegation)
+  const primeMessage = await appendThreadMessage(pool, threadId, {
     role: 'assistant',
     sender: coordinatorName,
     content: response,
@@ -319,7 +315,7 @@ export async function handleChiefMessage(
   })
 
   await insertRuntimeEvent(pool, {
-    event_type: 'chief.routed',
+    event_type: 'prime.routed',
     actor: coordinatorName,
     thread_id: threadId,
     work_item_id: workItem.id,
@@ -334,7 +330,7 @@ export async function handleChiefMessage(
 
   return {
     user_message: userMessage,
-    chief_message: chiefMessage,
+    prime_message: primeMessage,
     work_item: workItem,
     delegation,
     selected_agent: selectedAgent,

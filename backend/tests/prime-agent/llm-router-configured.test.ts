@@ -7,6 +7,10 @@ const mockOpenAICreate = vi.hoisted(() => vi.fn())
 const mockGetPrimeConfig = vi.hoisted(() => vi.fn())
 const mockGetProviderApiKey = vi.hoisted(() => vi.fn())
 const mockGetProvider = vi.hoisted(() => vi.fn())
+const workspaceMocks = vi.hoisted(() => ({
+  loadPrimeWorkspaceTemplates: vi.fn(),
+  renderTemplate: vi.fn(),
+}))
 
 vi.mock('@anthropic-ai/sdk', () => ({
   default: vi.fn().mockImplementation(() => ({
@@ -26,6 +30,11 @@ vi.mock('../../src/prime-agent/config.js', () => ({
 
 vi.mock('../../src/registry.js', () => ({
   getProviderApiKey: mockGetProviderApiKey,
+}))
+
+vi.mock('../../src/workspace.js', () => ({
+  loadPrimeWorkspaceTemplates: workspaceMocks.loadPrimeWorkspaceTemplates,
+  renderTemplate: workspaceMocks.renderTemplate,
 }))
 
 import { createConfiguredLlmRouter } from '../../src/prime-agent/llm-router.js'
@@ -56,6 +65,7 @@ const minimalContext: PrimeContext = {
   fleet: { agents: [], workItems: [], delegations: [] },
   recentEvents: [],
   recentLessons: [],
+  threadMessages: [],
 }
 
 describe('createConfiguredLlmRouter', () => {
@@ -69,6 +79,22 @@ describe('createConfiguredLlmRouter', () => {
     mockGetPrimeConfig.mockResolvedValue({
       provider_routing: { planning: [{ provider_id: 'prov-1', model: 'claude-opus-4-7' }] },
     })
+    workspaceMocks.loadPrimeWorkspaceTemplates.mockResolvedValue({
+      effectiveRoot: '/workspace/prime',
+      revision: 'abc123',
+      templates: {
+        primeProfile: 'You are Prime.',
+        standingRules: 'Keep work moving.',
+        system: 'SYSTEM {{prime_profile}} {{standing_rules}}',
+        request: 'REQUEST {{user_message}}',
+        llamacpp: '',
+        defaultAgentInstructions: '',
+        defaultAgentSoul: '',
+        delegationTask: '',
+      },
+      templatePaths: {},
+    })
+    workspaceMocks.renderTemplate.mockImplementation((template: string) => template)
     mockAnthropicCreate.mockResolvedValue({
       content: [{ type: 'text', text: JSON.stringify(validDecision) }],
       usage: { input_tokens: 100, output_tokens: 50 },

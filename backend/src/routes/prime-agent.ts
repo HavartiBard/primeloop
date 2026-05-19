@@ -2,8 +2,14 @@ import { Router } from 'express'
 import type pg from 'pg'
 import { getPrimeConfig, updatePrimeConfig } from '../prime-agent/config.js'
 import type { PrimeEvent } from '../prime-agent/events.js'
+import {
+  getPrimeModuleConfig,
+  listPrimeModuleConfigAudits,
+  listPrimeModuleConfigs,
+  updatePrimeModuleConfig,
+} from '../prime-agent/modules/registry.js'
 import type { PrimeQueue } from '../prime-agent/queue.js'
-import { listPrimeSessions } from '../prime-agent/session.js'
+import { getPrimeSession, listPrimeSessions } from '../prime-agent/session.js'
 import {
   ensureWorkspaceScaffold,
   getWorkspaceStatus,
@@ -54,6 +60,66 @@ export function createPrimeAgentRouter(
 
     try {
       res.json(await listPrimeSessions(pool, limit))
+    } catch {
+      res.status(500).json({ error: 'internal error' })
+    }
+  })
+
+  router.get('/sessions/:id', async (req, res) => {
+    try {
+      const session = await getPrimeSession(pool, req.params.id)
+      if (!session) {
+        return res.status(404).json({ error: 'prime session not found' })
+      }
+      res.json(session)
+    } catch {
+      res.status(500).json({ error: 'internal error' })
+    }
+  })
+
+  router.get('/modules', async (_req, res) => {
+    try {
+      res.json(await listPrimeModuleConfigs(pool))
+    } catch {
+      res.status(500).json({ error: 'internal error' })
+    }
+  })
+
+  router.patch('/modules/:id', async (req, res) => {
+    if (!req.body || typeof req.body !== 'object' || Array.isArray(req.body)) {
+      return res.status(400).json({ error: 'module patch object required' })
+    }
+
+    try {
+      const patch = validatePrimeModulePatch(req.body)
+      const existing = await getPrimeModuleConfig(pool, req.params.id)
+      if (!existing) {
+        return res.status(404).json({ error: 'prime module not found' })
+      }
+
+      const actor = req.header('x-prime-actor')?.trim() || 'api'
+      const config = await updatePrimeModuleConfig(pool, req.params.id, patch, actor)
+      res.json(config)
+    } catch (err) {
+      const message = (err as Error).message
+      if (message.startsWith('invalid prime module patch')) {
+        return res.status(400).json({ error: message })
+      }
+      res.status(500).json({ error: 'internal error' })
+    }
+  })
+
+  router.get('/modules/:id/audit', async (req, res) => {
+    try {
+      const existing = await getPrimeModuleConfig(pool, req.params.id)
+      if (!existing) {
+        return res.status(404).json({ error: 'prime module not found' })
+      }
+      const limit = req.query.limit ? Number(req.query.limit) : undefined
+      if (limit !== undefined && Number.isNaN(limit)) {
+        return res.status(400).json({ error: 'limit must be a number' })
+      }
+      res.json(await listPrimeModuleConfigAudits(pool, req.params.id, limit))
     } catch {
       res.status(500).json({ error: 'internal error' })
     }
@@ -263,23 +329,66 @@ function validatePrimeConfigPatch(value: unknown) {
   return patch
 }
 
+function validatePrimeModulePatch(value: unknown) {
+  if (!isRecord(value)) {
+    throw new Error('invalid prime module patch: body must be an object')
+  }
+
+  const patch: {
+    pinned_version?: string | null
+    enabled?: boolean
+    rollout_mode?: 'active' | 'shadow'
+    config?: Record<string, unknown>
+  } = {}
+
+  if ('pinned_version' in value) {
+    if (value.pinned_version !== null && typeof value.pinned_version !== 'string') {
+      throw new Error('invalid prime module patch: pinned_version must be a string or null')
+    }
+    patch.pinned_version = value.pinned_version
+  }
+
+  if ('enabled' in value) {
+    if (typeof value.enabled !== 'boolean') {
+      throw new Error('invalid prime module patch: enabled must be a boolean')
+    }
+    patch.enabled = value.enabled
+  }
+
+  if ('rollout_mode' in value) {
+    if (value.rollout_mode !== 'active' && value.rollout_mode !== 'shadow') {
+      throw new Error('invalid prime module patch: rollout_mode must be active or shadow')
+    }
+    patch.rollout_mode = value.rollout_mode
+  }
+
+  if ('config' in value) {
+    if (!isRecord(value.config)) {
+      throw new Error('invalid prime module patch: config must be an object')
+    }
+    patch.config = value.config
+  }
+
+  return patch
+}
+
 function validatePrimeEvent(value: unknown): PrimeEvent {
   if (!isRecord(value) || typeof value.type !== 'string' || !isRecord(value.payload)) {
     throw new Error('invalid prime event: type and payload are required')
   }
 
   switch (value.type) {
-    case 'chief.message':
+    case 'prime.message':
       if (
         typeof value.payload.thread_id !== 'string' ||
         typeof value.payload.message_id !== 'string' ||
         typeof value.payload.content !== 'string' ||
         typeof value.payload.sender !== 'string'
       ) {
-        throw new Error('invalid prime event: chief.message payload is malformed')
+        throw new Error('invalid prime event: prime.message payload is malformed')
       }
       return {
-        type: 'chief.message',
+        type: 'prime.message',
         payload: {
           thread_id: value.payload.thread_id,
           message_id: value.payload.message_id,

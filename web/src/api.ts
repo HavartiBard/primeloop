@@ -24,9 +24,11 @@ import type {
   RuntimeAuditLoop,
   RuntimeEvent,
   PrimeSession,
+  PrimeModuleConfig,
+  PrimeModuleConfigAudit,
   AgentWorkspaceStatus,
   AgentWorkspaceFile,
-  ChiefMessageResult,
+  PrimeMessageResult,
   CodexAuthStatus,
   CodexDeviceAuthResult,
   CodexDeviceAuthPoll,
@@ -260,6 +262,41 @@ export async function fetchPrimeSessions(limit = 50): Promise<PrimeSession[]> {
   return res.json() as Promise<PrimeSession[]>
 }
 
+export async function fetchPrimeSession(id: string): Promise<PrimeSession> {
+  const res = await fetch(`${API_BASE}/prime-agent/sessions/${id}`)
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json() as Promise<PrimeSession>
+}
+
+export async function fetchPrimeModules(): Promise<PrimeModuleConfig[]> {
+  const res = await fetch(`${API_BASE}/prime-agent/modules`)
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json() as Promise<PrimeModuleConfig[]>
+}
+
+export async function updatePrimeModule(
+  id: string,
+  patch: Partial<Pick<PrimeModuleConfig, 'enabled' | 'rollout_mode' | 'config'>> & {
+    pinned_version?: string | null
+  }
+): Promise<PrimeModuleConfig> {
+  const res = await fetch(`${API_BASE}/prime-agent/modules/${id}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  })
+  const body = await readResponseBody<PrimeModuleConfig & { error?: string }>(res) as PrimeModuleConfig & { error?: string } | null
+  if (!res.ok) throw new Error(body?.error ?? `HTTP ${res.status}`)
+  if (!body) throw new Error('Empty response from prime module update endpoint')
+  return body
+}
+
+export async function fetchPrimeModuleAudit(id: string, limit = 20): Promise<PrimeModuleConfigAudit[]> {
+  const res = await fetch(`${API_BASE}/prime-agent/modules/${id}/audit?limit=${limit}`)
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json() as Promise<PrimeModuleConfigAudit[]>
+}
+
 export async function fetchAgentWorkspace(): Promise<AgentWorkspaceStatus> {
   const res = await fetch(`${API_BASE}/prime-agent/workspace`)
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
@@ -345,17 +382,17 @@ export async function appendThreadMessage(
   return res.json() as Promise<ThreadMessage>
 }
 
-export async function sendChiefMessage(
+export async function sendPrimeMessage(
   threadId: string,
   data: { content: string; sender?: string }
-): Promise<ChiefMessageResult> {
-  const res = await fetch(`${API_BASE}/threads/${threadId}/chief/messages`, {
+): Promise<PrimeMessageResult> {
+  const res = await fetch(`${API_BASE}/threads/${threadId}/prime/messages`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
   })
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
-  return res.json() as Promise<ChiefMessageResult>
+  return res.json() as Promise<PrimeMessageResult>
 }
 
 export async function fetchRuntimeWorkItems(params?: { status?: string }): Promise<RuntimeWorkItem[]> {

@@ -10,6 +10,15 @@ vi.mock('../../src/runtime.js', () => ({ appendThreadMessage: appendThreadMessag
 const execFileMock = vi.hoisted(() => vi.fn())
 vi.mock('node:child_process', () => ({ execFile: execFileMock }))
 
+const workspaceMocks = vi.hoisted(() => ({
+  loadWorkspaceTemplate: vi.fn(),
+  renderTemplate: vi.fn(),
+}))
+vi.mock('../../src/workspace.js', () => ({
+  loadWorkspaceTemplate: workspaceMocks.loadWorkspaceTemplate,
+  renderTemplate: workspaceMocks.renderTemplate,
+}))
+
 import { FleetDispatcher } from '../../src/fleet-executor/dispatcher.js'
 import { createInMemoryPrimeQueue } from '../../src/prime-agent/queue.js'
 import type { AgentHarness, TaskResult } from '../../src/fleet-executor/harness.js'
@@ -57,6 +66,8 @@ describe('FleetDispatcher', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    workspaceMocks.loadWorkspaceTemplate.mockResolvedValue('Task {{title}} {{description}}')
+    workspaceMocks.renderTemplate.mockImplementation((template: string) => template)
     primeQueue = createInMemoryPrimeQueue()
     pool = {
       query: vi.fn()

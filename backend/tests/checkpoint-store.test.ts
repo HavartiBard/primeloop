@@ -28,7 +28,7 @@ describe('PostgresCheckpointStore', () => {
 
   it('supports enqueue, claim, complete, and fail queue item lifecycle', async () => {
     const queuedId = await store.enqueueItem({
-      type: 'chief.message',
+      type: 'prime.message',
       payload: {
         thread_id: 'thread-1',
         message_id: 'message-1',
@@ -42,7 +42,7 @@ describe('PostgresCheckpointStore', () => {
     expect(claimed).toEqual({
       id: queuedId,
       event: {
-        type: 'chief.message',
+        type: 'prime.message',
         payload: {
           thread_id: 'thread-1',
           message_id: 'message-1',

@@ -1,5 +1,5 @@
-export interface ChiefMessageEvent {
-  type: 'chief.message'
+export interface PrimeMessageEvent {
+  type: 'prime.message'
   payload: {
     thread_id: string
     message_id: string
@@ -37,7 +37,7 @@ export interface FleetDelegationFailedEvent {
 }
 
 export type PrimeEvent =
-  | ChiefMessageEvent
+  | PrimeMessageEvent
   | CronFastEvent
   | FleetDelegationCompletedEvent
   | FleetDelegationFailedEvent

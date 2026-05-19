@@ -6,6 +6,7 @@ const runtimeMocks = vi.hoisted(() => ({
   createDelegation: vi.fn(),
   updateWorkItem: vi.fn(),
   insertRuntimeEvent: vi.fn(),
+  getPrimeProfile: vi.fn(),
 }))
 
 const approvalMocks = vi.hoisted(() => ({
@@ -17,6 +18,7 @@ vi.mock('../../src/runtime.js', () => ({
   createDelegation: runtimeMocks.createDelegation,
   updateWorkItem: runtimeMocks.updateWorkItem,
   insertRuntimeEvent: runtimeMocks.insertRuntimeEvent,
+  getPrimeProfile: runtimeMocks.getPrimeProfile,
 }))
 
 vi.mock('../../src/approvals.js', () => ({
@@ -31,7 +33,7 @@ const pool = {} as pg.Pool
 
 const context: PrimeContext = {
   trigger: {
-    type: 'chief.message',
+    type: 'prime.message',
     payload: {
       thread_id: 'thread-1',
       message_id: 'message-1',
@@ -58,11 +60,13 @@ const context: PrimeContext = {
   },
   recentEvents: [],
   recentLessons: [],
+  threadMessages: [],
 }
 
 describe('prime-agent actions', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    runtimeMocks.getPrimeProfile.mockResolvedValue({ name: 'Prime Agent' })
   })
 
   it('dispatches delegate actions into work item and delegation writes', async () => {

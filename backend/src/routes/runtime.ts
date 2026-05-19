@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import type pg from 'pg'
 import { runAuditLoop } from '../audits.js'
-import { handleChiefMessage } from '../coordinator.js'
+import { handlePrimeMessage } from '../coordinator.js'
 import { runDelegation } from '../delegation-runner.js'
 import {
   listFleetLearnings,
@@ -88,11 +88,11 @@ export function createRuntimeRouter({ pool }: { pool: pg.Pool }) {
     }
   })
 
-  router.post('/threads/:id/chief/messages', async (req, res) => {
+  router.post('/threads/:id/prime/messages', async (req, res) => {
     const { content, sender } = req.body ?? {}
     if (!content) return res.status(400).json({ error: 'content required' })
     try {
-      res.status(201).json(await handleChiefMessage(pool, req.params.id, content, sender ?? 'james'))
+      res.status(201).json(await handlePrimeMessage(pool, req.params.id, content, sender ?? 'james'))
     } catch {
       res.status(500).json({ error: 'internal error' })
     }

@@ -7,6 +7,8 @@ import {
   fetchFleetLoopWarnings,
   fetchFleetLearnings,
   fetchFleetPatterns,
+  fetchPrimeModuleAudit,
+  fetchPrimeModules,
   fetchFleetSnapshots,
   fetchRuntimeAuditLoops,
   fetchRuntimeMemory,
@@ -14,15 +16,16 @@ import {
   publishFleetPattern,
   resolveApprovalAsPrime,
   saveAgentWorkspaceFile,
+  updatePrimeModule,
   updateAgentWorkspace,
   initAgentWorkspace,
 } from '../api'
 import { useAgentRegistry } from '../hooks/useAgentRegistry'
 import { useApprovals } from '../hooks/useApprovals'
-import type { ChiefProfile, PermissionRule } from '../types'
+import type { PermissionRule, PrimeModuleConfig, PrimeModuleConfigAudit, PrimeProfile } from '../types'
 
-const DEFAULT_PROFILE: ChiefProfile = {
-  name: 'Chief of Staff',
+const DEFAULT_PROFILE: PrimeProfile = {
+  name: 'Prime',
   persona: 'Pragmatic executive operations agent for homelab planning, delegation, and approvals.',
   policy: 'Keep work moving with bounded delegation, durable memory, scoped escalation, and concise status reporting.',
   preferences: [
@@ -107,6 +110,7 @@ function inferWorkspaceScope(file: string): WorkspaceScope {
 }
 
 type SettingsTab =
+  | 'modules'
   | 'workspace'
   | 'governance'
   | 'approvals'
@@ -118,6 +122,7 @@ type SettingsTab =
   | 'snapshots'
 
 const SETTINGS_TABS: Array<{ id: SettingsTab; label: string }> = [
+  { id: 'modules', label: 'Modules' },
   { id: 'workspace', label: 'Workspace' },
   { id: 'governance', label: 'Governance' },
   { id: 'approvals', label: 'Approvals' },
@@ -174,6 +179,10 @@ export function Governance() {
     content: '',
     source_agent_id: '',
   })
+  const [modulePinnedVersions, setModulePinnedVersions] = useState<Record<string, string>>({})
+  const [moduleConfigDrafts, setModuleConfigDrafts] = useState<Record<string, string>>({})
+  const [moduleSaveErrors, setModuleSaveErrors] = useState<Record<string, string>>({})
+  const [selectedModuleAuditId, setSelectedModuleAuditId] = useState<string | null>(null)
   const { data: runtimeOverview } = useQuery({
     queryKey: ['runtime-overview'],
     queryFn: fetchRuntimeOverview,
@@ -218,6 +227,17 @@ export function Governance() {
   const { data: workspace } = useQuery({
     queryKey: ['agent-workspace'],
     queryFn: fetchAgentWorkspace,
+    refetchInterval: 30_000,
+  })
+  const { data: primeModules = [] } = useQuery({
+    queryKey: ['prime-modules'],
+    queryFn: fetchPrimeModules,
+    refetchInterval: 30_000,
+  })
+  const { data: selectedModuleAudits = [] } = useQuery({
+    queryKey: ['prime-module-audit', selectedModuleAuditId],
+    queryFn: () => fetchPrimeModuleAudit(selectedModuleAuditId!, 12),
+    enabled: Boolean(selectedModuleAuditId),
     refetchInterval: 30_000,
   })
   const { data: workspaceFile } = useQuery({
@@ -267,6 +287,20 @@ export function Governance() {
       await queryClient.invalidateQueries({ queryKey: ['agent-workspace'] })
     },
   })
+  const updatePrimeModuleMutation = useMutation({
+    mutationFn: ({
+      moduleId,
+      patch,
+    }: {
+      moduleId: string
+      patch: Partial<Pick<PrimeModuleConfig, 'enabled' | 'rollout_mode' | 'config'>> & {
+        pinned_version?: string | null
+      }
+    }) => updatePrimeModule(moduleId, patch),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['prime-modules'] })
+    },
+  })
 
   useEffect(() => {
     if (workspaceFile) {
@@ -286,12 +320,12 @@ export function Governance() {
     }
   }, [workspace])
 
-  const profile: ChiefProfile = useMemo(() => {
-    const current = runtimeOverview?.chief
+  const profile: PrimeProfile = useMemo(() => {
+    const current = runtimeOverview?.prime
       ? {
-          name: runtimeOverview.chief.name,
-          persona: runtimeOverview.chief.persona,
-          policy: runtimeOverview.chief.operating_policy,
+          name: runtimeOverview.prime.name,
+          persona: runtimeOverview.prime.persona,
+          policy: runtimeOverview.prime.operating_policy,
           preferences: memories.filter((m) => m.category === 'preference').map((m) => m.content),
           recurringDuties: memories.filter((m) => m.category === 'recurring-duty').map((m) => m.content),
           priorDecisions: memories.filter((m) => m.category === 'prior-decision').map((m) => m.content),
@@ -302,7 +336,7 @@ export function Governance() {
     if (current.recurringDuties.length === 0) current.recurringDuties = DEFAULT_PROFILE.recurringDuties
     if (current.priorDecisions.length === 0) current.priorDecisions = DEFAULT_PROFILE.priorDecisions
     return current
-  }, [memories, runtimeOverview?.chief])
+  }, [memories, runtimeOverview?.prime])
 
   const pendingApprovals = approvals.filter((approval) => approval.status === 'pending')
   const primeAgents = agents.filter((agent) => agent.capabilities.includes('prime'))
@@ -342,6 +376,69 @@ export function Governance() {
     setWorkspaceSaveError('')
   }, [selectedWorkspaceFile])
 
+  useEffect(() => {
+    setModulePinnedVersions(
+      Object.fromEntries(primeModules.map((module) => [module.module_id, module.pinned_version ?? '']))
+    )
+    setModuleConfigDrafts(
+      Object.fromEntries(
+        primeModules.map((module) => [module.module_id, JSON.stringify(module.config ?? {}, null, 2)])
+      )
+    )
+    setModuleSaveErrors({})
+  }, [primeModules])
+
+  function togglePrimeModule(module: PrimeModuleConfig) {
+    updatePrimeModuleMutation.mutate({
+      moduleId: module.module_id,
+      patch: { enabled: !module.enabled },
+    })
+  }
+
+  function changePrimeModuleRollout(module: PrimeModuleConfig, rolloutMode: PrimeModuleConfig['rollout_mode']) {
+    updatePrimeModuleMutation.mutate({
+      moduleId: module.module_id,
+      patch: { rollout_mode: rolloutMode },
+    })
+  }
+
+  function savePrimeModuleDetails(module: PrimeModuleConfig) {
+    const pinnedVersion = modulePinnedVersions[module.module_id] ?? ''
+    const configDraft = moduleConfigDrafts[module.module_id] ?? '{}'
+
+    let parsedConfig: Record<string, unknown>
+    try {
+      const parsed = JSON.parse(configDraft) as unknown
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        throw new Error('Config JSON must be an object')
+      }
+      parsedConfig = parsed as Record<string, unknown>
+    } catch (error) {
+      setModuleSaveErrors((current) => ({
+        ...current,
+        [module.module_id]: error instanceof Error ? error.message : 'Invalid config JSON',
+      }))
+      return
+    }
+
+    setModuleSaveErrors((current) => ({ ...current, [module.module_id]: '' }))
+    updatePrimeModuleMutation.mutate({
+      moduleId: module.module_id,
+      patch: {
+        pinned_version: pinnedVersion.trim() || null,
+        config: parsedConfig,
+      },
+    })
+  }
+
+  function formatAuditConfig(value: Record<string, unknown>): string {
+    return JSON.stringify(value, null, 2)
+  }
+
+  function toggleModuleAudit(moduleId: string) {
+    setSelectedModuleAuditId((current) => (current === moduleId ? null : moduleId))
+  }
+
   return (
     <div className="min-h-screen px-4 py-4 sm:px-6 lg:px-8">
       <section className="space-y-5">
@@ -362,6 +459,154 @@ export function Governance() {
             </div>
           </div>
         </div>
+
+        {activeTab === 'modules' && (
+          <div className={`${cardClass()} p-5 sm:p-6`}>
+            <SectionHeader eyebrow="Prime" title="Module Registry" detail={`${primeModules.length} modules`} />
+            <div className="space-y-3">
+              {primeModules.map((module) => (
+                <div key={module.module_id} className="rounded-[1rem] border border-[var(--border-soft)] bg-[var(--panel-subtle)] p-4">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <div className="text-sm font-semibold text-[var(--text)]">{module.module_id}</div>
+                      <div className="mt-1 text-xs text-[var(--muted)]">
+                        {module.stage} · default {module.default_version}
+                        {module.pinned_version ? ` · pinned ${module.pinned_version}` : ' · unpinned'}
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      <span className={`rounded-full border px-3 py-1 text-xs ${
+                        module.enabled
+                          ? 'border-emerald-300/20 bg-emerald-300/12 text-emerald-50'
+                          : 'border-rose-300/20 bg-rose-300/12 text-rose-50'
+                      }`}>
+                        {module.enabled ? 'enabled' : 'disabled'}
+                      </span>
+                      <span className="rounded-full border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-1 text-xs text-[var(--muted)]">
+                        {module.rollout_mode}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="mt-3 grid gap-3 lg:grid-cols-[auto_auto_1fr] lg:items-center">
+                    <button
+                      type="button"
+                      onClick={() => togglePrimeModule(module)}
+                      disabled={updatePrimeModuleMutation.isPending}
+                      className="rounded-full border border-[var(--sel-bd)] bg-[var(--sel-bg)] px-4 py-1.5 text-xs text-blue-300 transition hover:bg-blue-500/20 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {module.enabled ? 'Disable Module' : 'Enable Module'}
+                    </button>
+                    <select
+                      value={module.rollout_mode}
+                      onChange={(event) =>
+                        changePrimeModuleRollout(module, event.target.value as PrimeModuleConfig['rollout_mode'])}
+                      disabled={updatePrimeModuleMutation.isPending}
+                      className="rounded border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-2 text-sm text-[var(--text)] disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      <option value="active">active</option>
+                      <option value="shadow">shadow</option>
+                    </select>
+                    <div className="text-xs text-[var(--muted)]">
+                      Updated {formatTime(module.updated_at)}
+                    </div>
+                  </div>
+                  <div className="mt-3 flex justify-end">
+                    <button
+                      type="button"
+                      onClick={() => toggleModuleAudit(module.module_id)}
+                      className="rounded-full border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-1.5 text-xs text-[var(--text)] transition hover:bg-[var(--panel-subtle)]"
+                    >
+                      {selectedModuleAuditId === module.module_id ? 'Hide Audit' : 'Show Audit'}
+                    </button>
+                  </div>
+                  <div className="mt-3 grid gap-3 lg:grid-cols-[220px_minmax(0,1fr)_auto]">
+                    <div>
+                      <div className="text-[11px] uppercase tracking-[0.22em] text-[var(--muted)]">Pinned Version</div>
+                      <input
+                        value={modulePinnedVersions[module.module_id] ?? ''}
+                        onChange={(event) =>
+                          setModulePinnedVersions((current) => ({
+                            ...current,
+                            [module.module_id]: event.target.value,
+                          }))}
+                        placeholder="leave blank for default"
+                        className="mt-2 w-full rounded border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-2 text-sm text-[var(--text)]"
+                      />
+                    </div>
+                    <div>
+                      <div className="text-[11px] uppercase tracking-[0.22em] text-[var(--muted)]">Config JSON</div>
+                      <textarea
+                        value={moduleConfigDrafts[module.module_id] ?? '{}'}
+                        onChange={(event) =>
+                          setModuleConfigDrafts((current) => ({
+                            ...current,
+                            [module.module_id]: event.target.value,
+                          }))}
+                        rows={5}
+                        className="mt-2 w-full rounded border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-2 font-mono text-xs text-[var(--text)]"
+                      />
+                    </div>
+                    <div className="flex items-end">
+                      <button
+                        type="button"
+                        onClick={() => savePrimeModuleDetails(module)}
+                        disabled={updatePrimeModuleMutation.isPending}
+                        className="rounded-full border border-[var(--sel-bd)] bg-[var(--sel-bg)] px-4 py-1.5 text-xs text-blue-300 transition hover:bg-blue-500/20 disabled:cursor-not-allowed disabled:opacity-60"
+                      >
+                        Save Details
+                      </button>
+                    </div>
+                  </div>
+                  {moduleSaveErrors[module.module_id] && (
+                    <div className="mt-3 rounded-lg border border-amber-300/20 bg-amber-300/10 px-3 py-2 text-xs text-amber-100">
+                      {moduleSaveErrors[module.module_id]}
+                    </div>
+                  )}
+                  {selectedModuleAuditId === module.module_id && (
+                    <div className="mt-3 rounded-[1rem] border border-[var(--border-soft)] bg-[var(--panel)] p-3">
+                      <div className="text-[11px] uppercase tracking-[0.22em] text-[var(--muted)]">Audit History</div>
+                      <div className="mt-3 space-y-3">
+                        {selectedModuleAudits.map((audit: PrimeModuleConfigAudit) => (
+                          <div key={audit.id} className="rounded-lg border border-[var(--border-soft)] bg-[var(--panel-subtle)] p-3">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <div className="text-sm font-medium text-[var(--text)]">{audit.actor}</div>
+                              <div className="text-xs text-[var(--muted)]">{formatTime(audit.created_at)}</div>
+                            </div>
+                            <div className="mt-2 text-xs text-[var(--muted)]">
+                              Changed: {audit.changed_fields.join(', ') || 'none'}
+                            </div>
+                            <div className="mt-3 grid gap-3 lg:grid-cols-2">
+                              <div>
+                                <div className="text-[11px] uppercase tracking-[0.22em] text-[var(--muted)]">Previous</div>
+                                <pre className="mt-2 overflow-x-auto rounded border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-2 font-mono text-xs text-[var(--muted)]">
+                                  {formatAuditConfig(audit.previous_config)}
+                                </pre>
+                              </div>
+                              <div>
+                                <div className="text-[11px] uppercase tracking-[0.22em] text-[var(--muted)]">Next</div>
+                                <pre className="mt-2 overflow-x-auto rounded border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-2 font-mono text-xs text-[var(--muted)]">
+                                  {formatAuditConfig(audit.next_config)}
+                                </pre>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                        {selectedModuleAudits.length === 0 && (
+                          <div className="text-xs text-[var(--muted)]">No audit records yet.</div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+              {primeModules.length === 0 && (
+                <div className="rounded-[1rem] border border-dashed border-[var(--border-soft)] bg-[var(--panel-subtle)] p-4 text-sm text-[var(--muted)]">
+                  No Prime modules discovered yet.
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         {activeTab === 'governance' && (
           <div className={`${cardClass()} p-5 sm:p-6`}>

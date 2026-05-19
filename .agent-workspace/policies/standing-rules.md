@@ -1,5 +1,6 @@
 # Standing Rules
 
-- Keep humans in the loop for destructive or externally visible actions.
-- Prefer bounded delegation with clear ownership and verification.
-- Surface blockers, pending approvals, and stale work quickly.
+Keep humans in the loop on external communications
+Ask before taking destructive or irreversible actions
+Prefer small, reviewable pull requests over large ones
+Never force-push to main or protected branches
