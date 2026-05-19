@@ -282,12 +282,28 @@ function presentPrimeResponse(
   decision: PrimeDecision,
   actions: PrimeActionDispatchResult[]
 ): string {
-  const base = decision.response?.trim() || decision.reasoning.trim()
-  const dispatched = actions.map((result) => result.action.type)
+  // Always use response as the user-facing content. Never fall back to reasoning.
+  const base = decision.response?.trim()
+  if (!base) {
+    return 'I\'ve processed your request.'
+  }
+
+  // Build natural-language action descriptions from each action's reason field.
+  const dispatched = actions.filter((result) => result.action.type !== 'no_op')
   if (dispatched.length === 0) {
     return base
   }
-  return `${base} Actions: ${dispatched.join(', ')}.`
+
+  const actionDescriptions = dispatched.map((result) => {
+    const reason = result.action.reason?.trim()
+    if (!reason) {
+      return `I've taken action: ${result.action.type.replace(/_/g, ' ')}`
+    }
+    // Use the action's reason as a natural-language description
+    return reason[0].toLowerCase() + reason.slice(1)
+  })
+
+  return `${base} ${actionDescriptions.join(' ')}`
 }
 
 export class PrimeEventLoopError extends Error {

@@ -132,7 +132,7 @@ describe('prime-agent event loop', () => {
     const router = {
       decide: vi.fn().mockResolvedValue({
         reasoning: 'Delegating the implementation task.',
-        response: 'I’m handing this off to the right implementation agent now.',
+        response: "I'm handing this off to the right implementation agent now.",
         actions: [
           {
             type: 'delegate',
@@ -180,7 +180,7 @@ describe('prime-agent event loop', () => {
       expect.objectContaining({
         role: 'assistant',
         sender: 'Prime Agent',
-        content: 'I’m handing this off to the right implementation agent now. Actions: delegate.',
+        content: "I'm handing this off to the right implementation agent now. delegate it",
       })
     )
     expect(sessionMocks.completePrimeSession).toHaveBeenCalledWith(

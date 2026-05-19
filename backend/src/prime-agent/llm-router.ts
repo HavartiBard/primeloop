@@ -5,6 +5,7 @@ import { getPrimeConfig, type PrimeConfigRoute } from './config.js'
 import { getProviderApiKey } from '../registry.js'
 import type { PrimeContext } from './context.js'
 import { loadPrimeWorkspaceTemplates, renderTemplate } from '../workspace.js'
+import { assessModelCapability } from './model-capability.js'
 
 export const PRIME_ACTION_TYPES = [
   'delegate',
@@ -34,7 +35,7 @@ export interface LlmRouter {
   decide(context: PrimeContext): Promise<PrimeDecision>
 }
 
-export function validatePrimeDecision(value: unknown): PrimeDecision {
+export function validatePrimeDecision(value: unknown, options?: { isUserFacing?: boolean }): PrimeDecision {
   if (!isRecord(value)) {
     throw new Error('Prime decision must be an object')
   }
@@ -47,6 +48,20 @@ export function validatePrimeDecision(value: unknown): PrimeDecision {
 
   if (!Array.isArray(value.actions)) {
     throw new Error('Prime decision actions must be an array')
+  }
+
+  const isUserFacing = options?.isUserFacing === true
+
+  // For user-facing events (prime.message), response must be present and meaningful
+  if (isUserFacing) {
+    const responseText = normalized.response ?? ''
+    if (responseText.length < 10) {
+      throw new Error(`Prime decision response must be at least 10 characters for user-facing messages (got ${responseText.length})`)
+    }
+    // Reject responses that contain internal schema labels
+    if (/\b(?:reasoning|response|actions):/.test(responseText)) {
+      throw new Error('Prime decision response must not contain internal schema labels')
+    }
   }
 
   const actions = value.actions
@@ -144,6 +159,8 @@ function normalizePrimeDecisionTextFields(value: Record<string, unknown>): {
     }
   }
 
+  // If the LLM mislabeled fields, try to recover them from labeled text in reasoning.
+  // This is a convenience path only — reasoning is never used as a fallback response.
   const labeled = parseLabeledReasoningAndResponse(explicitReasoning)
   if (labeled) {
     return labeled
@@ -203,9 +220,7 @@ export async function buildPrimeSystemPrompt(context: PrimeContext, pool: pg.Poo
     recent_events: formatLines(context.recentEvents.slice(0, 20).map(
       (e) => `- ${e.event_type} by ${e.actor}`,
     )),
-    thread_messages: formatLines(context.threadMessages.map(
-      (m) => `- ${m.sender || m.role}: ${m.content.slice(0, 240)}`,
-    )),
+    thread_messages: formatConversationTranscript(context.threadMessages),
     lessons: formatLines(context.recentLessons.map((lesson) => `- ${lesson.content}`)),
   })
 }
@@ -241,6 +256,21 @@ export function createConfiguredLlmRouter(pool: pg.Pool): LlmRouter {
       const resolvedRoutes = routes.length > 0 ? routes : await fallbackProviderRoutes(pool)
       if (resolvedRoutes.length === 0) {
         throw new Error('prime-agent: no provider routes configured in prime_agent_config')
+      }
+
+      // Validate model capability for each route
+      for (const route of resolvedRoutes) {
+        const assessment = assessModelCapability(route.model)
+        if (assessment.isBlocked) {
+          throw new Error(
+            `prime-agent: model "${route.model}" is blocked from Prime routing. ${assessment.warning}`
+          )
+        }
+        if (assessment.tier === 'warned') {
+          console.warn(
+            `prime-agent: model "${route.model}" may produce unreliable decisions. ${assessment.warning}`
+          )
+        }
       }
 
       let lastError: Error = new Error('no providers tried')
@@ -293,12 +323,13 @@ async function callProvider(
   const userMessage = await buildPrimeTriggerMessage(context, pool)
   const model = route.model
   const timeoutMs = normalizeProviderTimeout(provider.timeout_ms)
+  const isUserFacing = context.trigger.type === 'prime.message'
 
   if (provider.type === 'anthropic') {
-    return callAnthropic(apiKey ?? '', model, systemPrompt, userMessage, provider.type, timeoutMs)
+    return callAnthropic(apiKey ?? '', model, systemPrompt, userMessage, provider.type, timeoutMs, isUserFacing)
   }
   if (provider.type === 'llamacpp') {
-    return callLlamaCpp(pool, provider.base_url, model, systemPrompt, userMessage, provider.type, timeoutMs)
+    return callLlamaCpp(pool, provider.base_url, model, systemPrompt, userMessage, provider.type, timeoutMs, isUserFacing)
   }
   return callOpenAI(
     normalizeOpenAiBaseUrl(provider.base_url),
@@ -307,7 +338,8 @@ async function callProvider(
     systemPrompt,
     userMessage,
     provider.type,
-    timeoutMs
+    timeoutMs,
+    isUserFacing
   )
 }
 
@@ -319,6 +351,7 @@ async function callLlamaCpp(
   userMessage: string,
   providerType: string,
   timeoutMs: number,
+  isUserFacing: boolean,
 ): Promise<PrimeDecision> {
   const templates = await loadPrimeWorkspaceTemplates(pool)
   const response = await fetchWithTimeout(`${baseURL.trim().replace(/\/+$/, '')}/completion`, {
@@ -328,7 +361,7 @@ async function callLlamaCpp(
       model,
       prompt: buildCompactLlamaCppPrompt(templates.templates.llamacpp, systemPrompt, userMessage),
       stream: false,
-      n_predict: 128,
+      n_predict: 512,
       temperature: 0,
       cache_prompt: false,
       reasoning_format: 'none',
@@ -360,7 +393,7 @@ async function callLlamaCpp(
   }
 
   const payload = await response.json() as { content?: string; tokens_evaluated?: number; tokens_predicted?: number; model?: string }
-  const decision = validatePrimeDecision(parseJsonDecision(payload.content ?? ''))
+  const decision = validatePrimeDecision(parseJsonDecision(payload.content ?? ''), { isUserFacing })
   decision.provider_used = providerType
   decision.model_used = payload.model ?? model
   decision.token_count = (payload.tokens_evaluated ?? 0) + (payload.tokens_predicted ?? 0)
@@ -368,14 +401,40 @@ async function callLlamaCpp(
 }
 
 function buildCompactLlamaCppPrompt(template: string, systemPrompt: string, userMessage: string): string {
+  // Truncate at section boundaries to avoid cutting mid-instruction.
+  // Keep the Response Format section intact as it's critical for JSON output.
+  const responseFormatIndex = systemPrompt.indexOf('## Response Format')
+  let condensedSystem: string
+  if (responseFormatIndex >= 0) {
+    const beforeFormat = systemPrompt.slice(0, responseFormatIndex)
+    const responseFormat = systemPrompt.slice(responseFormatIndex)
+    // Truncate the context section but keep Response Format complete
+    const truncatedContext = beforeFormat.length > 1500 ? beforeFormat.slice(0, 1500) : beforeFormat
+    condensedSystem = truncatedContext + responseFormat
+  } else {
+    // No known section boundary — truncate at a paragraph break if possible
+    const truncated = systemPrompt.slice(0, 2000)
+    const lastParagraphBreak = truncated.lastIndexOf('\n\n')
+    condensedSystem = lastParagraphBreak > 500 ? truncated.slice(0, lastParagraphBreak) : truncated
+  }
   return renderTemplate(template, {
-    system_prompt: systemPrompt.split('## Response Format')[0]?.slice(0, 2000) ?? '',
-    user_message: userMessage.slice(0, 2000),
+    system_prompt: condensedSystem,
+    user_message: userMessage.slice(0, 3000),
   })
 }
 
 function formatLines(lines: string[]): string {
   return lines.length > 0 ? lines.join('\n') : '- none'
+}
+
+function formatConversationTranscript(messages: { sender?: string; role: string; content: string }[]): string {
+  if (messages.length === 0) return 'No prior conversation.'
+  return messages.map((m, i) => {
+    const speaker = m.sender || m.role
+    const label = speaker.toLowerCase() === 'assistant' ? 'Prime' : speaker
+    const content = m.content.length > 300 ? m.content.slice(0, 297) + '...' : m.content
+    return `[${i + 1}] ${label}: ${content}`
+  }).join('\n')
 }
 
 function normalizeOpenAiBaseUrl(baseUrl: string): string {
@@ -391,6 +450,7 @@ async function callAnthropic(
   userMessage: string,
   providerType: string,
   timeoutMs: number,
+  isUserFacing: boolean,
 ): Promise<PrimeDecision> {
   const client = new Anthropic({ apiKey, timeout: timeoutMs })
   const response = await withProviderTimeout(client.messages.create({
@@ -402,7 +462,7 @@ async function callAnthropic(
 
   const text = response.content.find((b) => b.type === 'text')?.text ?? ''
   const tokenCount = (response.usage?.input_tokens ?? 0) + (response.usage?.output_tokens ?? 0)
-  const decision = validatePrimeDecision(parseJsonDecision(text))
+  const decision = validatePrimeDecision(parseJsonDecision(text), { isUserFacing })
   decision.provider_used = providerType
   decision.model_used = response.model ?? model
   decision.token_count = tokenCount
@@ -417,6 +477,7 @@ async function callOpenAI(
   userMessage: string,
   providerType: string,
   timeoutMs: number,
+  isUserFacing: boolean,
 ): Promise<PrimeDecision> {
   const client = new OpenAI({ apiKey, baseURL: baseURL || undefined, timeout: timeoutMs })
   const response = await withProviderTimeout(client.chat.completions.create({
@@ -430,7 +491,7 @@ async function callOpenAI(
 
   const text = response.choices[0]?.message?.content ?? ''
   const tokenCount = response.usage?.total_tokens ?? 0
-  const decision = validatePrimeDecision(parseJsonDecision(text))
+  const decision = validatePrimeDecision(parseJsonDecision(text), { isUserFacing })
   decision.provider_used = providerType
   decision.model_used = response.model ?? model
   decision.token_count = tokenCount

@@ -48,7 +48,7 @@ export async function assemblePrimeContext(pool: pg.Pool, event: PrimeEvent): Pr
     listRecentDelegations(pool, DELEGATION_LIMIT),
     listRecentRuntimeEvents(pool, EVENT_LIMIT),
     listRelevantLessons(pool, event, LESSON_LIMIT),
-    listThreadMessagesForEvent(pool, event, 8),
+    listThreadMessagesForEvent(pool, event, 15),
   ])
 
   return {
