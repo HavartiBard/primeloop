@@ -1,10 +1,12 @@
 import type pg from 'pg'
 import { hashContextSnapshot } from '../checkpoint-store.js'
-import { appendThreadMessage, getChiefProfile } from '../runtime.js'
-import { dispatchPrimeActions, type PrimeActionDispatchResult } from './actions.js'
-import { assemblePrimeContext, buildContextSnapshot, type PrimeContext } from './context.js'
+import { appendThreadMessage, getPrimeProfile } from '../runtime.js'
+import type { PrimeActionDispatchResult } from './actions.js'
+import { buildContextSnapshot, type PrimeContext } from './context.js'
 import type { PrimeEvent } from './events.js'
-import { validatePrimeDecision, type LlmRouter, type PrimeDecision } from './llm-router.js'
+import type { LlmRouter, PrimeDecision } from './llm-router.js'
+import { listPrimeModules, runPrimeModules, summarizePrimeModules } from './modules/registry.js'
+import type { PrimeLoopState } from './modules/types.js'
 import {
   completePrimeSession,
   failPrimeSession,
@@ -37,36 +39,46 @@ export async function handlePrimeEvent(
   deps: PrimeEventLoopDeps
 ): Promise<PrimeEventHandleResult> {
   const workspace = await loadPrimeWorkspaceTemplates(pool)
+  const modules = listPrimeModules()
   const session = await startPrimeSession(pool, {
     trigger_type: mapTriggerType(event),
     trigger_payload: event.payload,
     workspace_root: workspace.effectiveRoot,
     workspace_revision: workspace.revision,
-    prompt_templates: workspace.templatePaths,
+    prompt_templates: {
+      ...workspace.templatePaths,
+      prime_modules: summarizePrimeModules(modules),
+    },
   })
 
   try {
-    await updateLastStep(pool, session.id, 'assembling_context')
-    const context = await assemblePrimeContext(pool, event)
+    const state: PrimeLoopState = {
+      event,
+      session,
+      actions: [],
+      diagnostics: [],
+      moduleRuns: [],
+      budget: {
+        llmCalls: 0,
+        actionsDispatched: 0,
+      },
+    }
 
-    await updateLastStep(pool, session.id, 'deciding')
-    const decision = validatePrimeDecision(await deps.router.decide(context))
+    for (const module of modules) {
+      await updateLastStep(pool, session.id, `module:${module.id}`)
+      await runPrimeModules(state, { pool, router: deps.router, sessionId: session.id }, [module])
+    }
 
-    await updateLastStep(pool, session.id, 'dispatching')
-    const actions = await dispatchPrimeActionsWithContinuation(
-      pool,
-      context,
-      decision,
-      session.id,
-      event
-    )
+    const context = requireContext(state)
+    const decision = requireDecision(state)
+    const actions = await saveActionContinuations(pool, context, decision, session.id, state.actions)
 
-    if (event.type === 'chief.message') {
-      const chiefProfile = await getChiefProfile(pool)
+    if (event.type === 'prime.message') {
+      const primeProfile = await getPrimeProfile(pool)
       await appendThreadMessage(pool, event.payload.thread_id, {
         role: 'assistant',
-        sender: chiefProfile.name.trim() || 'Prime',
-        content: summarizeChiefResponse(decision, actions),
+        sender: primeProfile.name.trim() || 'Prime',
+        content: summarizePrimeResponse(decision, actions),
         metadata: {
           source: 'prime-agent',
           session_id: session.id,
@@ -86,7 +98,7 @@ export async function handlePrimeEvent(
     if (!completed) {
       throw new Error(`failed to complete prime session: ${session.id}`)
     }
-    if (event.type === 'chief.message') {
+    if (event.type === 'prime.message') {
       await updateIntakeWorkItemStatus(pool, event.payload.message_id, 'review')
     }
 
@@ -99,12 +111,12 @@ export async function handlePrimeEvent(
     await updateLastStep(pool, session.id, 'failed')
     const message = error instanceof Error ? error.message : String(error)
     const failed = await failPrimeSession(pool, session.id, message)
-    if (event.type === 'chief.message') {
+    if (event.type === 'prime.message') {
       await updateIntakeWorkItemStatus(pool, event.payload.message_id, 'blocked')
-      const chiefProfile = await getChiefProfile(pool)
+      const primeProfile = await getPrimeProfile(pool)
       await appendThreadMessage(pool, event.payload.thread_id, {
         role: 'assistant',
-        sender: chiefProfile.name.trim() || 'Prime',
+        sender: primeProfile.name.trim() || 'Prime',
         content: `I could not process that yet: ${message}`,
         metadata: {
           source: 'prime-agent',
@@ -131,15 +143,13 @@ async function updateIntakeWorkItemStatus(
   )
 }
 
-async function dispatchPrimeActionsWithContinuation(
+async function saveActionContinuations(
   pool: pg.Pool,
   ctx: PrimeContext,
   decision: PrimeDecision,
   sessionId: string,
-  event: PrimeEvent
+  results: PrimeActionDispatchResult[]
 ): Promise<PrimeActionDispatchResult[]> {
-  const results = await dispatchPrimeActions(pool, ctx, decision)
-
   for (const result of results) {
     if (result.approval && !result.approval.status.includes('approved')) {
       await saveApprovalContinuation(pool, sessionId, ctx, decision)
@@ -147,6 +157,20 @@ async function dispatchPrimeActionsWithContinuation(
   }
 
   return results
+}
+
+function requireContext(state: PrimeLoopState): PrimeContext {
+  if (!state.context) {
+    throw new Error('Prime loop completed without assembled context')
+  }
+  return state.context
+}
+
+function requireDecision(state: PrimeLoopState): PrimeDecision {
+  if (!state.decision) {
+    throw new Error('Prime loop completed without a decision')
+  }
+  return state.decision
 }
 
 async function saveApprovalContinuation(
@@ -170,8 +194,8 @@ async function saveApprovalContinuation(
 
 function mapTriggerType(event: PrimeEvent): PrimeSessionTriggerType {
   switch (event.type) {
-    case 'chief.message':
-      return 'chief_message'
+    case 'prime.message':
+      return 'prime_message'
     case 'cron.fast':
       return 'cron_fast'
     case 'fleet.delegation.completed':
@@ -180,7 +204,7 @@ function mapTriggerType(event: PrimeEvent): PrimeSessionTriggerType {
   }
 }
 
-function summarizeChiefResponse(
+function summarizePrimeResponse(
   decision: PrimeDecision,
   actions: PrimeActionDispatchResult[]
 ): string {

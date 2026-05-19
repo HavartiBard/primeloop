@@ -32,12 +32,12 @@ describe('prime-agent session service', () => {
 
   it('starts a running session with defaults', async () => {
     const session = await startPrimeSession(pool, {
-      trigger_type: 'chief_message',
+      trigger_type: 'prime_message',
       trigger_payload: { thread_id: 'thread-1', content: 'Ship A2' },
     })
 
     expect(session.id).toBeTruthy()
-    expect(session.trigger_type).toBe('chief_message')
+    expect(session.trigger_type).toBe('prime_message')
     expect(session.trigger_payload).toEqual({ thread_id: 'thread-1', content: 'Ship A2' })
     expect(session.status).toBe('running')
     expect(session.actions_taken).toEqual([])

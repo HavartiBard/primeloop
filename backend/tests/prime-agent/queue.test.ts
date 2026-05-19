@@ -8,7 +8,7 @@ describe('prime-agent queue', () => {
     const received: PrimeEvent[] = []
 
     await queue.enqueue({
-      type: 'chief.message',
+      type: 'prime.message',
       payload: {
         thread_id: 'thread-1',
         message_id: 'message-1',
@@ -25,7 +25,7 @@ describe('prime-agent queue', () => {
 
     expect(received).toEqual([
       {
-        type: 'chief.message',
+        type: 'prime.message',
         payload: {
           thread_id: 'thread-1',
           message_id: 'message-1',

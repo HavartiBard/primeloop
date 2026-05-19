@@ -12,10 +12,10 @@ import { useApprovals } from '../hooks/useApprovals'
 import { useAgentRegistry } from '../hooks/useAgentRegistry'
 import { useWebSocket } from '../hooks/useWebSocket'
 import { CollaborationRoomsView } from '../components/CollaborationRoomsView'
-import type { ChiefProfile } from '../types'
+import type { PrimeProfile } from '../types'
 
-const DEFAULT_PROFILE: ChiefProfile = {
-  name: 'Chief of Staff',
+const DEFAULT_PROFILE: PrimeProfile = {
+  name: 'Prime',
   persona: 'Pragmatic executive operations agent for homelab planning, delegation, and approvals.',
   policy: 'Keep work moving with bounded delegation, durable memory, scoped escalation, and concise status reporting.',
   preferences: [
@@ -82,11 +82,11 @@ export function OperationsPortal() {
     refetchInterval: 30_000,
   })
 
-  const profile: ChiefProfile = runtimeOverview?.chief
+  const profile: PrimeProfile = runtimeOverview?.prime
     ? {
-        name: runtimeOverview.chief.name,
-        persona: runtimeOverview.chief.persona,
-        policy: runtimeOverview.chief.operating_policy,
+        name: runtimeOverview.prime.name,
+        persona: runtimeOverview.prime.persona,
+        policy: runtimeOverview.prime.operating_policy,
         preferences: memories.filter((m) => m.category === 'preference').map((m) => m.content),
         recurringDuties: memories.filter((m) => m.category === 'recurring-duty').map((m) => m.content),
         priorDecisions: memories.filter((m) => m.category === 'prior-decision').map((m) => m.content),
@@ -103,7 +103,7 @@ export function OperationsPortal() {
     <div className="flex h-[calc(100vh-57px)] flex-col px-3 py-3 sm:px-4 lg:px-5">
       <section className="min-h-0 flex-1 overflow-hidden rounded-[1.2rem] border border-[var(--border-soft)]">
         <CollaborationRoomsView
-          chiefName={profile.name}
+          primeName={profile.name}
           connected={connected}
           agents={agents}
           healthData={healthData}

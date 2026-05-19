@@ -80,7 +80,7 @@ export async function runMigrations(pool: pg.Pool): Promise<void> {
 
     CREATE TABLE IF NOT EXISTS chief_profiles (
       id                TEXT PRIMARY KEY DEFAULT 'default',
-      name              TEXT NOT NULL DEFAULT 'Chief of Staff',
+      name              TEXT NOT NULL DEFAULT 'Prime',
       persona           TEXT NOT NULL,
       operating_policy  TEXT NOT NULL,
       delegation_policy JSONB NOT NULL DEFAULT '{}',
@@ -132,7 +132,7 @@ export async function runMigrations(pool: pg.Pool): Promise<void> {
       priority       TEXT NOT NULL DEFAULT 'normal',
       lane           TEXT NOT NULL DEFAULT 'operations',
       owner_agent_id UUID REFERENCES agents(id) ON DELETE SET NULL,
-      owner_label    TEXT NOT NULL DEFAULT 'Chief of Staff',
+      owner_label    TEXT NOT NULL DEFAULT 'Prime',
       thread_id      UUID REFERENCES threads(id) ON DELETE SET NULL,
       parent_id      UUID REFERENCES work_items(id) ON DELETE SET NULL,
       blocked_by     TEXT,
@@ -367,7 +367,7 @@ CREATE TABLE IF NOT EXISTS prime_agent_config (
 
 CREATE TABLE IF NOT EXISTS prime_agent_sessions (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-  trigger_type TEXT NOT NULL CHECK (trigger_type IN ('event', 'cron_fast', 'cron_slow', 'chief_message')),
+  trigger_type TEXT NOT NULL CHECK (trigger_type IN ('event', 'cron_fast', 'cron_slow', 'prime_message')),
   trigger_payload JSONB NOT NULL,
   module_name TEXT,
   workspace_root TEXT,
@@ -430,6 +430,16 @@ ALTER TABLE prime_agent_sessions
 
 ALTER TABLE prime_agent_sessions
   ADD COLUMN IF NOT EXISTS prompt_templates JSONB NOT NULL DEFAULT '{}';
+
+ALTER TABLE prime_agent_sessions DROP CONSTRAINT IF EXISTS prime_agent_sessions_trigger_type_check;
+
+UPDATE prime_agent_sessions
+SET trigger_type = 'prime_message'
+WHERE trigger_type = 'chief_message';
+
+ALTER TABLE prime_agent_sessions
+  ADD CONSTRAINT prime_agent_sessions_trigger_type_check
+  CHECK (trigger_type IN ('event', 'cron_fast', 'cron_slow', 'prime_message'));
 
     ALTER TABLE prime_agent_config
       ADD COLUMN IF NOT EXISTS setup_complete BOOLEAN NOT NULL DEFAULT false;

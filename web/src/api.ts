@@ -26,7 +26,7 @@ import type {
   PrimeSession,
   AgentWorkspaceStatus,
   AgentWorkspaceFile,
-  ChiefMessageResult,
+  PrimeMessageResult,
   CodexAuthStatus,
   CodexDeviceAuthResult,
   CodexDeviceAuthPoll,
@@ -345,17 +345,17 @@ export async function appendThreadMessage(
   return res.json() as Promise<ThreadMessage>
 }
 
-export async function sendChiefMessage(
+export async function sendPrimeMessage(
   threadId: string,
   data: { content: string; sender?: string }
-): Promise<ChiefMessageResult> {
-  const res = await fetch(`${API_BASE}/threads/${threadId}/chief/messages`, {
+): Promise<PrimeMessageResult> {
+  const res = await fetch(`${API_BASE}/threads/${threadId}/prime/messages`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(data),
   })
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
-  return res.json() as Promise<ChiefMessageResult>
+  return res.json() as Promise<PrimeMessageResult>
 }
 
 export async function fetchRuntimeWorkItems(params?: { status?: string }): Promise<RuntimeWorkItem[]> {

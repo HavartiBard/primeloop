@@ -3,7 +3,7 @@ import { ensurePendingApproval } from '../approvals.js'
 import {
   createDelegation,
   createWorkItem,
-  getChiefProfile,
+  getPrimeProfile,
   insertRuntimeEvent,
   updateWorkItem,
   type Delegation,
@@ -255,8 +255,8 @@ async function dispatchNoOp(
 }
 
 async function getCoordinatorName(pool: pg.Pool): Promise<string> {
-  const chiefProfile = await getChiefProfile(pool)
-  return chiefProfile.name.trim() || 'Prime'
+  const primeProfile = await getPrimeProfile(pool)
+  return primeProfile.name.trim() || 'Prime'
 }
 
 function selectTargetAgent(
@@ -274,11 +274,11 @@ function selectTargetAgent(
 }
 
 function threadIdFromContext(ctx: PrimeContext): string | undefined {
-  return ctx.trigger.type === 'chief.message' ? ctx.trigger.payload.thread_id : undefined
+  return ctx.trigger.type === 'prime.message' ? ctx.trigger.payload.thread_id : undefined
 }
 
 function fallbackTitle(ctx: PrimeContext, fallback: string): string {
-  if (ctx.trigger.type === 'chief.message') {
+  if (ctx.trigger.type === 'prime.message') {
     return titleFromPrompt(ctx.trigger.payload.content, fallback)
   }
   return fallback

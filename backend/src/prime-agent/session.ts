@@ -1,6 +1,6 @@
 import type pg from 'pg'
 
-export type PrimeSessionTriggerType = 'event' | 'cron_fast' | 'cron_slow' | 'chief_message'
+export type PrimeSessionTriggerType = 'event' | 'cron_fast' | 'cron_slow' | 'prime_message'
 export type PrimeSessionStatus = 'running' | 'completed' | 'failed' | 'escalated'
 
 export interface PrimeSession {

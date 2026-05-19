@@ -97,7 +97,7 @@ describe('prime-agent context', () => {
     const pool = { query } as unknown as pg.Pool
 
     const context = await assemblePrimeContext(pool, {
-      type: 'chief.message',
+      type: 'prime.message',
       payload: {
         thread_id: 'thread-1',
         message_id: 'message-1',

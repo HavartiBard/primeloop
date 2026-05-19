@@ -89,7 +89,7 @@ describe('prime-agent router', () => {
     sessionMocks.listPrimeSessions.mockResolvedValue([
       {
         id: 'session-1',
-        trigger_type: 'chief_message',
+        trigger_type: 'prime_message',
       },
     ])
 
@@ -97,14 +97,14 @@ describe('prime-agent router', () => {
 
     expect(res.statusCode).toBe(200)
     expect(res.body).toHaveLength(1)
-    expect(res.body[0].trigger_type).toBe('chief_message')
+    expect(res.body[0].trigger_type).toBe('prime_message')
   })
 
   it('POST /events enqueues a valid Phase A event', async () => {
     configMocks.getPrimeConfig.mockResolvedValue({ enabled: true })
 
     const res = await invokeRoute('post', '/events', {
-      type: 'chief.message',
+      type: 'prime.message',
       payload: {
         thread_id: 'thread-1',
         message_id: 'message-1',
@@ -114,9 +114,9 @@ describe('prime-agent router', () => {
     })
 
     expect(res.statusCode).toBe(202)
-    expect(res.body).toEqual({ queued: true, event_type: 'chief.message' })
+    expect(res.body).toEqual({ queued: true, event_type: 'prime.message' })
     expect(queue.enqueue).toHaveBeenCalledWith({
-      type: 'chief.message',
+      type: 'prime.message',
       payload: {
         thread_id: 'thread-1',
         message_id: 'message-1',

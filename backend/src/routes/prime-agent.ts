@@ -269,17 +269,17 @@ function validatePrimeEvent(value: unknown): PrimeEvent {
   }
 
   switch (value.type) {
-    case 'chief.message':
+    case 'prime.message':
       if (
         typeof value.payload.thread_id !== 'string' ||
         typeof value.payload.message_id !== 'string' ||
         typeof value.payload.content !== 'string' ||
         typeof value.payload.sender !== 'string'
       ) {
-        throw new Error('invalid prime event: chief.message payload is malformed')
+        throw new Error('invalid prime event: prime.message payload is malformed')
       }
       return {
-        type: 'chief.message',
+        type: 'prime.message',
         payload: {
           thread_id: value.payload.thread_id,
           message_id: value.payload.message_id,

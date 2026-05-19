@@ -98,7 +98,7 @@ async function listThreadMessagesForEvent(
   event: PrimeEvent,
   limit: number
 ): Promise<ThreadMessage[]> {
-  if (event.type !== 'chief.message') return []
+  if (event.type !== 'prime.message') return []
 
   const { rows } = await pool.query<ThreadMessage>(
     `SELECT *
@@ -152,7 +152,7 @@ function extractTriggerTerms(event: PrimeEvent): string[] {
   const chunks: string[] = [event.type]
 
   switch (event.type) {
-    case 'chief.message':
+    case 'prime.message':
       chunks.push(event.payload.content, event.payload.sender)
       break
     case 'cron.fast':

@@ -155,7 +155,7 @@ export async function buildPrimeSystemPrompt(context: PrimeContext, pool: pg.Poo
 
 export async function buildPrimeTriggerMessage(context: PrimeContext, pool: pg.Pool): Promise<string> {
   const templates = await loadPrimeWorkspaceTemplates(pool)
-  if (context.trigger.type === 'chief.message') {
+  if (context.trigger.type === 'prime.message') {
     return renderTemplate(templates.templates.request, {
       sender: context.trigger.payload.sender,
       thread_id: context.trigger.payload.thread_id,

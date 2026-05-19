@@ -88,7 +88,7 @@ describe('prime-agent llm router', () => {
 
     const decision = await router.decide({
       trigger: {
-        type: 'chief.message',
+        type: 'prime.message',
         payload: {
           thread_id: 'thread-1',
           message_id: 'message-1',
@@ -119,7 +119,7 @@ describe('prime-agent llm router', () => {
     await expect(
       router.decide({
         trigger: {
-          type: 'chief.message',
+          type: 'prime.message',
           payload: {
             thread_id: 'thread-1',
             message_id: 'message-1',

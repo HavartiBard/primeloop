@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { fetchPrimeSessions, fetchThreadMessages, sendChiefMessage } from '../api'
+import { fetchPrimeSessions, fetchThreadMessages, sendPrimeMessage } from '../api'
 import type { RegistryAgent, RuntimeAuditLoop, RuntimeDelegation, RuntimeThread, RuntimeWorkItem } from '../types'
 
 type AgentHealth = {
@@ -10,7 +10,7 @@ type AgentHealth = {
 }
 
 type CollaborationRoomsViewProps = {
-  chiefName: string
+  primeName: string
   connected: boolean
   agents: RegistryAgent[]
   healthData: AgentHealth[]
@@ -105,7 +105,7 @@ function filterTabCls(current: FilterTab, tab: FilterTab): string {
 }
 
 function speakerCls(speaker: string): string {
-  if (speaker === 'chief')  return 'text-violet-400'
+  if (speaker === 'prime')  return 'text-violet-400'
   if (speaker === 'system') return 'text-[var(--s-blk-tx)]'
   return 'text-[var(--terminal-speaker)]'
 }
@@ -199,7 +199,7 @@ const GRID_BG = {
 }
 
 export function CollaborationRoomsView({
-  chiefName,
+  primeName,
   agents,
   healthData,
   workItems,
@@ -284,7 +284,7 @@ export function CollaborationRoomsView({
   })
 
   const roomPrimeSessions = primeSessions.filter((session) =>
-    session.trigger_type === 'chief_message' &&
+    session.trigger_type === 'prime_message' &&
     session.trigger_payload?.['thread_id'] === activeRoomId
   )
   const runningPrimeSessions = roomPrimeSessions.filter((session) => session.status === 'running')
@@ -327,7 +327,7 @@ export function CollaborationRoomsView({
     ? Array.from(new Set([
         ...selectedRoom.workItems.map((i) => i.owner_label).filter(Boolean) as string[],
         ...selectedRoom.participants,
-        ...(selectedRoom.isOnboarding ? [chiefName] : []),
+        ...(selectedRoom.isOnboarding ? [primeName] : []),
       ]))
     : []
   const healthByName = useMemo(() => new Map(healthData.map((entry) => [entry.agent.toLowerCase(), entry])), [healthData])
@@ -343,7 +343,7 @@ export function CollaborationRoomsView({
             title: item.title,
             status: item.status,
             lane: item.lane,
-            owner: item.owner_label || chiefName,
+            owner: item.owner_label || primeName,
             kind: 'work',
             messageId: typeof item.metadata?.['message_id'] === 'string' ? item.metadata['message_id'] : undefined,
             updatedAt: item.updated_at ?? item.created_at,
@@ -375,7 +375,7 @@ export function CollaborationRoomsView({
             title: item.title,
             status: item.status,
             lane: item.lane,
-            owner: item.owner_label || chiefName,
+            owner: item.owner_label || primeName,
             kind: 'work',
             messageId: typeof item.metadata?.['message_id'] === 'string' ? item.metadata['message_id'] : undefined,
             updatedAt: item.updated_at ?? item.created_at,
@@ -445,8 +445,8 @@ export function CollaborationRoomsView({
     selectedRoom.workItems.some((item) => item.status === 'active' || item.status === 'blocked')
     || selectedRoom.delegations.some((delegation) => delegation.status === 'queued' || delegation.status === 'running')
   )
-  const processingOwners = Array.from(new Set(runningPrimeWork.map((item) => item.owner_label || chiefName))).filter(Boolean)
-  const processingLabel = processingOwners.length > 0 ? processingOwners.join(', ') : chiefName
+  const processingOwners = Array.from(new Set(runningPrimeWork.map((item) => item.owner_label || primeName))).filter(Boolean)
+  const processingLabel = processingOwners.length > 0 ? processingOwners.join(', ') : primeName
   const processingSummary = runningPrimeWork.length > 0
     ? runningPrimeWork.slice(0, 2).map((item) => item.title).join(' · ')
     : 'thinking through the latest request'
@@ -468,7 +468,7 @@ export function CollaborationRoomsView({
       if (!activeRoomId) throw new Error('No active room')
       const content = draftMessage.trim()
       if (!content) throw new Error('Message is empty')
-      return sendChiefMessage(activeRoomId, { content, sender: 'james' })
+      return sendPrimeMessage(activeRoomId, { content, sender: 'james' })
     },
     onSuccess: async () => {
       setDraftMessage('')
@@ -751,7 +751,7 @@ export function CollaborationRoomsView({
                     <span className="h-2.5 w-2.5 rounded-full bg-[#28c840]" />
                   </div>
                   <span className="font-mono text-[11px] uppercase tracking-widest text-[#6e7681]">
-                    Agent activity — {selectedRoom.participants[0] ?? chiefName}
+                    Agent activity — {selectedRoom.participants[0] ?? primeName}
                   </span>
                   <span className="ml-auto text-[11px] text-[#6e7681]">{termExpanded ? '▲' : '▼'}</span>
                 </div>
@@ -803,16 +803,16 @@ export function CollaborationRoomsView({
                       </>
                     ) : hasLiveActivity ? (
                       <>
-                        <div className="flex gap-2.5"><span className="text-[#58a6ff]">{selectedRoom.participants[0] ?? chiefName} $</span><span className="text-[#79c0ff]">monitor coordination state</span></div>
+                        <div className="flex gap-2.5"><span className="text-[#58a6ff]">{selectedRoom.participants[0] ?? primeName} $</span><span className="text-[#79c0ff]">monitor coordination state</span></div>
                         <div className="pl-4 text-[#c9d1d9]">{selectedRoom.summary}</div>
-                        <div className="mt-1.5 flex gap-2.5"><span className="text-[#58a6ff]">{selectedRoom.participants[0] ?? chiefName} $</span><span className="text-[#d29922]">▌</span></div>
+                        <div className="mt-1.5 flex gap-2.5"><span className="text-[#58a6ff]">{selectedRoom.participants[0] ?? primeName} $</span><span className="text-[#d29922]">▌</span></div>
                       </>
                     ) : (
                       <>
-                        <div className="flex gap-2.5"><span className="text-[#58a6ff]">{chiefName} $</span><span className="text-[#79c0ff]">await first instruction</span></div>
+                        <div className="flex gap-2.5"><span className="text-[#58a6ff]">{primeName} $</span><span className="text-[#79c0ff]">await first instruction</span></div>
                         <div className="pl-4 text-[#c9d1d9]">Use this room to kick off the first task, incident, or repo workflow.</div>
                         <div className="pl-4 text-[#c9d1d9]">Once you send a message, this room becomes the live coordination thread.</div>
-                        <div className="mt-1.5 flex gap-2.5"><span className="text-[#58a6ff]">{chiefName} $</span><span className="text-[#d29922]">▌</span></div>
+                        <div className="mt-1.5 flex gap-2.5"><span className="text-[#58a6ff]">{primeName} $</span><span className="text-[#d29922]">▌</span></div>
                       </>
                     )}
                   </div>
@@ -849,7 +849,7 @@ export function CollaborationRoomsView({
                       }`}
                     >
                       <div className="truncate text-sm font-medium text-[var(--text)]">{item.title}</div>
-                      <div className="mt-1 font-mono text-[11px] text-[var(--muted)]">{item.owner_label || chiefName} · {laneLabel(item.status)}</div>
+                      <div className="mt-1 font-mono text-[11px] text-[var(--muted)]">{item.owner_label || primeName} · {laneLabel(item.status)}</div>
                     </button>
                   ))}
                   {attentionWork.length === 0 && pendingApprovals === 0 && (

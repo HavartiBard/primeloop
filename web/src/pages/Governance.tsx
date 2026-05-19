@@ -19,10 +19,10 @@ import {
 } from '../api'
 import { useAgentRegistry } from '../hooks/useAgentRegistry'
 import { useApprovals } from '../hooks/useApprovals'
-import type { ChiefProfile, PermissionRule } from '../types'
+import type { PermissionRule, PrimeProfile } from '../types'
 
-const DEFAULT_PROFILE: ChiefProfile = {
-  name: 'Chief of Staff',
+const DEFAULT_PROFILE: PrimeProfile = {
+  name: 'Prime',
   persona: 'Pragmatic executive operations agent for homelab planning, delegation, and approvals.',
   policy: 'Keep work moving with bounded delegation, durable memory, scoped escalation, and concise status reporting.',
   preferences: [
@@ -286,12 +286,12 @@ export function Governance() {
     }
   }, [workspace])
 
-  const profile: ChiefProfile = useMemo(() => {
-    const current = runtimeOverview?.chief
+  const profile: PrimeProfile = useMemo(() => {
+    const current = runtimeOverview?.prime
       ? {
-          name: runtimeOverview.chief.name,
-          persona: runtimeOverview.chief.persona,
-          policy: runtimeOverview.chief.operating_policy,
+          name: runtimeOverview.prime.name,
+          persona: runtimeOverview.prime.persona,
+          policy: runtimeOverview.prime.operating_policy,
           preferences: memories.filter((m) => m.category === 'preference').map((m) => m.content),
           recurringDuties: memories.filter((m) => m.category === 'recurring-duty').map((m) => m.content),
           priorDecisions: memories.filter((m) => m.category === 'prior-decision').map((m) => m.content),
@@ -302,7 +302,7 @@ export function Governance() {
     if (current.recurringDuties.length === 0) current.recurringDuties = DEFAULT_PROFILE.recurringDuties
     if (current.priorDecisions.length === 0) current.priorDecisions = DEFAULT_PROFILE.priorDecisions
     return current
-  }, [memories, runtimeOverview?.chief])
+  }, [memories, runtimeOverview?.prime])
 
   const pendingApprovals = approvals.filter((approval) => approval.status === 'pending')
   const primeAgents = agents.filter((agent) => agent.capabilities.includes('prime'))

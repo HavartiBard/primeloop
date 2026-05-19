@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { classifyChiefRequest } from '../src/coordinator.js'
+import { classifyPrimeRequest } from '../src/coordinator.js'
 
-describe('classifyChiefRequest', () => {
+describe('classifyPrimeRequest', () => {
   it('routes audit requests to operational audit', () => {
-    const route = classifyChiefRequest('Audit open work and stale queues')
+    const route = classifyPrimeRequest('Audit open work and stale queues')
 
     expect(route.capability).toBe('operational-audit')
     expect(route.lane).toBe('operations')
@@ -11,14 +11,14 @@ describe('classifyChiefRequest', () => {
   })
 
   it('routes implementation requests to implementation', () => {
-    const route = classifyChiefRequest('Implement the Codex app-server adapter')
+    const route = classifyPrimeRequest('Implement the Codex app-server adapter')
 
     expect(route.capability).toBe('implementation')
     expect(route.lane).toBe('implementation')
   })
 
   it('requires approval for risky requests', () => {
-    const route = classifyChiefRequest('Deploy this to production and restart the service')
+    const route = classifyPrimeRequest('Deploy this to production and restart the service')
 
     expect(route.capability).toBe('deployment')
     expect(route.requiresApproval).toBe(true)
@@ -27,7 +27,7 @@ describe('classifyChiefRequest', () => {
   })
 
   it('defaults to coordination for ambiguous requests', () => {
-    const route = classifyChiefRequest('What should we do next?')
+    const route = classifyPrimeRequest('What should we do next?')
 
     expect(route.capability).toBe('coordination')
     expect(route.lane).toBe('intake')

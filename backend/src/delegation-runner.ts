@@ -72,7 +72,7 @@ export async function runDelegation(pool: pg.Pool, delegationId: string): Promis
       })
       await insertRuntimeEvent(pool, {
         event_type: 'approval.needed',
-        actor: 'Chief of Staff',
+        actor: 'Prime',
         work_item_id: delegation.work_item_id,
         delegation_id: delegation.id,
         payload: {
@@ -92,7 +92,7 @@ export async function runDelegation(pool: pg.Pool, delegationId: string): Promis
       const updated = await updateDelegation(pool, delegation.id, { status: 'blocked' })
       await insertRuntimeEvent(pool, {
         event_type: 'delegation.blocked',
-        actor: 'Chief of Staff',
+        actor: 'Prime',
         work_item_id: delegation.work_item_id,
         delegation_id: delegation.id,
         payload: { reason: 'approval-required', approval_id: approval.approval_id },
@@ -127,7 +127,7 @@ export async function runDelegation(pool: pg.Pool, delegationId: string): Promis
     })
     await insertRuntimeEvent(pool, {
       event_type: 'delegation.blocked',
-      actor: 'Chief of Staff',
+      actor: 'Prime',
       work_item_id: delegation.work_item_id,
       delegation_id: delegation.id,
       payload: { reason: 'missing-agent' },
@@ -148,7 +148,7 @@ export async function runDelegation(pool: pg.Pool, delegationId: string): Promis
     })
     await insertRuntimeEvent(pool, {
       event_type: 'delegation.blocked',
-      actor: 'Chief of Staff',
+      actor: 'Prime',
       work_item_id: delegation.work_item_id,
       delegation_id: delegation.id,
       payload: { reason: 'agent-unavailable', to_agent_id: delegation.to_agent_id },
@@ -176,7 +176,7 @@ export async function runDelegation(pool: pg.Pool, delegationId: string): Promis
   }
   await insertRuntimeEvent(pool, {
     event_type: 'delegation.started',
-    actor: 'Chief of Staff',
+    actor: 'Prime',
     work_item_id: delegation.work_item_id,
     delegation_id: delegation.id,
     payload: { to_agent_id: agent.id, agent: agent.name, capability: delegation.capability },

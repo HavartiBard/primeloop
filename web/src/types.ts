@@ -87,7 +87,7 @@ export interface StatusUpdate {
   created_at: string
 }
 
-export interface ChiefProfile {
+export interface PrimeProfile {
   name: string
   persona: string
   policy: string
@@ -112,7 +112,7 @@ export interface AuditLoop {
 }
 
 export interface PortalState {
-  chief_profile: ChiefProfile
+  chief_profile: PrimeProfile
   work_items: WorkItem[]
   status_updates: StatusUpdate[]
   permission_rules: PermissionRule[]
@@ -120,7 +120,7 @@ export interface PortalState {
   updated_at?: string
 }
 
-export interface RuntimeChiefProfile {
+export interface RuntimePrimeProfile {
   id: string
   name: string
   persona: string
@@ -347,7 +347,7 @@ export interface RuntimeEvent {
 }
 
 export interface RuntimeOverview {
-  chief: RuntimeChiefProfile
+  prime: RuntimePrimeProfile
   counts: Record<string, unknown>
   recent_events: RuntimeEvent[]
 }
@@ -376,7 +376,7 @@ export interface AgentWorkspaceFile {
   updated_at: string
 }
 
-export interface ChiefRoute {
+export interface PrimeRoute {
   capability: string
   lane: string
   priority: string
@@ -406,11 +406,11 @@ export interface CodexDeviceAuthPoll {
   error?: string
 }
 
-export interface ChiefMessageResult {
+export interface PrimeMessageResult {
   user_message: ThreadMessage
-  chief_message?: ThreadMessage
+  prime_message?: ThreadMessage
   work_item: RuntimeWorkItem
   delegation?: RuntimeDelegation
   selected_agent?: RegistryAgent
-  route: ChiefRoute
+  route: PrimeRoute
 }

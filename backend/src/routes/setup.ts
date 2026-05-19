@@ -211,10 +211,10 @@ export function createSetupRouter({ pool }: { pool: pg.Pool }) {
       const workspaceStatus = await ensureWorkspaceScaffold(pool)
 
       await writeWorkspaceSetupFiles(workspaceStatus.effective_root, {
-        chiefName: persona.name,
-        chiefFocus: persona.focus,
-        chiefTone: toneLabel,
-        chiefInstructions: persona.instructions?.trim() ?? '',
+        primeName: persona.name,
+        primeFocus: persona.focus,
+        primeTone: toneLabel,
+        primeInstructions: persona.instructions?.trim() ?? '',
         policy: policyParts.join('\n').trim(),
       })
 
@@ -231,9 +231,9 @@ export function createSetupRouter({ pool }: { pool: pg.Pool }) {
         )
 
         if (threadRows[0]?.count === 0) {
-          const chiefName = persona.name?.trim() || 'Prime'
+          const primeName = persona.name?.trim() || 'Prime'
           const onboardingThread = await createThread(pool, {
-            title: `Getting started with ${chiefName}`,
+            title: `Getting started with ${primeName}`,
             metadata: {
               kind: 'onboarding',
               source: 'setup-launch',
@@ -242,8 +242,8 @@ export function createSetupRouter({ pool }: { pool: pg.Pool }) {
 
           await appendThreadMessage(pool, onboardingThread.id, {
             role: 'assistant',
-            sender: chiefName,
-            content: `I'm ${chiefName}. Your control plane is live and ready. Start by telling me the first task, repo, incident, or workflow you want me to handle, and I'll turn this room into the active coordination thread for it.`,
+            sender: primeName,
+            content: `I'm ${primeName}. Your control plane is live and ready. Start by telling me the first task, repo, incident, or workflow you want me to handle, and I'll turn this room into the active coordination thread for it.`,
             metadata: {
               kind: 'greeting',
             },
@@ -263,24 +263,24 @@ export function createSetupRouter({ pool }: { pool: pg.Pool }) {
 async function writeWorkspaceSetupFiles(
   root: string,
   data: {
-    chiefName: string
-    chiefFocus: string
-    chiefTone: string
-    chiefInstructions: string
+    primeName: string
+    primeFocus: string
+    primeTone: string
+    primeInstructions: string
     policy: string
   }
 ): Promise<void> {
   const profile = [
     '# Prime Profile',
     '',
-    `You are ${data.chiefName || 'Prime'}, ${data.chiefFocus || 'the coordination agent for the Agent Control Plane'}.`,
+    `You are ${data.primeName || 'Prime'}, ${data.primeFocus || 'the coordination agent for the Agent Control Plane'}.`,
     '',
-    `- Tone: ${data.chiefTone}.`,
+    `- Tone: ${data.primeTone}.`,
     '- Operate as the primary user-facing coordinator.',
     '- Prefer direct, concrete progress over generic acknowledgements.',
     '- When action is required, choose the next smallest useful step.',
-    data.chiefInstructions ? '' : null,
-    data.chiefInstructions || null,
+    data.primeInstructions ? '' : null,
+    data.primeInstructions || null,
   ].filter(Boolean).join('\n')
 
   const rules = ['# Standing Rules', '', data.policy || '- Keep work moving with bounded delegation.'].join('\n')

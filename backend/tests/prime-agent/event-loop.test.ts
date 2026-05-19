@@ -17,6 +17,11 @@ const sessionMocks = vi.hoisted(() => ({
 
 const runtimeMocks = vi.hoisted(() => ({
   appendThreadMessage: vi.fn(),
+  getPrimeProfile: vi.fn(),
+}))
+
+const workspaceMocks = vi.hoisted(() => ({
+  loadPrimeWorkspaceTemplates: vi.fn(),
 }))
 
 vi.mock('../../src/prime-agent/context.js', () => ({
@@ -39,6 +44,11 @@ vi.mock('../../src/prime-agent/session.js', async () => {
 
 vi.mock('../../src/runtime.js', () => ({
   appendThreadMessage: runtimeMocks.appendThreadMessage,
+  getPrimeProfile: runtimeMocks.getPrimeProfile,
+}))
+
+vi.mock('../../src/workspace.js', () => ({
+  loadPrimeWorkspaceTemplates: workspaceMocks.loadPrimeWorkspaceTemplates,
 }))
 
 import { handlePrimeEvent, PrimeEventLoopError } from '../../src/prime-agent/event-loop.js'
@@ -48,16 +58,24 @@ const pool = { query: vi.fn().mockResolvedValue({ rows: [], rowCount: 1 }) } as 
 describe('prime-agent event loop', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    runtimeMocks.getPrimeProfile.mockResolvedValue({ name: 'Prime Agent' })
+    workspaceMocks.loadPrimeWorkspaceTemplates.mockResolvedValue({
+      effectiveRoot: '/workspace/prime',
+      revision: 'abc123',
+      templatePaths: {
+        system: 'prompts/prime/system.md',
+      },
+    })
   })
 
-  it('processes a chief message end to end and appends an assistant reply', async () => {
+  it('processes a prime message end to end and appends an assistant reply', async () => {
     sessionMocks.startPrimeSession.mockResolvedValue({
       id: 'session-1',
       status: 'running',
     })
     contextMocks.assemblePrimeContext.mockResolvedValue({
       trigger: {
-        type: 'chief.message',
+        type: 'prime.message',
         payload: {
           thread_id: 'thread-1',
           message_id: 'message-1',
@@ -68,6 +86,7 @@ describe('prime-agent event loop', () => {
       fleet: { agents: [], workItems: [], delegations: [] },
       recentEvents: [],
       recentLessons: [],
+      threadMessages: [],
     })
     actionMocks.dispatchPrimeActions.mockResolvedValue([
       {
@@ -107,7 +126,7 @@ describe('prime-agent event loop', () => {
     const result = await handlePrimeEvent(
       pool,
       {
-        type: 'chief.message',
+        type: 'prime.message',
         payload: {
           thread_id: 'thread-1',
           message_id: 'message-1',
@@ -121,7 +140,12 @@ describe('prime-agent event loop', () => {
     expect(sessionMocks.startPrimeSession).toHaveBeenCalledWith(
       pool,
       expect.objectContaining({
-        trigger_type: 'chief_message',
+        trigger_type: 'prime_message',
+        workspace_root: '/workspace/prime',
+        workspace_revision: 'abc123',
+        prompt_templates: expect.objectContaining({
+          prime_modules: expect.stringContaining('context.fleet-state'),
+        }),
       })
     )
     expect(contextMocks.assemblePrimeContext).toHaveBeenCalled()
@@ -163,6 +187,7 @@ describe('prime-agent event loop', () => {
       fleet: { agents: [], workItems: [], delegations: [] },
       recentEvents: [],
       recentLessons: [],
+      threadMessages: [],
     })
     sessionMocks.failPrimeSession.mockResolvedValue({
       id: 'session-2',

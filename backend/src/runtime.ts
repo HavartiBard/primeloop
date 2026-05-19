@@ -1,6 +1,6 @@
 import type pg from 'pg'
 
-export interface ChiefProfile {
+export interface PrimeProfile {
   id: string
   name: string
   persona: string
@@ -119,7 +119,7 @@ export async function ensureRuntimeDefaults(pool: pg.Pool): Promise<void> {
      VALUES ('default', $1, $2, $3, $4)
      ON CONFLICT (id) DO NOTHING`,
     [
-      'Chief of Staff',
+      'Prime',
       'Persistent executive operations agent for homelab coordination.',
       'Maintain memory, coordinate subagents, use scoped tools, request approval for risky actions, and keep concise status updates.',
       JSON.stringify({
@@ -160,7 +160,7 @@ export async function ensureRuntimeDefaults(pool: pg.Pool): Promise<void> {
   }
 }
 
-export async function getChiefProfile(pool: pg.Pool): Promise<ChiefProfile> {
+export async function getPrimeProfile(pool: pg.Pool): Promise<PrimeProfile> {
   await ensureRuntimeDefaults(pool)
   const { rows } = await pool.query(`SELECT * FROM chief_profiles WHERE id = 'default'`)
   return rows[0]
@@ -178,13 +178,13 @@ async function ensureOnboardingThread(pool: pg.Pool): Promise<void> {
   )
   if ((threadRows[0]?.count ?? 0) > 0) return
 
-  const { rows: chiefRows } = await pool.query(
+  const { rows: primeRows } = await pool.query(
     `SELECT name FROM chief_profiles WHERE id = 'default'`
   )
-  const chiefName = chiefRows[0]?.name?.trim() || 'Prime'
+  const primeName = primeRows[0]?.name?.trim() || 'Prime'
 
   const onboardingThread = await createThread(pool, {
-    title: `Getting started with ${chiefName}`,
+    title: `Getting started with ${primeName}`,
     metadata: {
       kind: 'onboarding',
       source: 'runtime-bootstrap',
@@ -193,8 +193,8 @@ async function ensureOnboardingThread(pool: pg.Pool): Promise<void> {
 
   await appendThreadMessage(pool, onboardingThread.id, {
     role: 'assistant',
-    sender: chiefName,
-    content: `I'm ${chiefName}. Your control plane is live and ready. Start by telling me the first task, repo, incident, or workflow you want me to handle, and I'll turn this room into the active coordination thread for it.`,
+    sender: primeName,
+    content: `I'm ${primeName}. Your control plane is live and ready. Start by telling me the first task, repo, incident, or workflow you want me to handle, and I'll turn this room into the active coordination thread for it.`,
     metadata: {
       kind: 'greeting',
     },
@@ -219,7 +219,7 @@ export async function createThread(
   )
   await insertRuntimeEvent(pool, {
     event_type: 'thread.created',
-    actor: 'chief-of-staff',
+    actor: 'prime-agent',
     thread_id: rows[0].id,
     payload: { title: data.title },
   })
@@ -278,7 +278,7 @@ export async function createMemory(
   )
   await insertRuntimeEvent(pool, {
     event_type: 'memory.created',
-    actor: 'chief-of-staff',
+    actor: 'prime-agent',
     thread_id: data.source_thread_id,
     payload: { category: data.category, memory_id: rows[0].id },
   })
@@ -379,7 +379,7 @@ export async function updateWorkItem(
   if (!rows[0]) return null
   await insertRuntimeEvent(pool, {
     event_type: 'work.updated',
-    actor: 'chief-of-staff',
+    actor: 'prime-agent',
     thread_id: rows[0].thread_id,
     work_item_id: rows[0].id,
     payload: { status: rows[0].status },
@@ -429,7 +429,7 @@ export async function createDelegation(
   )
   await insertRuntimeEvent(pool, {
     event_type: 'delegation.created',
-    actor: 'chief-of-staff',
+    actor: 'prime-agent',
     work_item_id: data.work_item_id,
     delegation_id: rows[0].id,
     payload: { capability: data.capability, status: rows[0].status, to_agent_id: data.to_agent_id },
@@ -507,7 +507,7 @@ export async function recordAuditRun(
   )
   await insertRuntimeEvent(pool, {
     event_type: 'audit.completed',
-    actor: 'chief-of-staff',
+    actor: 'prime-agent',
     payload: { audit_loop_id: loopId, audit_run_id: rows[0].id },
   })
   return rows[0]
@@ -550,8 +550,8 @@ export async function listRuntimeEvents(pool: pg.Pool, limit = 100): Promise<Run
 
 export async function getRuntimeOverview(pool: pg.Pool): Promise<Record<string, unknown>> {
   await ensureRuntimeDefaults(pool)
-  const [chief, work, delegations, approvals, agents, auditLoops, events] = await Promise.all([
-    getChiefProfile(pool),
+  const [prime, work, delegations, approvals, agents, auditLoops, events] = await Promise.all([
+    getPrimeProfile(pool),
     pool.query(`SELECT status, count(*)::int AS count FROM work_items GROUP BY status`),
     pool.query(`SELECT status, count(*)::int AS count FROM delegations GROUP BY status`),
     pool.query(`SELECT status, count(*)::int AS count FROM approvals GROUP BY status`),
@@ -561,7 +561,7 @@ export async function getRuntimeOverview(pool: pg.Pool): Promise<Record<string, 
   ])
 
   return {
-    chief,
+    prime,
     counts: {
       work_items: work.rows,
       delegations: delegations.rows,

@@ -86,7 +86,7 @@ describe('app smoke tests', () => {
   it('GET /api/portal/state returns persistent portal state', async () => {
     const res = await request(app).get('/api/portal/state')
     expect(res.status).toBe(200)
-    expect(res.body.chief_profile.name).toBe('Chief of Staff')
+    expect(res.body.chief_profile.name).toBe('Prime')
     expect(Array.isArray(res.body.work_items)).toBe(true)
   })
 
@@ -117,7 +117,7 @@ describe('app smoke tests', () => {
 
     const overview = await request(app).get('/api/runtime/overview')
     expect(overview.status).toBe(200)
-    expect(overview.body.chief.name).toBe('Chief of Staff')
+    expect(overview.body.prime.name).toBe('Prime')
     expect(Array.isArray(overview.body.recent_events)).toBe(true)
   })
 })
