@@ -451,3 +451,14 @@ export interface PrimeMessageResult {
   selected_agent?: RegistryAgent
   route: PrimeRoute
 }
+
+export type ModelTier = 'recommended' | 'warned' | 'blocked'
+
+export interface ModelCapabilityAssessment {
+  model: string
+  estimatedParams: number | null
+  jsonMode: boolean
+  tier: ModelTier
+  warning: string
+  isBlocked: boolean
+}

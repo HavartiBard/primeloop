@@ -33,6 +33,7 @@ import type {
   CodexDeviceAuthResult,
   CodexDeviceAuthPoll,
   MCPServer,
+  ModelCapabilityAssessment,
 } from './types'
 
 const API_ORIGIN = ((import.meta.env.VITE_API_BASE as string | undefined) ?? '').replace(/\/+$/, '')
@@ -127,6 +128,27 @@ export async function replaceProviderKey(id: string, api_key: string): Promise<P
 export async function deleteProvider(id: string): Promise<void> {
   const res = await fetch(`${API_BASE}/providers/${id}`, { method: 'DELETE' })
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
+}
+
+// Module-level cache for model capability assessments (TTL-based).
+// Prevents duplicate API calls across components and table rows.
+const MODEL_CAPABILITY_CACHE = new Map<string, { result: ModelCapabilityAssessment; ts: number }>()
+const MODEL_CAPABILITY_TTL_MS = 5 * 60 * 1000 // 5 minutes
+
+export async function fetchModelCapability(model: string): Promise<ModelCapabilityAssessment> {
+  const cached = MODEL_CAPABILITY_CACHE.get(model)
+  if (cached && Date.now() - cached.ts < MODEL_CAPABILITY_TTL_MS) {
+    return cached.result
+  }
+  const res = await fetch(`${API_BASE}/providers/model-capability`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model }),
+  })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  const result = await res.json() as ModelCapabilityAssessment
+  MODEL_CAPABILITY_CACHE.set(model, { result, ts: Date.now() })
+  return result
 }
 
 export async function fetchSetupProviderModels(data: {

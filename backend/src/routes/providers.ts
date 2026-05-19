@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import type pg from 'pg'
 import { listProviders, insertProvider, updateProvider, deleteProvider } from '../registry.js'
+import { assessModelCapability } from '../prime-agent/model-capability.js'
 
 export function createProvidersRouter({ pool }: { pool: pg.Pool }) {
   const router = Router()
@@ -44,6 +45,19 @@ export function createProvidersRouter({ pool }: { pool: pg.Pool }) {
     try {
       await deleteProvider(pool, req.params.id)
       res.status(204).send()
+    } catch (err) {
+      res.status(500).json({ error: 'internal error' })
+    }
+  })
+
+  router.post('/model-capability', (_req, res) => {
+    const { model } = req.body
+    if (!model || typeof model !== 'string') {
+      return res.status(400).json({ error: '"model" string required in request body' })
+    }
+    try {
+      const assessment = assessModelCapability(model)
+      res.json(assessment)
     } catch (err) {
       res.status(500).json({ error: 'internal error' })
     }

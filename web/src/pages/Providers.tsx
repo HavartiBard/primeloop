@@ -7,8 +7,9 @@ import {
   pollCodexDeviceAuth,
   codexApiKeyAuth,
   codexLogout,
+  fetchModelCapability,
 } from '../api'
-import type { CodexAuthStatus, Provider } from '../types'
+import type { CodexAuthStatus, Provider, ModelCapabilityAssessment } from '../types'
 
 // ─── Provider add/edit modal ──────────────────────────────────────────────────
 
@@ -29,9 +30,31 @@ function ProviderModal({ mode, provider, onClose, onSubmit }: {
     timeout_ms: provider?.timeout_ms ?? 120000,
   })
   const [replacingKey, setReplacingKey] = useState(false)
+  const [modelAssessment, setModelAssessment] = useState<ModelCapabilityAssessment | null>(null)
+  const [modelAssessing, setModelAssessing] = useState(false)
+  const assessTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const set = (field: keyof FormState) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
     setForm((f) => ({ ...f, [field]: e.target.value }))
   const hasMaskedKey = provider?.api_key === '••••••••'
+
+  // Assess model capability when model name changes (debounced 300ms)
+  useEffect(() => {
+    if (assessTimerRef.current) { clearTimeout(assessTimerRef.current); assessTimerRef.current = null }
+    const trimmed = form.model.trim()
+    if (!trimmed) { setModelAssessment(null); setModelAssessing(false); return }
+    let cancelled = false
+    setModelAssessing(true)
+    assessTimerRef.current = setTimeout(() => {
+      fetchModelCapability(trimmed)
+        .then((result) => { if (!cancelled) setModelAssessment(result) })
+        .catch(() => { if (!cancelled) setModelAssessment(null) })
+        .finally(() => { if (!cancelled) setModelAssessing(false) })
+    }, 300)
+    return () => {
+      cancelled = true
+      if (assessTimerRef.current) { clearTimeout(assessTimerRef.current); assessTimerRef.current = null }
+    }
+  }, [form.model])
 
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
@@ -57,6 +80,21 @@ function ProviderModal({ mode, provider, onClose, onSubmit }: {
               <label className="block text-xs text-[var(--muted)] mb-1">Model</label>
               <input value={form.model} onChange={set('model')} placeholder="anthropic/claude-sonnet-4-5"
                 className="w-full bg-[var(--panel-subtle)] border border-[var(--border-soft)] rounded px-3 py-2 text-sm text-[var(--text)] placeholder-[var(--muted)] focus:outline-none focus:border-[var(--sel-bd)]" />
+              {modelAssessing && (
+                <p className="mt-1.5 text-xs text-[var(--muted)] font-mono">Checking model capability…</p>
+              )}
+              {modelAssessment && modelAssessment.tier === 'blocked' && (
+                <div className="mt-2 rounded-lg border border-rose-300/30 bg-rose-300/10 px-3 py-2">
+                  <p className="text-xs font-semibold text-rose-300">⚠ Model blocked for Prime Agent</p>
+                  <p className="mt-1 text-xs text-rose-200/80">{modelAssessment.warning}</p>
+                </div>
+              )}
+              {modelAssessment && modelAssessment.tier === 'warned' && (
+                <div className="mt-2 rounded-lg border border-amber-300/30 bg-amber-300/10 px-3 py-2">
+                  <p className="text-xs font-semibold text-amber-300">⚠ Model may be underpowered</p>
+                  <p className="mt-1 text-xs text-amber-200/80">{modelAssessment.warning}</p>
+                </div>
+              )}
             </div>
           )}
           <div>
@@ -437,7 +475,10 @@ export function Providers() {
                 <tr key={p.id} className="border-b border-[var(--border-soft)]/50 hover:bg-[var(--panel-subtle)]">
                   <td className="py-2 pr-4 text-[var(--text)] font-mono">{p.name}</td>
                   <td className="py-2 pr-4 text-[var(--muted)]">{p.type}</td>
-                  <td className="py-2 pr-4 text-[var(--muted)] font-mono">{p.model ?? '—'}</td>
+                  <td className="py-2 pr-4">
+                    <span className="text-[var(--muted)] font-mono">{p.model ?? '—'}</span>
+                    {p.model && <ModelCapabilityBadge model={p.model} />}
+                  </td>
                   <td className="py-2 pr-4 text-[var(--muted)] font-mono">{p.timeout_ms ?? 120000}</td>
                   <td className="py-2 pr-4 text-[var(--muted)] font-mono max-w-xs truncate">{p.base_url}</td>
                   <td className="py-2 pr-4">
@@ -498,6 +539,26 @@ export function Providers() {
       )}
     </div>
   )
+}
+
+// ─── Model capability badge ──────────────────────────────────────────────────
+
+function ModelCapabilityBadge({ model }: { model?: string }) {
+  const [assessment, setAssessment] = useState<ModelCapabilityAssessment | null>(null)
+
+  useEffect(() => {
+    if (!model?.trim()) { setAssessment(null); return }
+    fetchModelCapability(model).then(setAssessment).catch(() => setAssessment(null))
+  }, [model])
+
+  if (!assessment) return null
+  if (assessment.tier === 'blocked') {
+    return <span className="text-[var(--s-blk-tx)] font-mono text-[10px]" title={assessment.warning}>⛔ blocked</span>
+  }
+  if (assessment.tier === 'warned') {
+    return <span className="text-amber-400 font-mono text-[10px]" title={assessment.warning}>⚠ {assessment.estimatedParams ?? '?'}B</span>
+  }
+  return null
 }
 
 // ─── Inline auth status badge for codex rows ──────────────────────────────────

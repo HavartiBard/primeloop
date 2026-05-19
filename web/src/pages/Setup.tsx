@@ -3,6 +3,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { Box } from 'lucide-react'
 import {
   createProvider,
+  fetchModelCapability,
   fetchProviders,
   fetchSetupProviderModels,
   getApiOrigin,
@@ -10,6 +11,7 @@ import {
   readResponseBody,
   startCodexDeviceAuth,
 } from '../api'
+import type { ModelCapabilityAssessment } from '../types'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -699,6 +701,8 @@ function RoutingRow({ label, entries, providers, onChange }: {
   onChange: (entries: RoutingEntry[]) => void
 }) {
   const activeProviders = providers.filter((p) => p.active)
+  const [modelAssessments, setModelAssessments] = useState<Record<number, ModelCapabilityAssessment>>({})
+  const assessTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const addFallback = () => onChange([...entries, { provider_name: activeProviders[0]?.name ?? '', model: '' }])
   const update = (i: number, patch: Partial<RoutingEntry>) => {
     onChange(entries.map((e, idx) => (idx === i ? { ...e, ...patch } : e)))
@@ -709,17 +713,39 @@ function RoutingRow({ label, entries, providers, onChange }: {
     ? entries
     : [{ provider_name: activeProviders[0]?.name ?? '', model: activeProviders[0]?.model ?? '' }]
 
+  // Assess model capability for each entry when model changes (debounced 300ms)
+  const modelsKey = defaultEntries.map((e, i) => `${i}:${e.model}`).join(',')
+  useEffect(() => {
+    if (assessTimerRef.current) { clearTimeout(assessTimerRef.current); assessTimerRef.current = null }
+    let cancelled = false
+    assessTimerRef.current = setTimeout(() => {
+      defaultEntries.forEach((entry, i) => {
+        if (!entry.model.trim()) return
+        fetchModelCapability(entry.model)
+          .then((result) => { if (!cancelled) setModelAssessments((prev) => ({ ...prev, [i]: result })) })
+          .catch(() => {})
+      })
+    }, 300)
+    return () => {
+      cancelled = true
+      if (assessTimerRef.current) { clearTimeout(assessTimerRef.current); assessTimerRef.current = null }
+    }
+  }, [modelsKey])
+
   return (
     <div className="grid grid-cols-[100px_1fr] gap-3 items-start">
       <span className="pt-2 text-xs text-[var(--muted)]">{label}</span>
       <div className="space-y-2">
-        {defaultEntries.map((entry, i) => (
-          <div key={i} className="flex gap-2 items-center">
-            {(() => {
-              const selectedProvider = activeProviders.find((p) => p.name === entry.provider_name)
-              const modelOptions = selectedProvider?.modelOptions ?? []
-              return (
-                <>
+        {defaultEntries.map((entry, i) => {
+          const assessment = modelAssessments[i]
+          return (
+            <div key={i}>
+              <div className="flex gap-2 items-center">
+                {(() => {
+                  const selectedProvider = activeProviders.find((p) => p.name === entry.provider_name)
+                  const modelOptions = selectedProvider?.modelOptions ?? []
+                  return (
+                    <>
             <select
               value={entry.provider_name}
               onChange={(e) => {
@@ -746,14 +772,28 @@ function RoutingRow({ label, entries, providers, onChange }: {
                 className="flex-1 bg-[var(--panel-subtle)] border border-[var(--border-soft)] rounded px-2 py-1.5 text-xs text-[var(--text)] placeholder-[var(--muted)] focus:outline-none focus:border-[var(--sel-bd)]"
               />
             )}
-                </>
-              )
-            })()}
-            {i > 0 && (
-              <button type="button" onClick={() => remove(i)} className="text-xs text-[var(--muted)] hover:text-[var(--s-blk-tx)]">✕</button>
-            )}
-          </div>
-        ))}
+                    </>
+                  )
+                })()}
+                {i > 0 && (
+                  <button type="button" onClick={() => remove(i)} className="text-xs text-[var(--muted)] hover:text-[var(--s-blk-tx)]">✕</button>
+                )}
+              </div>
+              {assessment && assessment.tier === 'blocked' && (
+                <div className="mt-1.5 ml-2 rounded border border-rose-300/30 bg-rose-300/10 px-2 py-1.5">
+                  <p className="text-[11px] font-semibold text-rose-300">⚠ Blocked — model too small for Prime</p>
+                  <p className="mt-0.5 text-[11px] text-rose-200/70">{assessment.warning}</p>
+                </div>
+              )}
+              {assessment && assessment.tier === 'warned' && (
+                <div className="mt-1.5 ml-2 rounded border border-amber-300/30 bg-amber-300/10 px-2 py-1.5">
+                  <p className="text-[11px] font-semibold text-amber-300">⚠ Warning — model may be underpowered</p>
+                  <p className="mt-0.5 text-[11px] text-amber-200/70">{assessment.warning}</p>
+                </div>
+              )}
+            </div>
+          )
+        })}
         <button type="button" onClick={addFallback} className="text-xs text-[var(--muted)] hover:text-[var(--text)] underline">
           + Add fallback
         </button>
