@@ -1,5 +1,5 @@
 import type pg from 'pg'
-import { setPrimeCoordinatorQueue } from '../coordinator.js'
+import { setPrimeCoordinatorProcessor, setPrimeCoordinatorQueue } from '../coordinator.js'
 import { getPrimeConfig } from './config.js'
 import { handlePrimeEvent } from './event-loop.js'
 import { createConfiguredLlmRouter, type LlmRouter } from './llm-router.js'
@@ -45,13 +45,16 @@ export function createPrimeAgentService(
 
       started = true
 
-      queue.process(async (event) => {
+      const processEvent = async (event: Parameters<typeof handlePrimeEvent>[1]) => {
         try {
           await handlePrimeEvent(pool, event, { router })
         } catch (error) {
           console.error('[prime-agent] event handling failed:', error)
         }
-      })
+      }
+
+      setPrimeCoordinatorProcessor(processEvent)
+      queue.process(processEvent)
 
       fastTimer = setInterval(() => {
         void queue.enqueue({
@@ -73,6 +76,7 @@ export function createPrimeAgentService(
       clearInterval(slowTimer)
       fastTimer = undefined
       slowTimer = undefined
+      setPrimeCoordinatorProcessor(undefined)
       await queue.close()
     },
   }

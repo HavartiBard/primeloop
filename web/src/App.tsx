@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { Bot, CalendarClock, CircuitBoard, MessageSquare, Server } from 'lucide-react'
+import { Bot, CalendarClock, CircuitBoard, MessageSquare, Server, Settings } from 'lucide-react'
 import { Sidebar } from './components/Sidebar'
 import { CircuitView } from './pages/CircuitView'
 import { OperationsPortal } from './pages/OperationsPortal'
@@ -109,7 +109,7 @@ function Layout() {
                 onClick={() => setPage('/governance')}
                 className="inline-flex h-9 items-center gap-2 rounded-full border border-[var(--border-soft)] bg-[var(--panel-subtle)] px-3 text-sm text-[var(--text)] transition hover:bg-[var(--panel-strong)]"
               >
-                <span className="text-base">⌘</span>
+                <Settings className="h-4 w-4" />
                 <span className="hidden sm:inline">Settings</span>
               </button>
             </div>

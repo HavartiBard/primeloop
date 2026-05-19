@@ -1,6 +1,6 @@
 import type pg from 'pg'
 import { hashContextSnapshot } from '../checkpoint-store.js'
-import { appendThreadMessage } from '../runtime.js'
+import { appendThreadMessage, getChiefProfile } from '../runtime.js'
 import { dispatchPrimeActions, type PrimeActionDispatchResult } from './actions.js'
 import { assemblePrimeContext, buildContextSnapshot, type PrimeContext } from './context.js'
 import type { PrimeEvent } from './events.js'
@@ -12,6 +12,7 @@ import {
   type PrimeSession,
   type PrimeSessionTriggerType,
 } from './session.js'
+import { loadPrimeWorkspaceTemplates } from '../workspace.js'
 
 export interface PrimeEventLoopDeps {
   router: LlmRouter
@@ -35,9 +36,13 @@ export async function handlePrimeEvent(
   event: PrimeEvent,
   deps: PrimeEventLoopDeps
 ): Promise<PrimeEventHandleResult> {
+  const workspace = await loadPrimeWorkspaceTemplates(pool)
   const session = await startPrimeSession(pool, {
     trigger_type: mapTriggerType(event),
     trigger_payload: event.payload,
+    workspace_root: workspace.effectiveRoot,
+    workspace_revision: workspace.revision,
+    prompt_templates: workspace.templatePaths,
   })
 
   try {
@@ -57,9 +62,10 @@ export async function handlePrimeEvent(
     )
 
     if (event.type === 'chief.message') {
+      const chiefProfile = await getChiefProfile(pool)
       await appendThreadMessage(pool, event.payload.thread_id, {
         role: 'assistant',
-        sender: 'Prime Agent',
+        sender: chiefProfile.name.trim() || 'Prime',
         content: summarizeChiefResponse(decision, actions),
         metadata: {
           source: 'prime-agent',
@@ -80,6 +86,9 @@ export async function handlePrimeEvent(
     if (!completed) {
       throw new Error(`failed to complete prime session: ${session.id}`)
     }
+    if (event.type === 'chief.message') {
+      await updateIntakeWorkItemStatus(pool, event.payload.message_id, 'review')
+    }
 
     return {
       session: completed,
@@ -90,8 +99,36 @@ export async function handlePrimeEvent(
     await updateLastStep(pool, session.id, 'failed')
     const message = error instanceof Error ? error.message : String(error)
     const failed = await failPrimeSession(pool, session.id, message)
+    if (event.type === 'chief.message') {
+      await updateIntakeWorkItemStatus(pool, event.payload.message_id, 'blocked')
+      const chiefProfile = await getChiefProfile(pool)
+      await appendThreadMessage(pool, event.payload.thread_id, {
+        role: 'assistant',
+        sender: chiefProfile.name.trim() || 'Prime',
+        content: `I could not process that yet: ${message}`,
+        metadata: {
+          source: 'prime-agent',
+          session_id: session.id,
+          error: true,
+        },
+      })
+    }
     throw new PrimeEventLoopError(message, failed ?? session)
   }
+}
+
+async function updateIntakeWorkItemStatus(
+  pool: pg.Pool,
+  messageId: string,
+  status: 'review' | 'blocked'
+): Promise<void> {
+  await pool.query(
+    `UPDATE work_items
+     SET status = $2, updated_at = now()
+     WHERE metadata->>'source' = 'prime-agent-intake'
+       AND metadata->>'message_id' = $1`,
+    [messageId, status]
+  )
 }
 
 async function dispatchPrimeActionsWithContinuation(

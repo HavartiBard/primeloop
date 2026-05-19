@@ -14,8 +14,8 @@ import type { CodexAuthStatus, Provider } from '../types'
 
 const TYPE_OPTIONS = ['codex', 'llm', 'openai', 'anthropic', 'ollama', 'litellm', 'other']
 
-interface FormState { name: string; type: string; base_url: string; api_key: string; model: string }
-const EMPTY_FORM: FormState = { name: '', type: 'codex', base_url: '', api_key: '', model: '' }
+interface FormState { name: string; type: string; base_url: string; api_key: string; model: string; timeout_ms: number }
+const EMPTY_FORM: FormState = { name: '', type: 'codex', base_url: '', api_key: '', model: '', timeout_ms: 120000 }
 
 function ProviderModal({ mode, provider, onClose, onSubmit }: {
   mode: 'add' | 'edit'; provider?: Provider; onClose: () => void; onSubmit: (data: FormState) => void
@@ -26,6 +26,7 @@ function ProviderModal({ mode, provider, onClose, onSubmit }: {
     base_url: provider?.base_url ?? '',
     api_key: '',
     model: provider?.model ?? '',
+    timeout_ms: provider?.timeout_ms ?? 120000,
   })
   const [replacingKey, setReplacingKey] = useState(false)
   const set = (field: keyof FormState) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
@@ -58,6 +59,18 @@ function ProviderModal({ mode, provider, onClose, onSubmit }: {
                 className="w-full bg-[var(--panel-subtle)] border border-[var(--border-soft)] rounded px-3 py-2 text-sm text-[var(--text)] placeholder-[var(--muted)] focus:outline-none focus:border-[var(--sel-bd)]" />
             </div>
           )}
+          <div>
+            <label className="block text-xs text-[var(--muted)] mb-1">Timeout (ms)</label>
+            <input
+              type="number"
+              min={5000}
+              step={1000}
+              value={form.timeout_ms}
+              onChange={(e) => setForm((f) => ({ ...f, timeout_ms: Number(e.target.value) }))}
+              className="w-full bg-[var(--panel-subtle)] border border-[var(--border-soft)] rounded px-3 py-2 text-sm text-[var(--text)] placeholder-[var(--muted)] focus:outline-none focus:border-[var(--sel-bd)]"
+            />
+            <p className="mt-1 text-[11px] text-[var(--muted)]">Default is 120000ms. Raise this for slow local models.</p>
+          </div>
           <div>
             <label className="block text-xs text-[var(--muted)] mb-1">
               {form.type === 'llm' ? 'API Proxy URL *' : 'Base URL *'}
@@ -373,6 +386,7 @@ export function Providers() {
       name: form.name, type: form.type, base_url: form.base_url,
       ...(form.model ? { model: form.model } : {}),
       ...(form.api_key ? { api_key: form.api_key } : {}),
+      timeout_ms: form.timeout_ms,
     }
     if (modal?.mode === 'edit' && modal.provider) {
       update(modal.provider.id, payload)
@@ -411,6 +425,7 @@ export function Providers() {
                 <th className="pb-2 pr-4 font-normal">Name</th>
                 <th className="pb-2 pr-4 font-normal">Type</th>
                 <th className="pb-2 pr-4 font-normal">Model</th>
+                <th className="pb-2 pr-4 font-normal">Timeout</th>
                 <th className="pb-2 pr-4 font-normal">Base URL</th>
                 <th className="pb-2 pr-4 font-normal">Auth</th>
                 <th className="pb-2 pr-4 font-normal">Created</th>
@@ -423,6 +438,7 @@ export function Providers() {
                   <td className="py-2 pr-4 text-[var(--text)] font-mono">{p.name}</td>
                   <td className="py-2 pr-4 text-[var(--muted)]">{p.type}</td>
                   <td className="py-2 pr-4 text-[var(--muted)] font-mono">{p.model ?? '—'}</td>
+                  <td className="py-2 pr-4 text-[var(--muted)] font-mono">{p.timeout_ms ?? 120000}</td>
                   <td className="py-2 pr-4 text-[var(--muted)] font-mono max-w-xs truncate">{p.base_url}</td>
                   <td className="py-2 pr-4">
                     {p.type === 'codex' ? (

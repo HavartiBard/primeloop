@@ -3,6 +3,7 @@ import { ensurePendingApproval } from '../approvals.js'
 import {
   createDelegation,
   createWorkItem,
+  getChiefProfile,
   insertRuntimeEvent,
   updateWorkItem,
   type Delegation,
@@ -58,6 +59,7 @@ async function dispatchDelegate(
   ctx: PrimeContext,
   action: PrimeAction
 ): Promise<PrimeActionDispatchResult> {
+  const coordinatorName = await getCoordinatorName(pool)
   const title = stringField(action.payload, 'title') || fallbackTitle(ctx, 'Prime delegation')
   const description = stringField(action.payload, 'description') || action.reason
   const capability = stringField(action.payload, 'capability') || 'general'
@@ -70,7 +72,7 @@ async function dispatchDelegate(
     description,
     status: 'active',
     lane: 'operations',
-    owner_label: 'Prime Agent',
+    owner_label: coordinatorName,
     thread_id: threadId,
     metadata: {
       source: 'prime-agent',
@@ -95,7 +97,7 @@ async function dispatchDelegate(
 
   await insertRuntimeEvent(pool, {
     event_type: 'prime.action.delegate',
-    actor: 'Prime Agent',
+    actor: coordinatorName,
     thread_id: threadId,
     work_item_id: workItem.id,
     delegation_id: delegation.id,
@@ -119,6 +121,7 @@ async function dispatchUpdateWorkItem(
   _ctx: PrimeContext,
   action: PrimeAction
 ): Promise<PrimeActionDispatchResult> {
+  const coordinatorName = await getCoordinatorName(pool)
   const workItemId = stringField(action.payload, 'work_item_id')
   if (!workItemId) {
     throw new Error('update_work_item requires work_item_id')
@@ -142,7 +145,7 @@ async function dispatchUpdateWorkItem(
 
   await insertRuntimeEvent(pool, {
     event_type: 'prime.action.update_work_item',
-    actor: 'Prime Agent',
+    actor: coordinatorName,
     work_item_id: workItem.id,
     payload: {
       reason: action.reason,
@@ -162,6 +165,7 @@ async function dispatchRequestApproval(
   _ctx: PrimeContext,
   action: PrimeAction
 ): Promise<PrimeActionDispatchResult> {
+  const coordinatorName = await getCoordinatorName(pool)
   const approvalAction = stringField(action.payload, 'action') || action.reason
   if (!approvalAction) {
     throw new Error('request_approval requires action text')
@@ -208,7 +212,7 @@ async function dispatchRequestApproval(
 
   await insertRuntimeEvent(pool, {
     event_type: 'prime.action.request_approval',
-    actor: 'Prime Agent',
+    actor: coordinatorName,
     work_item_id: workItem.id,
     delegation_id: delegation?.id,
     payload: {
@@ -233,9 +237,10 @@ async function dispatchNoOp(
   ctx: PrimeContext,
   action: PrimeAction
 ): Promise<PrimeActionDispatchResult> {
+  const coordinatorName = await getCoordinatorName(pool)
   await insertRuntimeEvent(pool, {
     event_type: 'prime.action.no_op',
-    actor: 'Prime Agent',
+    actor: coordinatorName,
     thread_id: stringField(action.payload, 'thread_id') ?? threadIdFromContext(ctx),
     payload: {
       reason: action.reason,
@@ -247,6 +252,11 @@ async function dispatchNoOp(
     action,
     status: 'dispatched',
   }
+}
+
+async function getCoordinatorName(pool: pg.Pool): Promise<string> {
+  const chiefProfile = await getChiefProfile(pool)
+  return chiefProfile.name.trim() || 'Prime'
 }
 
 function selectTargetAgent(

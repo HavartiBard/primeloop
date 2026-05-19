@@ -39,6 +39,7 @@ export async function runMigrations(pool: pg.Pool): Promise<void> {
       type       TEXT NOT NULL,
       base_url   TEXT NOT NULL,
       api_key    TEXT,
+      timeout_ms INT NOT NULL DEFAULT 120000,
       created_at TIMESTAMPTZ DEFAULT now()
     );
 
@@ -258,6 +259,7 @@ export async function runMigrations(pool: pg.Pool): Promise<void> {
       ON runtime_events (created_at DESC);
 
     ALTER TABLE providers ADD COLUMN IF NOT EXISTS model TEXT;
+    ALTER TABLE providers ADD COLUMN IF NOT EXISTS timeout_ms INT NOT NULL DEFAULT 120000;
 
     ALTER TABLE agents ADD COLUMN IF NOT EXISTS local_port INTEGER;
     ALTER TABLE agents ADD COLUMN IF NOT EXISTS worktree_path TEXT;
@@ -368,6 +370,9 @@ CREATE TABLE IF NOT EXISTS prime_agent_sessions (
   trigger_type TEXT NOT NULL CHECK (trigger_type IN ('event', 'cron_fast', 'cron_slow', 'chief_message')),
   trigger_payload JSONB NOT NULL,
   module_name TEXT,
+  workspace_root TEXT,
+  workspace_revision TEXT,
+  prompt_templates JSONB NOT NULL DEFAULT '{}',
   reasoning_summary TEXT,
   actions_taken JSONB NOT NULL DEFAULT '[]',
   token_count INT NOT NULL DEFAULT 0,
@@ -417,8 +422,42 @@ ON checkpoint_continuations (owner_id, status);
 ALTER TABLE prime_agent_sessions
   ADD COLUMN IF NOT EXISTS last_step TEXT;
 
+ALTER TABLE prime_agent_sessions
+  ADD COLUMN IF NOT EXISTS workspace_root TEXT;
+
+ALTER TABLE prime_agent_sessions
+  ADD COLUMN IF NOT EXISTS workspace_revision TEXT;
+
+ALTER TABLE prime_agent_sessions
+  ADD COLUMN IF NOT EXISTS prompt_templates JSONB NOT NULL DEFAULT '{}';
+
     ALTER TABLE prime_agent_config
       ADD COLUMN IF NOT EXISTS setup_complete BOOLEAN NOT NULL DEFAULT false;
+
+CREATE TABLE IF NOT EXISTS agent_workspace_config (
+  id TEXT PRIMARY KEY DEFAULT 'default',
+  mode TEXT NOT NULL DEFAULT 'local' CHECK (mode IN ('local', 'git')),
+  root_path TEXT NOT NULL,
+  remote_url TEXT,
+  branch TEXT NOT NULL DEFAULT 'main',
+  sync_status TEXT NOT NULL DEFAULT 'uninitialized',
+  last_sync_at TIMESTAMPTZ,
+  last_commit TEXT,
+  dirty BOOLEAN NOT NULL DEFAULT false,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+INSERT INTO agent_workspace_config (id, mode, root_path, branch, sync_status, dirty)
+VALUES (
+  'default',
+  'local',
+  COALESCE(NULLIF(current_setting('app.agent_workspace_root', true), ''), '/var/lib/agent-cp/workspace'),
+  'main',
+  'uninitialized',
+  false
+)
+ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO prime_agent_config (id, enabled) VALUES ('default', false) ON CONFLICT (id) DO NOTHING;
 
