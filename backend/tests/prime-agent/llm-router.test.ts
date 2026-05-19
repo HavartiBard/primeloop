@@ -182,6 +182,56 @@ response: What's up? I'm here and ready for the next task.`,
     expect(decision.reasoning).toBe('The user asked a casual greeting question. No backend action is required.')
     expect(decision.response).toBe("What's up? I'm here and ready for the next task.")
   })
+
+  it('rejects empty response on user-facing events', () => {
+    expect(() =>
+      validatePrimeDecision({
+        reasoning: 'Internal note about the request.',
+        actions: [],
+      }, { isUserFacing: true })
+    ).toThrow('Prime decision response must be at least 10 characters')
+  })
+
+  it('rejects short response on user-facing events', () => {
+    expect(() =>
+      validatePrimeDecision({
+        reasoning: 'Internal note about the request.',
+        response: 'Ok.',
+        actions: [],
+      }, { isUserFacing: true })
+    ).toThrow('Prime decision response must be at least 10 characters')
+  })
+
+  it('rejects response containing internal schema labels on user-facing events', () => {
+    expect(() =>
+      validatePrimeDecision({
+        reasoning: 'Internal note.',
+        response: 'reasoning: I think about this. response: Here is the answer to your question.',
+        actions: [],
+      }, { isUserFacing: true })
+    ).toThrow('must not contain internal schema labels')
+  })
+
+  it('accepts valid response on user-facing events', () => {
+    const decision = validatePrimeDecision({
+      reasoning: 'Internal note about the request.',
+      response: "I've looked into this and here's what I found for you.",
+      actions: [],
+    }, { isUserFacing: true })
+
+    expect(decision.reasoning).toBe('Internal note about the request.')
+    expect(decision.response).toBe("I've looked into this and here's what I found for you.")
+  })
+
+  it('does not enforce response on non-user-facing events', () => {
+    const decision = validatePrimeDecision({
+      reasoning: 'Cron check complete. No action needed.',
+      actions: [],
+    }, { isUserFacing: false })
+
+    expect(decision.reasoning).toBe('Cron check complete. No action needed.')
+    expect(decision.response).toBeUndefined()
+  })
 })
 
 describe('buildPrimeSystemPrompt', () => {

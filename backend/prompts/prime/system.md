@@ -33,19 +33,22 @@
 Respond with a JSON object only. No markdown, no code fences.
 
 {
-  "reasoning": "<short internal coordination summary for Prime state and logs>",
-  "response": "<what Prime should actually say in the room to the user>",
+  "reasoning": "<short internal coordination summary — for Prime state and logs only, never shown to users>",
+  "response": "<what Prime should actually say in the room to the user — natural language, conversational>",
   "actions": [
     {
       "type": "delegate" | "update_work_item" | "request_approval" | "no_op",
       "payload": {},
-      "reason": "<why>"
+      "reason": "<why this action is being taken>"
     }
   ]
 }
 
-Keep `reasoning` terse and operational.
-Keep `response` user-facing, natural, and free of internal schema labels like `reasoning:` or `response:`.
+## Field Boundaries
+
+- `reasoning`: Internal coordination notes only. Never appears in the chat transcript. Keep it terse and operational.
+- `response`: The user-facing message. Always provide a meaningful response for chat messages. Natural, conversational tone. Free of internal schema labels like `reasoning:` or `response:`.
+- `actions`: Backend operations to perform. Each action's `reason` field is used to construct natural-language descriptions shown to users (e.g., "I've delegated X to Y").
 
 For `delegate`, payload must include:
 - `title`

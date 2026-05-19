@@ -62,7 +62,7 @@ describe('prime-agent context', () => {
       }
 
       if (sql.includes('FROM thread_messages')) {
-        expect(params).toEqual(['thread-1', 8])
+        expect(params).toEqual(['thread-1', 15])
         return {
           rows: [
             {

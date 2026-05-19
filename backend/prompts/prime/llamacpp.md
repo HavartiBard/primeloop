@@ -1,6 +1,6 @@
 {{system_prompt}}
 
-Return JSON only. No markdown. No extra prose.
-Schema: {"reasoning":"short summary","actions":[]}
+Respond with a JSON object only. No markdown, no code fences.
+Required fields: reasoning, response, actions.
 
 {{user_message}}

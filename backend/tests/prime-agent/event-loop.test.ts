@@ -132,7 +132,7 @@ describe('prime-agent event loop', () => {
     const router = {
       decide: vi.fn().mockResolvedValue({
         reasoning: 'Delegating the implementation task.',
-        response: 'I’m handing this off to the right implementation agent now.',
+        response: "I'm handing this off to the right implementation agent now.",
         actions: [
           {
             type: 'delegate',
@@ -174,13 +174,14 @@ describe('prime-agent event loop', () => {
     expect(contextMocks.assemblePrimeContext).toHaveBeenCalled()
     expect(router.decide).toHaveBeenCalled()
     expect(actionMocks.dispatchPrimeActions).toHaveBeenCalled()
+    // Base ends with '.', so action reason is capitalized
     expect(runtimeMocks.appendThreadMessage).toHaveBeenCalledWith(
       pool,
       'thread-1',
       expect.objectContaining({
         role: 'assistant',
         sender: 'Prime Agent',
-        content: 'I’m handing this off to the right implementation agent now. Actions: delegate.',
+        content: "I'm handing this off to the right implementation agent now. Delegate it",
       })
     )
     expect(sessionMocks.completePrimeSession).toHaveBeenCalledWith(
@@ -239,6 +240,89 @@ describe('prime-agent event loop', () => {
     expect(sessionMocks.failPrimeSession).toHaveBeenCalledWith(pool, 'session-2', 'router exploded')
     expect(sessionMocks.completePrimeSession).not.toHaveBeenCalled()
     expect(runtimeMocks.appendThreadMessage).not.toHaveBeenCalled()
+  })
+
+  it('lowercases action reason when base does not end with terminal punctuation', async () => {
+    sessionMocks.startPrimeSession.mockResolvedValue({
+      id: 'session-4',
+      status: 'running',
+    })
+    contextMocks.assemblePrimeContext.mockResolvedValue({
+      trigger: {
+        type: 'prime.message',
+        payload: {
+          thread_id: 'thread-1',
+          message_id: 'message-1',
+          content: 'Handle B2',
+          sender: 'james',
+        },
+      },
+      fleet: { agents: [], workItems: [], delegations: [] },
+      recentEvents: [],
+      recentLessons: [],
+      threadMessages: [],
+    })
+    actionMocks.dispatchPrimeActions.mockResolvedValue([
+      {
+        action: {
+          type: 'delegate',
+          payload: {},
+          reason: 'Delegate the task',
+        },
+        status: 'dispatched',
+      },
+    ])
+    runtimeMocks.appendThreadMessage.mockResolvedValue({
+      id: 'thread-msg-2',
+    })
+    sessionMocks.completePrimeSession.mockResolvedValue({
+      id: 'session-4',
+      status: 'completed',
+      reasoning_summary: 'Delegating.',
+    })
+
+    const router = {
+      decide: vi.fn().mockResolvedValue({
+        reasoning: 'Delegating.',
+        // Base does NOT end with terminal punctuation
+        response: "I'm handing this off",
+        actions: [
+          {
+            type: 'delegate',
+            payload: {},
+            reason: 'Delegate the task',
+          },
+        ],
+        token_count: 10,
+        provider_used: 'provider-1',
+        model_used: 'mock-model',
+      }),
+    }
+
+    await handlePrimeEvent(
+      pool,
+      {
+        type: 'prime.message',
+        payload: {
+          thread_id: 'thread-1',
+          message_id: 'message-1',
+          content: 'Handle B2',
+          sender: 'james',
+        },
+      },
+      { router }
+    )
+
+    // Base does not end with punctuation, so action reason stays lowercase
+    expect(runtimeMocks.appendThreadMessage).toHaveBeenCalledWith(
+      pool,
+      'thread-1',
+      expect.objectContaining({
+        role: 'assistant',
+        sender: 'Prime Agent',
+        content: "I'm handing this off delegate the task",
+      })
+    )
   })
 
   it('runs shadow policy modules before later active stages', async () => {
