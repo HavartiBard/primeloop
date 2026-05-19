@@ -166,7 +166,43 @@ export async function getChiefProfile(pool: pg.Pool): Promise<ChiefProfile> {
   return rows[0]
 }
 
+async function ensureOnboardingThread(pool: pg.Pool): Promise<void> {
+  const { rows: configRows } = await pool.query(
+    `SELECT enabled, setup_complete FROM prime_agent_config WHERE id = 'default'`
+  )
+  const config = configRows[0]
+  if (!config?.enabled || !config?.setup_complete) return
+
+  const { rows: threadRows } = await pool.query(
+    `SELECT COUNT(*)::int AS count FROM threads`
+  )
+  if ((threadRows[0]?.count ?? 0) > 0) return
+
+  const { rows: chiefRows } = await pool.query(
+    `SELECT name FROM chief_profiles WHERE id = 'default'`
+  )
+  const chiefName = chiefRows[0]?.name?.trim() || 'Prime'
+
+  const onboardingThread = await createThread(pool, {
+    title: `Getting started with ${chiefName}`,
+    metadata: {
+      kind: 'onboarding',
+      source: 'runtime-bootstrap',
+    },
+  })
+
+  await appendThreadMessage(pool, onboardingThread.id, {
+    role: 'assistant',
+    sender: chiefName,
+    content: `I'm ${chiefName}. Your control plane is live and ready. Start by telling me the first task, repo, incident, or workflow you want me to handle, and I'll turn this room into the active coordination thread for it.`,
+    metadata: {
+      kind: 'greeting',
+    },
+  })
+}
+
 export async function listThreads(pool: pg.Pool): Promise<RuntimeThread[]> {
+  await ensureOnboardingThread(pool)
   const { rows } = await pool.query(`SELECT * FROM threads ORDER BY updated_at DESC LIMIT 100`)
   return rows
 }
@@ -264,6 +300,7 @@ export async function createWorkItem(
   pool: pg.Pool,
   data: Partial<WorkItem> & { title: string }
 ): Promise<WorkItem> {
+  const ownerLabel = data.owner_label ?? (await getCoordinatorName(pool))
   const { rows } = await pool.query(
     `INSERT INTO work_items (
       title, description, status, priority, lane, owner_agent_id, owner_label,
@@ -278,7 +315,7 @@ export async function createWorkItem(
       data.priority ?? 'normal',
       data.lane ?? 'operations',
       data.owner_agent_id ?? null,
-      data.owner_label ?? 'Chief of Staff',
+      ownerLabel,
       data.thread_id ?? null,
       data.parent_id ?? null,
       data.blocked_by ?? null,
@@ -288,12 +325,17 @@ export async function createWorkItem(
   )
   await insertRuntimeEvent(pool, {
     event_type: 'work.created',
-    actor: data.owner_label ?? 'Chief of Staff',
+    actor: ownerLabel,
     thread_id: data.thread_id,
     work_item_id: rows[0].id,
     payload: { title: data.title, status: rows[0].status },
   })
   return rows[0]
+}
+
+async function getCoordinatorName(pool: pg.Pool): Promise<string> {
+  const { rows } = await pool.query(`SELECT name FROM chief_profiles WHERE id = 'default'`)
+  return rows[0]?.name?.trim() || 'Prime'
 }
 
 export async function updateWorkItem(

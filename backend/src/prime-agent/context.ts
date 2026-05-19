@@ -1,7 +1,7 @@
 import type pg from 'pg'
 import type { PrimeEvent } from './events.js'
 import { listAgents, type RegistryAgent } from '../registry.js'
-import type { Delegation, RuntimeEvent, WorkItem } from '../runtime.js'
+import type { Delegation, RuntimeEvent, ThreadMessage, WorkItem } from '../runtime.js'
 
 export interface PrimeLesson {
   id: string
@@ -22,6 +22,7 @@ export interface PrimeContext {
   }
   recentEvents: RuntimeEvent[]
   recentLessons: PrimeLesson[]
+  threadMessages: ThreadMessage[]
 }
 
 export function buildContextSnapshot(context: PrimeContext): Record<string, unknown> {
@@ -41,12 +42,13 @@ const EVENT_LIMIT = 50
 const LESSON_LIMIT = 10
 
 export async function assemblePrimeContext(pool: pg.Pool, event: PrimeEvent): Promise<PrimeContext> {
-  const [agents, workItems, delegations, recentEvents, recentLessons] = await Promise.all([
+  const [agents, workItems, delegations, recentEvents, recentLessons, threadMessages] = await Promise.all([
     listEnabledAgents(pool),
     listRecentWorkItems(pool, WORK_ITEM_LIMIT),
     listRecentDelegations(pool, DELEGATION_LIMIT),
     listRecentRuntimeEvents(pool, EVENT_LIMIT),
     listRelevantLessons(pool, event, LESSON_LIMIT),
+    listThreadMessagesForEvent(pool, event, 8),
   ])
 
   return {
@@ -58,6 +60,7 @@ export async function assemblePrimeContext(pool: pg.Pool, event: PrimeEvent): Pr
     },
     recentEvents,
     recentLessons,
+    threadMessages,
   }
 }
 
@@ -88,6 +91,24 @@ async function listRecentRuntimeEvents(pool: pg.Pool, limit: number): Promise<Ru
     [limit]
   )
   return rows
+}
+
+async function listThreadMessagesForEvent(
+  pool: pg.Pool,
+  event: PrimeEvent,
+  limit: number
+): Promise<ThreadMessage[]> {
+  if (event.type !== 'chief.message') return []
+
+  const { rows } = await pool.query<ThreadMessage>(
+    `SELECT *
+     FROM thread_messages
+     WHERE thread_id = $1
+     ORDER BY created_at DESC
+     LIMIT $2`,
+    [event.payload.thread_id, limit]
+  )
+  return rows.reverse()
 }
 
 async function listRelevantLessons(pool: pg.Pool, event: PrimeEvent, limit: number): Promise<PrimeLesson[]> {

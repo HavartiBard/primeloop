@@ -23,32 +23,61 @@ const {
   SLACK_CHANNEL_ID = 'C0AU0620ATX',
   SSH_KEY_PATH = '/app/ssh/id_ed25519_homelab',
   SSH_USER = 'root',
+  ACP_MINIMAL_BOOT = '0',
+  ACP_STARTUP_TRACE = '0',
 } = process.env
 
 if (!DATABASE_URL) throw new Error('DATABASE_URL is required')
+const minimalBoot = ACP_MINIMAL_BOOT === '1'
+const startupTrace = ACP_STARTUP_TRACE === '1'
+
+function traceStep(message: string): void {
+  if (startupTrace) {
+    console.log(`[startup] ${message}`)
+  }
+}
 
 const pool = createPool(DATABASE_URL)
+traceStep('pool created')
+traceStep('running migrations')
 await runMigrations(pool)
+traceStep('migrations complete')
+traceStep('seeding registry')
 await seedRegistry(pool, process.env)
+traceStep('registry seeded')
+traceStep('upserting local codex provider')
 await upsertLocalCodexProvider(pool)
+traceStep('local codex provider ready')
 
 const checkpointStore = new PostgresCheckpointStore(pool)
+traceStep('recovering stale checkpoints')
 const recoveredCount = await checkpointStore.recoverStaleItems()
 if (recoveredCount > 0) {
   console.log(`Recovered ${recoveredCount} stale checkpoint item(s)`)
 }
+traceStep('checkpoint recovery complete')
 const primeAgentService = createPrimeAgentService(pool, { checkpointStore })
-await primeAgentService.start()
+traceStep('prime agent service created')
 const processManager = new OpenCodeProcessManager(pool)
-await processManager.initialize()
+traceStep('process manager created')
 
 const fleetDispatcher = new FleetDispatcher({
   pool,
   primeQueue: primeAgentService.queue,
   getHarness: (agentId) => processManager.getRunningHarness(agentId),
 })
-fleetDispatcher.start()
-console.log('Fleet dispatcher started')
+
+traceStep('starting prime agent service')
+await primeAgentService.start()
+traceStep('prime agent service started')
+
+if (!minimalBoot) {
+  traceStep('initializing process manager')
+  await processManager.initialize()
+  traceStep('process manager initialized')
+  fleetDispatcher.start()
+  console.log('Fleet dispatcher started')
+}
 
 const { broadcast: rawBroadcast, addClient } = createBroadcaster()
 
@@ -70,13 +99,18 @@ function broadcast(event: AgentEvent): void {
 }
 
 // Start integrations for all enabled agents from the registry
-const agents = await listAgents(pool)
-for (const agent of agents) {
-  startIntegration(agent, { pool, broadcast })
-}
-const auditTasks = await startAuditScheduler(pool)
-if (auditTasks.length > 0) {
-  console.log(`Started ${auditTasks.length} audit scheduler(s)`)
+if (!minimalBoot) {
+  traceStep('starting integrations')
+  const agents = await listAgents(pool)
+  for (const agent of agents) {
+    startIntegration(agent, { pool, broadcast })
+  }
+  traceStep('starting audit scheduler')
+  const auditTasks = await startAuditScheduler(pool)
+  if (auditTasks.length > 0) {
+    console.log(`Started ${auditTasks.length} audit scheduler(s)`)
+  }
+  traceStep('audit scheduler started')
 }
 
 const app = createApp({
@@ -108,7 +142,8 @@ const wss = new WebSocketServer({ server, path: '/ws' })
 wss.on('connection', (ws) => addClient(ws))
 
 // Start Slack bot if configured
-if (SLACK_BOT_TOKEN && SLACK_APP_TOKEN) {
+if (!minimalBoot && SLACK_BOT_TOKEN && SLACK_APP_TOKEN) {
+  traceStep('starting slack bot')
   slackApp = createSlackBot({
     botToken: SLACK_BOT_TOKEN,
     appToken: SLACK_APP_TOKEN,
@@ -122,10 +157,12 @@ if (SLACK_BOT_TOKEN && SLACK_APP_TOKEN) {
   })
   await slackApp.start()
   console.log('Slack bot started')
+  traceStep('slack bot started')
 }
 
+traceStep('binding http server')
 server.listen(parseInt(PORT), () => {
-  console.log(`Agent control plane backend listening on :${PORT}`)
+  console.log(`Agent control plane backend listening on :${PORT}${minimalBoot ? ' (minimal boot)' : ''}`)
 })
 
 process.on('SIGTERM', async () => {

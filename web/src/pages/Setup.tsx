@@ -5,6 +5,7 @@ import {
   createProvider,
   fetchProviders,
   fetchSetupProviderModels,
+  getApiOrigin,
   pollCodexDeviceAuth,
   readResponseBody,
   startCodexDeviceAuth,
@@ -52,12 +53,20 @@ interface RulesDraft {
   custom: string
 }
 
+interface WorkspaceDraft {
+  mode: 'local' | 'git'
+  root_path: string
+  remote_url: string
+  branch: string
+}
+
 interface WizardState {
   providers: ProviderDraft[]
   routing: RoutingDraft
   persona: PersonaDraft
   rules: RulesDraft
   costControls: { monthlyTokenBudget: number }
+  workspace: WorkspaceDraft
 }
 
 const INITIAL_STATE: WizardState = {
@@ -70,10 +79,11 @@ const INITIAL_STATE: WizardState = {
   persona: { name: 'Prime', focus: '', tone: 'direct', instructions: '' },
   rules: { presets: [], custom: '' },
   costControls: { monthlyTokenBudget: 0 },
+  workspace: { mode: 'local', root_path: '../.agent-workspace', remote_url: '', branch: 'main' },
 }
 
-const STEPS = ['Intro', 'Providers', 'Routing', 'Personality', 'Rules', 'Launch'] as const
-type Step = 0 | 1 | 2 | 3 | 4 | 5
+const STEPS = ['Intro', 'Providers', 'Routing', 'Personality', 'Rules', 'Workspace', 'Launch'] as const
+type Step = 0 | 1 | 2 | 3 | 4 | 5 | 6
 
 // ─── CSS helpers ─────────────────────────────────────────────────────────────
 
@@ -154,6 +164,18 @@ function stepProgress(state: WizardState, step: Step): number {
     score += Math.min(0.7, state.rules.presets.length * 0.18)
     if (state.rules.custom.trim()) {
       score += Math.min(0.3, state.rules.custom.trim().length / 180)
+    }
+    return clamp01(score)
+  }
+
+  if (step === 5) {
+    let score = 0.2
+    if (state.workspace.root_path.trim()) score += 0.45
+    if (state.workspace.mode === 'git') {
+      if (state.workspace.remote_url.trim()) score += 0.2
+      if (state.workspace.branch.trim()) score += 0.15
+    } else {
+      score += 0.15
     }
     return clamp01(score)
   }
@@ -569,6 +591,7 @@ function StepProviders({ state, onChange }: { state: WizardState; onChange: Disp
             base_url: provider.base_url,
             ...(provider.model ? { model: provider.model } : {}),
             ...(provider.api_key ? { api_key: provider.api_key } : {}),
+            timeout_ms: 120000,
           })
           providerId = created.id
           updateProvider(name, { id: created.id })
@@ -898,6 +921,81 @@ function StepRules({ state, onChange }: { state: WizardState; onChange: (s: Wiza
   )
 }
 
+function StepWorkspace({ state, onChange }: { state: WizardState; onChange: (s: WizardState) => void }) {
+  const workspace = state.workspace
+  const update = (patch: Partial<WorkspaceDraft>) =>
+    onChange({ ...state, workspace: { ...workspace, ...patch } })
+
+  return (
+    <div className="space-y-4">
+      <p className="text-xs text-[var(--muted)]">
+        The Agent Workspace stores editable agent profiles, prompt templates, skills, and operating notes outside the ACP codebase.
+      </p>
+      <div>
+        <label className={LABEL_CLS}>Workspace mode</label>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={() => update({ mode: 'local' })}
+            className={`px-3 py-1.5 text-xs rounded border transition ${
+              workspace.mode === 'local'
+                ? 'border-[#6ee7ff] bg-[#1f6feb] text-white'
+                : 'border-[rgba(148,163,184,0.28)] bg-[#1f2937] text-[#e2e8f0] hover:bg-[#334155] hover:text-white'
+            }`}
+          >
+            Local managed
+          </button>
+          <button
+            type="button"
+            onClick={() => update({ mode: 'git' })}
+            className={`px-3 py-1.5 text-xs rounded border transition ${
+              workspace.mode === 'git'
+                ? 'border-[#6ee7ff] bg-[#1f6feb] text-white'
+                : 'border-[rgba(148,163,184,0.28)] bg-[#1f2937] text-[#e2e8f0] hover:bg-[#334155] hover:text-white'
+            }`}
+          >
+            Git-backed
+          </button>
+        </div>
+      </div>
+      <div>
+        <label className={LABEL_CLS}>Workspace root</label>
+        <input
+          value={workspace.root_path}
+          onChange={(e) => update({ root_path: e.target.value })}
+          placeholder="/var/lib/agent-cp/workspace"
+          className={INPUT_CLS}
+        />
+      </div>
+      {workspace.mode === 'git' && (
+        <>
+          <div>
+            <label className={LABEL_CLS}>Remote URL</label>
+            <input
+              value={workspace.remote_url}
+              onChange={(e) => update({ remote_url: e.target.value })}
+              placeholder="https://gitea.example.com/org/agent-workspace.git"
+              className={INPUT_CLS}
+            />
+          </div>
+          <div>
+            <label className={LABEL_CLS}>Branch</label>
+            <input
+              value={workspace.branch}
+              onChange={(e) => update({ branch: e.target.value })}
+              placeholder="main"
+              className={INPUT_CLS}
+            />
+          </div>
+        </>
+      )}
+      <div className="rounded-lg border border-[var(--border-soft)] bg-[var(--panel-subtle)] p-3 text-xs text-[var(--muted)]">
+        ACP will scaffold `agents/`, `prompts/`, `skills/`, `policies/`, `memory/`, and `config/`, then use those markdown files as the editable behavior layer for Prime.
+      </div>
+    </div>
+  )
+}
+
 function StepIntro() {
   return (
     <div className="space-y-5">
@@ -1004,6 +1102,23 @@ function StepLaunch({ state, onSubmit, submitting, error, onGoToStep }: {
         }
       </div>
 
+      <div className="rounded-lg border border-[var(--border-soft)] bg-[var(--panel-subtle)] p-3">
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-xs font-medium text-[var(--text)]">Agent Workspace</span>
+          <button type="button" onClick={() => onGoToStep(5)} className="text-xs text-blue-400 hover:underline">Edit</button>
+        </div>
+        <div className="text-xs text-[var(--muted)] space-y-0.5">
+          <div>Mode: <span className="text-[var(--text)]">{state.workspace.mode === 'git' ? 'Git-backed' : 'Local managed'}</span></div>
+          <div>Root: <span className="text-[var(--text)]">{state.workspace.root_path || '—'}</span></div>
+          {state.workspace.mode === 'git' && (
+            <>
+              <div>Remote: <span className="text-[var(--text)]">{state.workspace.remote_url || '—'}</span></div>
+              <div>Branch: <span className="text-[var(--text)]">{state.workspace.branch || 'main'}</span></div>
+            </>
+          )}
+        </div>
+      </div>
+
       {error && (
         <div className="rounded border border-[var(--s-blk-bd)] bg-[var(--s-blk-bg)] px-3 py-2">
           <p className="text-xs text-[var(--s-blk-tx)] font-mono">{error}</p>
@@ -1067,9 +1182,15 @@ export function Setup({ onSkip }: { onSkip?: () => void }) {
           custom: state.rules.custom,
         },
         cost_controls: { monthly_token_budget: state.costControls.monthlyTokenBudget },
+        workspace: {
+          mode: state.workspace.mode,
+          root_path: state.workspace.root_path,
+          remote_url: state.workspace.remote_url || undefined,
+          branch: state.workspace.branch,
+        },
         launch,
       }
-      const res = await fetch('/api/setup/complete', {
+      const res = await fetch(`${getApiOrigin()}/api/setup/complete`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
@@ -1099,7 +1220,7 @@ export function Setup({ onSkip }: { onSkip?: () => void }) {
         {/* Step indicator */}
         <div className="mb-6 space-y-3">
           <div className="relative overflow-hidden rounded-full border border-[rgba(148,163,184,0.2)] bg-[rgba(15,23,42,0.78)]">
-            <div className="grid grid-cols-5">
+            <div className="grid grid-cols-6">
               {progressSteps.map((label, index) => {
                 const stepIndex = (index + 1) as Step
                 const complete = stepIndex < step
@@ -1133,7 +1254,7 @@ export function Setup({ onSkip }: { onSkip?: () => void }) {
               })}
             </div>
           </div>
-          <div className="grid grid-cols-5 gap-2">
+          <div className="grid grid-cols-6 gap-2">
             {progressSteps.map((label, index) => {
               const stepIndex = (index + 1) as Step
               return (
@@ -1166,7 +1287,8 @@ export function Setup({ onSkip }: { onSkip?: () => void }) {
           {step === 2 && <StepRouting state={state} onChange={setState} />}
           {step === 3 && <StepPersonality state={state} onChange={setState} />}
           {step === 4 && <StepRules state={state} onChange={setState} />}
-          {step === 5 && (
+          {step === 5 && <StepWorkspace state={state} onChange={setState} />}
+          {step === 6 && (
             <StepLaunch
               state={state}
               onSubmit={handleSubmit}
@@ -1192,7 +1314,7 @@ export function Setup({ onSkip }: { onSkip?: () => void }) {
                 Skip for now
               </button>
             )}
-            {step < 5 && (
+            {step < 6 && (
               <button
                 type="button"
                 onClick={() => setStep((s) => (s + 1) as Step)}

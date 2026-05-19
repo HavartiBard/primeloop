@@ -6,6 +6,7 @@ import type pg from 'pg'
 import { getOrCreateAgentToken } from '../agent-tokens.js'
 import { decryptEnvVars } from '../mcp-registry.js'
 import { listControlPlaneTools, type McpToolDefinition } from '../mcp/service.js'
+import { loadWorkspaceTemplate, renderTemplate } from '../workspace.js'
 import {
   getProviderApiKey,
   type Provider,
@@ -79,19 +80,20 @@ function isManagedLocalAgent(agent: RegistryAgent): boolean {
     )
 }
 
-function defaultAgentInstructions(agent: RegistryAgent): string {
-  return agent.system_prompt?.trim() || `# Agent Instructions
-
-You are ${agent.name}.
-Work carefully, keep updates concise, and use the control plane as the source of truth.
-`
+async function defaultAgentInstructions(pool: pg.Pool, agent: RegistryAgent): Promise<string> {
+  if (agent.system_prompt?.trim()) return agent.system_prompt.trim()
+  const template = await loadWorkspaceTemplate(pool, 'prompts/agents/default-instructions.md', 'agents/default-instructions.md')
+  return renderTemplate(template, {
+    agent_name: agent.name,
+  })
 }
 
-function defaultSoul(agent: RegistryAgent): string {
-  return agent.soul?.trim() || `# Soul
-
-Identity and values for ${agent.name} have not been configured yet.
-`
+async function defaultSoul(pool: pg.Pool, agent: RegistryAgent): Promise<string> {
+  if (agent.soul?.trim()) return agent.soul.trim()
+  const template = await loadWorkspaceTemplate(pool, 'prompts/agents/default-soul.md', 'agents/default-soul.md')
+  return renderTemplate(template, {
+    agent_name: agent.name,
+  })
 }
 
 function formatSchemaValue(value: unknown): string {
@@ -276,8 +278,8 @@ export class OpenCodeProcessManager {
     const controlPlaneTools = await listControlPlaneTools()
 
     await mkdir(worktreePath, { recursive: true })
-    await writeFile(path.join(worktreePath, 'AGENTS.md'), `${defaultAgentInstructions(agent).trim()}\n`)
-    await writeFile(path.join(worktreePath, 'soul.md'), `${defaultSoul(agent).trim()}\n`)
+    await writeFile(path.join(worktreePath, 'AGENTS.md'), `${(await defaultAgentInstructions(this.pool, agent)).trim()}\n`)
+    await writeFile(path.join(worktreePath, 'soul.md'), `${(await defaultSoul(this.pool, agent)).trim()}\n`)
     await writeFile(path.join(worktreePath, 'TOOLS.md'), this.renderToolsMarkdown(controlPlaneTools, assignedServers))
     await writeFile(path.join(worktreePath, 'control-plane-tools.json'), `${JSON.stringify(controlPlaneTools, null, 2)}\n`)
     await writeFile(path.join(worktreePath, 'opencode.json'), JSON.stringify({

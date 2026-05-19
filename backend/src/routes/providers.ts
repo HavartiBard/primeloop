@@ -15,12 +15,12 @@ export function createProvidersRouter({ pool }: { pool: pg.Pool }) {
   })
 
   router.post('/', async (req, res) => {
-    const { name, type, base_url, api_key, model } = req.body
+    const { name, type, base_url, api_key, model, timeout_ms } = req.body
     if (!name || !type || !base_url) {
       return res.status(400).json({ error: 'name, type, base_url required' })
     }
     try {
-      const provider = await insertProvider(pool, { name, type, base_url, api_key, model })
+      const provider = await insertProvider(pool, { name, type, base_url, api_key, model, timeout_ms })
       res.status(201).json(provider)
     } catch (err) {
       const code = (err as { code?: string }).code

@@ -8,6 +8,7 @@ export interface Provider {
   base_url: string
   api_key?: string
   model?: string
+  timeout_ms?: number
   created_at: string
 }
 
@@ -46,8 +47,8 @@ export async function insertProvider(
 ): Promise<Provider> {
   const encryptedKey = data.api_key ? encrypt(data.api_key) : null
   const { rows } = await pool.query(
-    'INSERT INTO providers (name, type, base_url, api_key, model) VALUES ($1, $2, $3, $4, $5) RETURNING *',
-    [data.name, data.type, data.base_url, encryptedKey, data.model ?? null]
+    'INSERT INTO providers (name, type, base_url, api_key, model, timeout_ms) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *',
+    [data.name, data.type, data.base_url, encryptedKey, data.model ?? null, data.timeout_ms ?? 120000]
   )
   return {
     ...rows[0],
@@ -67,7 +68,8 @@ export async function updateProvider(
       type     = COALESCE($3, type),
       base_url = COALESCE($4, base_url),
       model    = COALESCE($5, model),
-      api_key  = CASE WHEN $6::boolean THEN $7 ELSE api_key END
+      timeout_ms = COALESCE($6, timeout_ms),
+      api_key  = CASE WHEN $7::boolean THEN $8 ELSE api_key END
     WHERE id = $1 RETURNING *`,
     [
       id,
@@ -75,6 +77,7 @@ export async function updateProvider(
       data.type ?? null,
       data.base_url ?? null,
       data.model ?? null,
+      data.timeout_ms ?? null,
       'api_key' in data,
       encryptedKey ?? null,
     ]

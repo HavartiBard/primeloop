@@ -1,6 +1,10 @@
 import { Router } from 'express'
 import type pg from 'pg'
+import { promises as fs } from 'node:fs'
+import path from 'node:path'
 import { encrypt } from '../crypto.js'
+import { appendThreadMessage, createThread } from '../runtime.js'
+import { ensureWorkspaceScaffold, updateWorkspaceConfig } from '../workspace.js'
 
 export function createSetupRouter({ pool }: { pool: pg.Pool }) {
   const router = Router()
@@ -8,7 +12,9 @@ export function createSetupRouter({ pool }: { pool: pg.Pool }) {
   router.get('/status', async (_req, res) => {
     try {
       const { rows: providerRows } = await pool.query(
-        'SELECT COUNT(*)::int AS count FROM providers'
+        `SELECT COUNT(*)::int AS count
+         FROM providers
+         WHERE NOT (type = 'codex' AND name = 'Codex (local)')`
       )
       if (providerRows[0].count > 0) {
         return res.json({ complete: true })
@@ -113,6 +119,7 @@ export function createSetupRouter({ pool }: { pool: pg.Pool }) {
       persona?: { name: string; focus: string; tone: string; instructions?: string }
       rules?: { presets: string[]; custom: string }
       cost_controls?: { monthly_token_budget: number }
+      workspace?: { mode?: 'local' | 'git'; root_path?: string; remote_url?: string; branch?: string }
       launch?: boolean
     }
 
@@ -193,6 +200,23 @@ export function createSetupRouter({ pool }: { pool: pg.Pool }) {
 
       const costControls = body.cost_controls ?? { monthly_token_budget: 0 }
       const launch = body.launch === true
+      const workspace = body.workspace ?? {}
+
+      await updateWorkspaceConfig(pool, {
+        mode: workspace.mode === 'git' ? 'git' : 'local',
+        ...(workspace.root_path ? { root_path: workspace.root_path } : {}),
+        remote_url: workspace.remote_url?.trim() || null,
+        branch: workspace.branch?.trim() || 'main',
+      })
+      const workspaceStatus = await ensureWorkspaceScaffold(pool)
+
+      await writeWorkspaceSetupFiles(workspaceStatus.effective_root, {
+        chiefName: persona.name,
+        chiefFocus: persona.focus,
+        chiefTone: toneLabel,
+        chiefInstructions: persona.instructions?.trim() ?? '',
+        policy: policyParts.join('\n').trim(),
+      })
 
       await pool.query(
         `UPDATE prime_agent_config
@@ -201,6 +225,32 @@ export function createSetupRouter({ pool }: { pool: pg.Pool }) {
         [JSON.stringify(routing), JSON.stringify(costControls), launch]
       )
 
+      if (launch) {
+        const { rows: threadRows } = await pool.query(
+          'SELECT COUNT(*)::int AS count FROM threads'
+        )
+
+        if (threadRows[0]?.count === 0) {
+          const chiefName = persona.name?.trim() || 'Prime'
+          const onboardingThread = await createThread(pool, {
+            title: `Getting started with ${chiefName}`,
+            metadata: {
+              kind: 'onboarding',
+              source: 'setup-launch',
+            },
+          })
+
+          await appendThreadMessage(pool, onboardingThread.id, {
+            role: 'assistant',
+            sender: chiefName,
+            content: `I'm ${chiefName}. Your control plane is live and ready. Start by telling me the first task, repo, incident, or workflow you want me to handle, and I'll turn this room into the active coordination thread for it.`,
+            metadata: {
+              kind: 'greeting',
+            },
+          })
+        }
+      }
+
       res.json({ ok: true })
     } catch (err) {
       res.status(500).json({ error: (err as Error).message ?? 'internal error' })
@@ -208,4 +258,35 @@ export function createSetupRouter({ pool }: { pool: pg.Pool }) {
   })
 
   return router
+}
+
+async function writeWorkspaceSetupFiles(
+  root: string,
+  data: {
+    chiefName: string
+    chiefFocus: string
+    chiefTone: string
+    chiefInstructions: string
+    policy: string
+  }
+): Promise<void> {
+  const profile = [
+    '# Prime Profile',
+    '',
+    `You are ${data.chiefName || 'Prime'}, ${data.chiefFocus || 'the coordination agent for the Agent Control Plane'}.`,
+    '',
+    `- Tone: ${data.chiefTone}.`,
+    '- Operate as the primary user-facing coordinator.',
+    '- Prefer direct, concrete progress over generic acknowledgements.',
+    '- When action is required, choose the next smallest useful step.',
+    data.chiefInstructions ? '' : null,
+    data.chiefInstructions || null,
+  ].filter(Boolean).join('\n')
+
+  const rules = ['# Standing Rules', '', data.policy || '- Keep work moving with bounded delegation.'].join('\n')
+
+  await fs.mkdir(path.join(root, 'agents'), { recursive: true })
+  await fs.mkdir(path.join(root, 'policies'), { recursive: true })
+  await fs.writeFile(path.join(root, 'agents', 'prime.md'), profile, 'utf8')
+  await fs.writeFile(path.join(root, 'policies', 'standing-rules.md'), rules, 'utf8')
 }

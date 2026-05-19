@@ -3,6 +3,7 @@ import { promisify } from 'node:util'
 import type pg from 'pg'
 import { appendThreadMessage, type Delegation } from '../runtime.js'
 import type { PrimeQueue } from '../prime-agent/queue.js'
+import { loadWorkspaceTemplate, renderTemplate } from '../workspace.js'
 import type { AgentHarness, TaskPrompt } from './harness.js'
 import { routeResult } from './result-router.js'
 
@@ -79,7 +80,7 @@ export class FleetDispatcher {
       return
     }
 
-    const prompt = buildPrompt(delegation)
+    const prompt = await buildPrompt(this.pool, delegation)
     const threadId = typeof delegation.request['thread_id'] === 'string'
       ? delegation.request['thread_id']
       : undefined
@@ -146,7 +147,7 @@ export class FleetDispatcher {
   }
 }
 
-function buildPrompt(delegation: Delegation): TaskPrompt {
+async function buildPrompt(pool: pg.Pool, delegation: Delegation): Promise<TaskPrompt> {
   const req = delegation.request
   const title = String(req['title'] ?? 'Task')
   const description = String(req['description'] ?? '')
@@ -154,34 +155,14 @@ function buildPrompt(delegation: Delegation): TaskPrompt {
   const readFiles = Array.isArray(req['read_files']) ? req['read_files'] as string[] : []
   const verificationCmd = typeof req['verification_cmd'] === 'string' ? req['verification_cmd'] : undefined
 
-  const text = [
-    `# Task`,
-    ``,
+  const template = await loadWorkspaceTemplate(pool, 'prompts/delegation/task.md', 'delegation/task.md')
+  const text = renderTemplate(template, {
     title,
-    ``,
-    `## Context`,
-    ``,
     description,
-    ``,
-    `## Files you may read`,
-    ``,
-    readFiles.length > 0 ? readFiles.join('\n') : '(none specified)',
-    ``,
-    `## Files you may edit`,
-    ``,
-    allowedFiles.length > 0 ? allowedFiles.join('\n') : '(none — unscoped task)',
-    ``,
-    `## Files you must NOT touch`,
-    ``,
-    `Everything else in the repository.`,
-    ``,
-    ...(verificationCmd
-      ? [`## Verification`, ``, `Run: ${verificationCmd}`, ``]
-      : []),
-    `## Completion`,
-    ``,
-    `Output the TASK COMPLETE block per AGENTS.md and stop.`,
-  ].join('\n')
+    read_files: readFiles.length > 0 ? readFiles.join('\n') : '(none specified)',
+    allowed_files: allowedFiles.length > 0 ? allowedFiles.join('\n') : '(none — unscoped task)',
+    verification_section: verificationCmd ? `## Verification\n\nRun: ${verificationCmd}\n\n` : '',
+  })
 
   return { text, allowed_files: allowedFiles, read_files: readFiles, verification_cmd: verificationCmd }
 }

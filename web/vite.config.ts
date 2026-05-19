@@ -2,6 +2,9 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
+const backendUrl = process.env['ACP_BACKEND_URL']
+const useSetupDevMiddleware = !backendUrl
+
 function sendJson(res: { statusCode: number; setHeader: (name: string, value: string) => void; end: (body?: string) => void }, statusCode: number, body: unknown) {
   res.statusCode = statusCode
   res.setHeader('Content-Type', 'application/json')
@@ -105,7 +108,7 @@ export default defineConfig({
   plugins: [
     react(),
     tailwindcss(),
-    {
+    ...(useSetupDevMiddleware ? [{
       name: 'setup-dev-middleware',
       configureServer(server) {
         server.middlewares.use(async (req, res, next) => {
@@ -149,12 +152,12 @@ export default defineConfig({
           next()
         })
       },
-    },
+    }] : []),
   ],
   server: {
     proxy: {
-      '/api': 'http://localhost:3100',
-      '/ws': { target: 'ws://localhost:3100', ws: true },
+      '/api': backendUrl ?? 'http://localhost:3100',
+      '/ws': { target: (backendUrl ?? 'http://localhost:3100').replace(/^http/, 'ws'), ws: true },
     },
   },
 })

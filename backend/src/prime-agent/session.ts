@@ -8,6 +8,9 @@ export interface PrimeSession {
   trigger_type: PrimeSessionTriggerType
   trigger_payload: Record<string, unknown>
   module_name?: string
+  workspace_root?: string
+  workspace_revision?: string
+  prompt_templates: Record<string, string>
   reasoning_summary?: string
   actions_taken: unknown[]
   token_count: number
@@ -23,6 +26,9 @@ export interface StartPrimeSessionInput {
   trigger_type: PrimeSessionTriggerType
   trigger_payload: Record<string, unknown>
   module_name?: string
+  workspace_root?: string
+  workspace_revision?: string
+  prompt_templates?: Record<string, string>
 }
 
 export interface CompletePrimeSessionPatch {
@@ -39,10 +45,25 @@ export async function startPrimeSession(
   input: StartPrimeSessionInput
 ): Promise<PrimeSession> {
   const { rows } = await pool.query(
-    `INSERT INTO prime_agent_sessions (trigger_type, trigger_payload, module_name, status)
-     VALUES ($1, $2, $3, 'running')
+    `INSERT INTO prime_agent_sessions (
+       trigger_type,
+       trigger_payload,
+       module_name,
+       workspace_root,
+       workspace_revision,
+       prompt_templates,
+       status
+     )
+     VALUES ($1, $2, $3, $4, $5, $6, 'running')
      RETURNING *`,
-    [input.trigger_type, JSON.stringify(input.trigger_payload), input.module_name ?? null]
+    [
+      input.trigger_type,
+      JSON.stringify(input.trigger_payload),
+      input.module_name ?? null,
+      input.workspace_root ?? null,
+      input.workspace_revision ?? null,
+      JSON.stringify(input.prompt_templates ?? {}),
+    ]
   )
 
   return rows[0]

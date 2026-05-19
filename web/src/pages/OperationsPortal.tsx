@@ -1,7 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import {
   fetchAgents,
-  fetchEvents,
   fetchRuntimeAuditLoops,
   fetchRuntimeDelegations,
   fetchRuntimeMemory,
@@ -13,7 +12,7 @@ import { useApprovals } from '../hooks/useApprovals'
 import { useAgentRegistry } from '../hooks/useAgentRegistry'
 import { useWebSocket } from '../hooks/useWebSocket'
 import { CollaborationRoomsView } from '../components/CollaborationRoomsView'
-import type { AgentEvent, ChiefProfile } from '../types'
+import type { ChiefProfile } from '../types'
 
 const DEFAULT_PROFILE: ChiefProfile = {
   name: 'Chief of Staff',
@@ -36,43 +35,15 @@ const DEFAULT_PROFILE: ChiefProfile = {
   ],
 }
 
-function cardClass(extra = '') {
-  return `rounded-[1.2rem] border border-[var(--border-soft)] bg-[var(--panel)] shadow-[0_18px_48px_rgba(2,6,23,0.18)] backdrop-blur ${extra}`.trim()
-}
-
-function formatTime(value?: string) {
-  return value ? new Date(value).toLocaleString() : 'Waiting'
-}
-
-function findChiefTypeName(name?: string, type?: string) {
-  return type ?? name ?? 'Persistent coordinator'
-}
-
-function mergeEvents(liveEvents: AgentEvent[], historyEvents: AgentEvent[]) {
-  const pool = liveEvents.length > 0 ? [...liveEvents, ...historyEvents] : historyEvents
-  const seen = new Set<string>()
-  return pool.filter((event) => {
-    if (seen.has(event.id)) return false
-    seen.add(event.id)
-    return true
-  }).slice(0, 12)
-}
-
 export function OperationsPortal() {
   const { approvals } = useApprovals()
   const { agents } = useAgentRegistry()
-  const { events: liveEvents, connected } = useWebSocket('/ws')
+  const { connected } = useWebSocket('/ws')
 
   const { data: healthData = [] } = useQuery({
     queryKey: ['agents', 'health'],
     queryFn: fetchAgents,
     refetchInterval: 30_000,
-  })
-
-  const { data: historyEvents = [] } = useQuery({
-    queryKey: ['events', 'operations-portal'],
-    queryFn: () => fetchEvents({ limit: 24 }),
-    refetchInterval: 20_000,
   })
 
   const { data: runtimeOverview } = useQuery({
@@ -126,39 +97,10 @@ export function OperationsPortal() {
   if (profile.recurringDuties.length === 0) profile.recurringDuties = DEFAULT_PROFILE.recurringDuties
   if (profile.priorDecisions.length === 0) profile.priorDecisions = DEFAULT_PROFILE.priorDecisions
 
-  const chief = agents.find((agent) => {
-    const key = `${agent.name} ${agent.type}`.toLowerCase()
-    return key.includes('chief') || key.includes('staff') || key.includes('coord')
-  })
-
-  const visibleEvents = mergeEvents(liveEvents, historyEvents)
-  const latestEvent = visibleEvents[0]
   const pendingApprovals = approvals.filter((approval) => approval.status === 'pending').length
-  const activeWork = workItems.filter((item) => item.status === 'active').length
-  const openRooms = threads.filter((thread) => thread.status !== 'closed').length
-  const memoryCount = profile.preferences.length + profile.recurringDuties.length + profile.priorDecisions.length
 
   return (
-    <div className="flex h-[calc(100vh-57px)] flex-col px-4 py-4 sm:px-6 lg:px-8">
-      <section className={`${cardClass()} mb-4 px-4 py-3 shrink-0`}>
-        <div className="flex flex-wrap items-center gap-2">
-          {[
-            `${activeWork} active work`,
-            `${pendingApprovals} approvals`,
-            `${openRooms} open rooms`,
-            `${memoryCount} memory`,
-            `${agents.filter((agent) => agent.enabled).length} agents`,
-            `${auditLoops.length} audits`,
-            connected ? 'streaming' : 'polling',
-            latestEvent ? `event ${formatTime(latestEvent.created_at)}` : 'awaiting events',
-          ].map((item) => (
-            <div key={item} className="rounded-full border border-[var(--border-soft)] bg-[var(--panel-subtle)] px-3 py-1 text-[11px] uppercase tracking-[0.18em] text-[var(--muted)]">
-              {item}
-            </div>
-          ))}
-        </div>
-      </section>
-
+    <div className="flex h-[calc(100vh-57px)] flex-col px-3 py-3 sm:px-4 lg:px-5">
       <section className="min-h-0 flex-1 overflow-hidden rounded-[1.2rem] border border-[var(--border-soft)]">
         <CollaborationRoomsView
           chiefName={profile.name}

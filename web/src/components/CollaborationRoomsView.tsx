@@ -1,6 +1,6 @@
-import { useMemo, useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { fetchThreadMessages } from '../api'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { fetchPrimeSessions, fetchThreadMessages, sendChiefMessage } from '../api'
 import type { RegistryAgent, RuntimeAuditLoop, RuntimeDelegation, RuntimeThread, RuntimeWorkItem } from '../types'
 
 type AgentHealth = {
@@ -36,34 +36,19 @@ type RoomView = {
   messages: Array<{ speaker: string; text: string; at: string }>
   workItems: RuntimeWorkItem[]
   delegations: RuntimeDelegation[]
+  isOnboarding: boolean
 }
 
-// ─── Sample data ───────────────────────────────────────────────────────────
-
-const SAMPLE_MESSAGES = [
-  [
-    { speaker: 'chief',  at: '10:12', text: 'Locking scope to websocket reconnect and retry state. Rollback path must stay clear.' },
-    { speaker: 'builder',at: '10:14', text: 'Patch branch open. Narrowed to three files in the reconnect layer.' },
-    { speaker: 'verify', at: '10:16', text: 'Smoke suite queued against staging. Will flag any regression before merge.' },
-  ],
-  [
-    { speaker: 'ops',    at: '10:18', text: 'Provider latency spike detected — holding downstream delegations until stable.' },
-    { speaker: 'chief',  at: '10:19', text: 'Agreed. Freeze new work in this room. Surface the incident trace first.' },
-    { speaker: 'system', at: '10:21', text: 'Blocked: Collect provider incident traces' },
-  ],
-  [
-    { speaker: 'verify', at: '10:23', text: 'Artifact bundle received. Running full verification pass now.' },
-    { speaker: 'builder',at: '10:24', text: 'Diff is clean. No unexpected boundary changes in the capability contract.' },
-    { speaker: 'chief',  at: '10:25', text: 'Good. Promote to release queue once smoke checks pass.' },
-  ],
-]
-
-const SAMPLE_ROOMS = [
-  { id: 'sr-release',  title: 'Release coordination', lane: 'implementation', state: 'active'    as RoomState, lastUpdated: '10:21', participants: ['chief','builder','verify','ops'] },
-  { id: 'sr-provider', title: 'Provider incident',    lane: 'incident',        state: 'blocked'   as RoomState, lastUpdated: '10:23', participants: ['chief','ops','review'] },
-  { id: 'sr-verify',   title: 'Verification lane',    lane: 'verification',    state: 'attention' as RoomState, lastUpdated: '10:19', participants: ['verify','review','builder'] },
-  { id: 'sr-infra',    title: 'Infra audit Q1',       lane: 'audit',           state: 'archived'  as RoomState, lastUpdated: '09:44', participants: ['ops','review'] },
-]
+type WorkFocus = {
+  id: string
+  title: string
+  status: string
+  lane: string
+  owner: string
+  kind: 'work' | 'delegation'
+  messageId?: string
+  updatedAt?: string
+}
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
@@ -81,6 +66,14 @@ function formatShortTime(iso?: string): string {
   const d = new Date(iso)
   if (Number.isNaN(d.getTime())) return '--:--'
   return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
+function formatElapsed(ms: number): string {
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000))
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+  if (minutes <= 0) return `${seconds}s`
+  return `${minutes}m ${String(seconds).padStart(2, '0')}s`
 }
 
 function stateLabel(state: RoomState): string {
@@ -103,20 +96,6 @@ function stateChip(state: RoomState): string {
   return 'text-[var(--s-neu-tx)] bg-[var(--s-neu-bg)] border-[var(--s-neu-bd)]'
 }
 
-function stateStatusBg(state: RoomState): string {
-  if (state === 'active')    return 'border-[var(--s-ok-bd)] bg-[var(--s-ok-bg)]'
-  if (state === 'attention') return 'border-[var(--s-run-bd)] bg-[var(--s-run-bg)]'
-  if (state === 'blocked')   return 'border-[var(--s-blk-bd)] bg-[var(--s-blk-bg)]'
-  return 'border-[var(--s-neu-bd)] bg-[var(--s-neu-bg)]'
-}
-
-function stateLeftBorderColor(state: RoomState): string {
-  if (state === 'active')    return '#4ade80'
-  if (state === 'attention') return '#22d3ee'
-  if (state === 'blocked')   return '#f87171'
-  return '#6b7280'
-}
-
 function filterTabCls(current: FilterTab, tab: FilterTab): string {
   if (current !== tab) return 'border-transparent text-[var(--muted)] hover:bg-[var(--panel-subtle)]'
   if (tab === 'active')   return 'border-[var(--s-ok-bd)] bg-[var(--s-ok-bg)] text-[var(--s-ok-tx)]'
@@ -131,6 +110,28 @@ function speakerCls(speaker: string): string {
   return 'text-[var(--terminal-speaker)]'
 }
 
+function speakerGlyph(speaker: string): string {
+  if (speaker === 'system') return '■'
+  return '▣'
+}
+
+function participantDot(agent: string, healthByName: Map<string, AgentHealth>): string {
+  const health = healthByName.get(agent.toLowerCase())
+  if (health?.healthy === false) return 'bg-red-400 shadow-[0_0_7px_rgba(248,113,113,0.55)]'
+  if (health?.healthy === true) return 'bg-emerald-400 shadow-[0_0_7px_rgba(52,211,153,0.45)]'
+  return 'bg-[var(--muted)]'
+}
+
+function primePhaseLabel(step?: string, status?: string): string {
+  if (status && status !== 'running') return 'finalizing'
+  if (step === 'assembling_context') return 'gathering context'
+  if (step === 'deciding') return 'thinking'
+  if (step === 'dispatching') return 'taking action'
+  if (step === 'completed') return 'responding'
+  if (step === 'failed') return 'reporting'
+  return 'processing'
+}
+
 // ─── Data derivation ───────────────────────────────────────────────────────
 
 function roomStateFromThread(
@@ -138,18 +139,18 @@ function roomStateFromThread(
   items: RuntimeWorkItem[],
   delegs: RuntimeDelegation[],
 ): RoomState {
+  if (thread.metadata?.kind === 'onboarding') return 'active'
   if (thread.status === 'closed') return 'archived'
   if (items.some((i) => i.status === 'blocked')) return 'blocked'
   if (delegs.some((d) => d.status === 'queued' || d.status === 'running')) return 'attention'
   if (items.some((i) => i.status === 'active')) return 'active'
-  return 'archived'
+  return 'active'
 }
 
 function derivedMessages(
   items: RuntimeWorkItem[],
   delegs: RuntimeDelegation[],
   agents: RegistryAgent[],
-  fallbackIdx: number,
 ): Array<{ speaker: string; text: string; at: string }> {
   const msgs: Array<{ speaker: string; text: string; at: string; _ts: string }> = []
 
@@ -168,8 +169,7 @@ function derivedMessages(
   }
 
   msgs.sort((a, b) => b._ts.localeCompare(a._ts))
-  const result = msgs.slice(0, 8).map(({ speaker, text, at }) => ({ speaker, text, at }))
-  return result.length >= 2 ? result : SAMPLE_MESSAGES[fallbackIdx % SAMPLE_MESSAGES.length]
+  return msgs.slice(0, 8).map(({ speaker, text, at }) => ({ speaker, text, at }))
 }
 
 function derivedSummary(items: RuntimeWorkItem[], delegs: RuntimeDelegation[], agents: RegistryAgent[], signal?: string): string {
@@ -186,45 +186,6 @@ function derivedSummary(items: RuntimeWorkItem[], delegs: RuntimeDelegation[], a
   return `${items.length} tracked item${items.length === 1 ? '' : 's'} in coordination.`
 }
 
-function buildFallbackRooms(): RoomView[] {
-  return SAMPLE_ROOMS.map((room, idx) => ({
-    id: room.id,
-    title: room.title,
-    state: room.state,
-    lane: laneLabel(room.lane),
-    lastUpdated: room.lastUpdated,
-    summary: idx === 0 ? 'Active: Patch websocket reconnection flow'
-           : idx === 1 ? 'Blocked on: Collect provider incident traces'
-           : idx === 2 ? 'Delegating: Verification to verify'
-           : 'Closed — archived Q1',
-    activityScore: room.state === 'blocked' ? 40 : room.state === 'attention' ? 28 : room.state === 'active' ? 20 : 0,
-    participants: room.participants,
-    messages: SAMPLE_MESSAGES[idx % SAMPLE_MESSAGES.length],
-    workItems: [
-      { id: `sw-${idx}-1`, thread_id: room.id, owner_agent_id: 'a1', owner_label: room.participants[1] ?? 'builder', lane: room.lane, title: idx === 0 ? 'Patch websocket reconnection flow' : idx === 1 ? 'Collect provider incident traces' : idx === 2 ? 'Run verification bundle' : 'Audit report', status: room.state === 'blocked' ? 'blocked' : 'active', priority: 'high', metadata: {}, created_at: '', updated_at: '' },
-      { id: `sw-${idx}-2`, thread_id: room.id, owner_agent_id: 'a2', owner_label: room.participants[2] ?? 'verify',  lane: room.lane, title: idx === 0 ? 'Review deployment checklist' : idx === 1 ? 'Hold escalation notes' : idx === 2 ? 'Publish artifact summary' : 'Close thread', status: 'queued', priority: 'medium', metadata: {}, created_at: '', updated_at: '' },
-    ],
-    delegations: [
-      { id: `sd-${idx}-1`, work_item_id: `sw-${idx}-1`, to_agent_id: 'a1', capability: 'implementation', status: 'running', request: {}, result: {}, trace: [], created_at: '', updated_at: '' },
-      { id: `sd-${idx}-2`, work_item_id: `sw-${idx}-2`, to_agent_id: 'a2', capability: 'verification',   status: room.state === 'blocked' ? 'queued' : 'running', request: {}, result: {}, trace: [], created_at: '', updated_at: '' },
-    ],
-  }))
-}
-
-function buildSignalRows(room: RoomView, connected: boolean, pendingApprovals: number, auditLoops: RuntimeAuditLoop[]) {
-  const blocked = room.workItems.filter((i) => i.status === 'blocked').length
-  const running = room.delegations.filter((d) => d.status === 'running').length
-  return [
-    { label: 'Feed',         value: connected ? 'Streaming' : 'Polling',  hi: connected },
-    { label: 'Lane',         value: room.lane,                             hi: false },
-    { label: 'Participants', value: `${room.participants.length}`,          hi: false },
-    { label: 'Blocked',      value: `${blocked}`,                          hi: blocked > 0 },
-    { label: 'Running',      value: `${running}`,                          hi: false },
-    { label: 'Approvals',    value: `${pendingApprovals}`,                 hi: pendingApprovals > 0 },
-    { label: 'Audits',       value: `${auditLoops.length}`,                hi: false },
-  ]
-}
-
 // ─── Component ─────────────────────────────────────────────────────────────
 
 const GRID_BG = {
@@ -238,22 +199,29 @@ const GRID_BG = {
 }
 
 export function CollaborationRoomsView({
-  connected,
+  chiefName,
   agents,
   healthData,
   workItems,
   delegations,
   threads,
   pendingApprovals,
-  auditLoops,
 }: CollaborationRoomsViewProps) {
+  const queryClient = useQueryClient()
   const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null)
   const [filter, setFilter] = useState<FilterTab>('active')
   const [search, setSearch] = useState('')
   const [termExpanded, setTermExpanded] = useState(true)
+  const [draftMessage, setDraftMessage] = useState('')
+  const [selectedWorkId, setSelectedWorkId] = useState<string | null>(null)
+  const [clockNow, setClockNow] = useState(() => Date.now())
+  const [unreadMessages, setUnreadMessages] = useState(0)
+  const [followBottom, setFollowBottom] = useState(true)
+  const chatScrollRef = useRef<HTMLDivElement | null>(null)
+  const lastMessageCountRef = useRef(0)
 
   const rooms = useMemo<RoomView[]>(() => {
-    if (threads.length === 0) return buildFallbackRooms()
+    if (threads.length === 0) return []
 
     const healthByName = new Map(healthData.map((e) => [e.agent.toLowerCase(), e]))
 
@@ -285,9 +253,10 @@ export function CollaborationRoomsView({
         lastUpdated,
         activityScore: blocked * 20 + delegs.length * 8 + active * 6 + (state === 'attention' ? 4 : 0),
         participants,
-        messages: derivedMessages(items, delegs, agents, idx),
+        messages: derivedMessages(items, delegs, agents),
         workItems: items,
         delegations: delegs,
+        isOnboarding: thread.metadata?.kind === 'onboarding',
       } satisfies RoomView
     }).sort((a, b) => b.activityScore - a.activityScore)
   }, [agents, delegations, healthData, threads, workItems])
@@ -307,12 +276,29 @@ export function CollaborationRoomsView({
   const selectedRoom = filteredRooms.find((r) => r.id === selectedRoomId) ?? filteredRooms[0]
   const activeRoomId = selectedRoom?.id ?? null
 
+  const { data: primeSessions = [] } = useQuery({
+    queryKey: ['prime-agent-sessions', activeRoomId],
+    queryFn: () => fetchPrimeSessions(25),
+    enabled: !!activeRoomId,
+    refetchInterval: 2_000,
+  })
+
+  const roomPrimeSessions = primeSessions.filter((session) =>
+    session.trigger_type === 'chief_message' &&
+    session.trigger_payload?.['thread_id'] === activeRoomId
+  )
+  const runningPrimeSessions = roomPrimeSessions.filter((session) => session.status === 'running')
+
   const { data: rawMessages = [] } = useQuery({
     queryKey: ['thread-messages', activeRoomId],
     queryFn: () => fetchThreadMessages(activeRoomId!),
-    enabled: !!activeRoomId && !activeRoomId.startsWith('sr-'),
-    refetchInterval: 10_000,
+    enabled: !!activeRoomId,
+    refetchInterval: runningPrimeSessions.length > 0 ? 1_000 : 3_000,
   })
+
+  const selectedWork = selectedRoom
+    ? selectedRoom.workItems.find((item) => item.id === selectedWorkId)
+    : undefined
 
   const displayMessages = rawMessages.length >= 1
     ? rawMessages.map(msg => ({
@@ -322,16 +308,242 @@ export function CollaborationRoomsView({
       }))
     : selectedRoom?.messages ?? []
 
-  const signalRows  = selectedRoom ? buildSignalRows(selectedRoom, connected, pendingApprovals, auditLoops) : []
+  useEffect(() => {
+    lastMessageCountRef.current = 0
+    setUnreadMessages(0)
+    setFollowBottom(true)
+  }, [activeRoomId])
+
+  useEffect(() => {
+    if (!followBottom) return
+    const node = chatScrollRef.current
+    if (!node) return
+    requestAnimationFrame(() => {
+      node.scrollTop = node.scrollHeight
+    })
+  }, [activeRoomId, selectedRoomId])
+
   const activeAgents = selectedRoom
-    ? Array.from(new Set([...selectedRoom.workItems.map((i) => i.owner_label).filter(Boolean) as string[], ...selectedRoom.participants]))
+    ? Array.from(new Set([
+        ...selectedRoom.workItems.map((i) => i.owner_label).filter(Boolean) as string[],
+        ...selectedRoom.participants,
+        ...(selectedRoom.isOnboarding ? [chiefName] : []),
+      ]))
     : []
-  const artifactRows = selectedRoom
+  const healthByName = useMemo(() => new Map(healthData.map((entry) => [entry.agent.toLowerCase(), entry])), [healthData])
+  const attentionWork = selectedRoom
+    ? selectedRoom.workItems.filter((item) => item.status === 'blocked' || item.status === 'approval')
+    : []
+  const activeWork = selectedRoom
     ? [
-        ...selectedRoom.workItems.slice(0, 5).map((i) => ({ id: i.id, title: i.title, meta: `${i.owner_label} · ${laneLabel(i.lane)} · ${laneLabel(i.status)}`, type: 'workItem' as const })),
-        ...selectedRoom.delegations.slice(0, 4).map((d) => ({ id: d.id, title: `${laneLabel(d.capability)} bundle`, meta: `${laneLabel(d.status)} delegation`, type: 'delegation' as const })),
+        ...selectedRoom.workItems
+          .filter((item) => item.status === 'active')
+          .map((item): WorkFocus => ({
+            id: item.id,
+            title: item.title,
+            status: item.status,
+            lane: item.lane,
+            owner: item.owner_label || chiefName,
+            kind: 'work',
+            messageId: typeof item.metadata?.['message_id'] === 'string' ? item.metadata['message_id'] : undefined,
+            updatedAt: item.updated_at ?? item.created_at,
+          })),
+        ...selectedRoom.delegations
+          .filter((delegation) => delegation.status === 'running')
+          .map((delegation): WorkFocus => {
+            const item = selectedRoom.workItems.find((workItem) => workItem.id === delegation.work_item_id)
+            const agent = agents.find((candidate) => candidate.id === delegation.to_agent_id)
+            return {
+              id: delegation.id,
+              title: item?.title ?? `${laneLabel(delegation.capability)} delegation`,
+              status: delegation.status,
+              lane: delegation.capability,
+              owner: agent?.name ?? item?.owner_label ?? 'agent',
+              kind: 'delegation',
+              messageId: typeof item?.metadata?.['message_id'] === 'string' ? item.metadata['message_id'] : undefined,
+              updatedAt: delegation.updated_at ?? delegation.created_at,
+            }
+          }),
       ]
     : []
+  const pendingWork = selectedRoom
+    ? [
+        ...selectedRoom.workItems
+          .filter((item) => item.status !== 'active' && item.status !== 'blocked' && item.status !== 'approval')
+          .map((item): WorkFocus => ({
+            id: item.id,
+            title: item.title,
+            status: item.status,
+            lane: item.lane,
+            owner: item.owner_label || chiefName,
+            kind: 'work',
+            messageId: typeof item.metadata?.['message_id'] === 'string' ? item.metadata['message_id'] : undefined,
+            updatedAt: item.updated_at ?? item.created_at,
+          })),
+        ...selectedRoom.delegations
+          .filter((delegation) => delegation.status === 'queued')
+          .map((delegation): WorkFocus => {
+            const item = selectedRoom.workItems.find((workItem) => workItem.id === delegation.work_item_id)
+            const agent = agents.find((candidate) => candidate.id === delegation.to_agent_id)
+            return {
+              id: delegation.id,
+              title: item?.title ?? `${laneLabel(delegation.capability)} delegation`,
+              status: delegation.status,
+              lane: delegation.capability,
+              owner: agent?.name ?? item?.owner_label ?? 'agent',
+              kind: 'delegation',
+              messageId: typeof item?.metadata?.['message_id'] === 'string' ? item.metadata['message_id'] : undefined,
+              updatedAt: delegation.updated_at ?? delegation.created_at,
+            }
+          }),
+      ]
+    : []
+  const selectedFocus = [...activeWork, ...pendingWork].find((item) => item.id === selectedWorkId)
+  const latestPrimeSession = roomPrimeSessions[0]
+  const latestPrimeResponseVisible = latestPrimeSession
+    ? rawMessages.some((message) => message.metadata?.['session_id'] === latestPrimeSession.id)
+    : false
+  const finalizingPrimeSessions = latestPrimeSession && latestPrimeSession.status !== 'running' && !latestPrimeResponseVisible
+    ? [latestPrimeSession]
+    : []
+  const visiblePrimeSessions = runningPrimeSessions.length > 0 ? runningPrimeSessions : finalizingPrimeSessions
+  useEffect(() => {
+    const node = chatScrollRef.current
+    if (!node) return
+
+    if (!followBottom) {
+      const currentCount = displayMessages.length
+      const previousCount = lastMessageCountRef.current
+      if (currentCount > previousCount) {
+        setUnreadMessages((count) => count + (currentCount - previousCount))
+      }
+      lastMessageCountRef.current = currentCount
+      return
+    }
+
+    requestAnimationFrame(() => {
+      node.scrollTop = node.scrollHeight
+      setUnreadMessages(0)
+      lastMessageCountRef.current = displayMessages.length
+    })
+  }, [displayMessages.length, followBottom, activeRoomId, visiblePrimeSessions.length])
+
+  useEffect(() => {
+    if (visiblePrimeSessions.length === 0) return
+    const timer = window.setInterval(() => setClockNow(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [visiblePrimeSessions.length])
+
+  const primaryRunningSession = visiblePrimeSessions[0]
+  const runningPrimeWork = visiblePrimeSessions
+    .map((session) => {
+      const messageId = session.trigger_payload?.['message_id']
+      return selectedRoom?.workItems.find((item) => item.metadata?.['message_id'] === messageId)
+    })
+    .filter(Boolean) as RuntimeWorkItem[]
+  const hasLiveActivity = !!selectedRoom && (
+    selectedRoom.workItems.some((item) => item.status === 'active' || item.status === 'blocked')
+    || selectedRoom.delegations.some((delegation) => delegation.status === 'queued' || delegation.status === 'running')
+  )
+  const processingOwners = Array.from(new Set(runningPrimeWork.map((item) => item.owner_label || chiefName))).filter(Boolean)
+  const processingLabel = processingOwners.length > 0 ? processingOwners.join(', ') : chiefName
+  const processingSummary = runningPrimeWork.length > 0
+    ? runningPrimeWork.slice(0, 2).map((item) => item.title).join(' · ')
+    : 'thinking through the latest request'
+  const processingStartedAt = primaryRunningSession ? new Date(primaryRunningSession.started_at).getTime() : clockNow
+  const processingStartupBufferMs = 5000
+  const processingElapsed = primaryRunningSession
+    ? formatElapsed(Math.max(0, clockNow - processingStartedAt + processingStartupBufferMs))
+    : '0s'
+  const processingTimeLabel = formatShortTime(primaryRunningSession?.started_at)
+  const processingVerb = primePhaseLabel(primaryRunningSession?.last_step, primaryRunningSession?.status)
+  const selectedWorkSession = selectedFocus?.messageId
+    ? roomPrimeSessions.find((session) => session.trigger_payload?.['message_id'] === selectedFocus.messageId)
+    : undefined
+  const selectedWorkResponse = selectedWorkSession
+    ? rawMessages.find((message) => message.metadata?.['session_id'] === selectedWorkSession.id)
+    : undefined
+  const sendMessage = useMutation({
+    mutationFn: async () => {
+      if (!activeRoomId) throw new Error('No active room')
+      const content = draftMessage.trim()
+      if (!content) throw new Error('Message is empty')
+      return sendChiefMessage(activeRoomId, { content, sender: 'james' })
+    },
+    onSuccess: async () => {
+      setDraftMessage('')
+      setFollowBottom(true)
+      setUnreadMessages(0)
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['thread-messages', activeRoomId] }),
+        queryClient.invalidateQueries({ queryKey: ['threads'] }),
+        queryClient.invalidateQueries({ queryKey: ['runtime-work-items'] }),
+        queryClient.invalidateQueries({ queryKey: ['runtime-delegations'] }),
+        queryClient.invalidateQueries({ queryKey: ['runtime-overview'] }),
+        queryClient.invalidateQueries({ queryKey: ['prime-agent-sessions', activeRoomId] }),
+      ])
+    },
+  })
+  const canSendMessage = !!activeRoomId && draftMessage.trim().length > 0 && !sendMessage.isPending
+
+  function submitMessage() {
+    if (!canSendMessage) return
+    sendMessage.mutate()
+  }
+
+  function selectWork(id: string) {
+    setSelectedWorkId(id)
+    setTermExpanded(true)
+  }
+
+  function handleChatScroll() {
+    const node = chatScrollRef.current
+    if (!node) return
+    const isNearBottom = node.scrollHeight - node.scrollTop - node.clientHeight < 80
+    setFollowBottom(isNearBottom)
+    if (isNearBottom) setUnreadMessages(0)
+  }
+
+  function scrollChatToBottom() {
+    const node = chatScrollRef.current
+    if (!node) return
+    node.scrollTop = node.scrollHeight
+    setUnreadMessages(0)
+    setFollowBottom(true)
+  }
+
+  function renderWorkRows(rows: WorkFocus[], empty: string) {
+    if (rows.length === 0) {
+      return <div className="rounded border border-dashed border-[var(--border-soft)] px-3 py-3 text-xs text-[var(--muted)]">{empty}</div>
+    }
+    return rows.map((item) => (
+      <button
+        key={`${selectedRoom?.id}-work-${item.kind}-${item.id}`}
+        type="button"
+        onClick={() => selectWork(item.id)}
+        className={`w-full rounded border px-3 py-2 text-left transition ${
+          selectedWorkId === item.id
+            ? 'border-[var(--sel-bd)] bg-[var(--sel-bg)]'
+            : 'border-[var(--border-soft)] bg-[var(--panel-subtle)] hover:bg-[var(--panel-strong)]'
+        }`}
+      >
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <div className="truncate text-sm font-medium text-[var(--text)]">{item.title}</div>
+            <div className="mt-1 font-mono text-[11px] text-[var(--muted)]">
+              {item.owner} · {laneLabel(item.lane)}
+            </div>
+          </div>
+          <span className="shrink-0 rounded-full border border-[var(--border-soft)] px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide text-[var(--muted)]">
+            {laneLabel(item.status)}
+          </span>
+        </div>
+        <div className="mt-1.5 font-mono text-[10px] uppercase tracking-wide text-[var(--muted)]">
+          {item.kind} · updated {formatShortTime(item.updatedAt)}
+        </div>
+      </button>
+    ))
+  }
 
   return (
     <div className="flex h-full min-h-0" style={GRID_BG}>
@@ -373,7 +585,12 @@ export function CollaborationRoomsView({
 
         {/* Room rows */}
         <div className="min-h-0 flex-1 overflow-y-auto">
-          {filteredRooms.length === 0 && (
+          {rooms.length === 0 && (
+            <div className="px-5 py-8 text-sm text-[var(--muted)]">
+              No rooms yet. Launch the prime agent from setup to create the first getting-started room.
+            </div>
+          )}
+          {rooms.length > 0 && filteredRooms.length === 0 && (
             <div className="px-5 py-8 font-mono text-xs text-[var(--muted)]">no rooms match</div>
           )}
           {filteredRooms.map((room) => (
@@ -404,13 +621,31 @@ export function CollaborationRoomsView({
         <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-[var(--panel)]">
 
           {/* Workspace header */}
-          <div className="flex shrink-0 items-center gap-3 border-b border-[var(--border-soft)] px-5 py-3.5">
-            <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${stateDot(selectedRoom.state)}`} />
-            <span className="flex-1 text-lg font-semibold text-[var(--text)]">{selectedRoom.title}</span>
-            <span className={`shrink-0 rounded-full border px-2.5 py-1 font-mono text-[11px] uppercase tracking-wide ${stateChip(selectedRoom.state)}`}>
-              {stateLabel(selectedRoom.state)}
-            </span>
-            <span className="ml-2 shrink-0 font-mono text-sm text-[var(--muted)]">{selectedRoom.lane} · {selectedRoom.lastUpdated}</span>
+          <div className="shrink-0 border-b border-[var(--border-soft)] px-5 py-3.5">
+            <div className="flex items-center gap-3">
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-lg font-semibold text-[var(--text)]">{selectedRoom.title}</div>
+                <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                  {activeAgents.length === 0 && (
+                    <span className="font-mono text-[11px] uppercase tracking-wide text-[var(--muted)]">No participants yet</span>
+                  )}
+                  {activeAgents.map((agent) => (
+                    <span
+                      key={`${selectedRoom.id}-header-p-${agent}`}
+                      className="inline-flex max-w-[160px] items-center gap-1.5 rounded-full border border-[var(--border-soft)] bg-[var(--panel-subtle)] px-2 py-0.5 font-mono text-[11px] text-[var(--muted)]"
+                      title={agent}
+                    >
+                      <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${participantDot(agent, healthByName)}`} />
+                      <span className="truncate">{agent}</span>
+                    </span>
+                  ))}
+                </div>
+              </div>
+              <span className={`shrink-0 rounded-full border px-2.5 py-1 font-mono text-[11px] uppercase tracking-wide ${stateChip(selectedRoom.state)}`}>
+                {stateLabel(selectedRoom.state)}
+              </span>
+              <span className="shrink-0 font-mono text-sm text-[var(--muted)]">{selectedRoom.lane} · {selectedRoom.lastUpdated}</span>
+            </div>
           </div>
 
           {/* Workspace body */}
@@ -420,26 +655,86 @@ export function CollaborationRoomsView({
             <div className="flex min-h-0 flex-col border-r border-[var(--border-soft)]">
 
               {/* Messages */}
-              <div className="min-h-0 flex-1 overflow-y-auto bg-[var(--panel-subtle)] px-[18px] py-4">
+              <div
+                ref={chatScrollRef}
+                className="min-h-0 flex-1 overflow-y-auto bg-[var(--panel-subtle)] px-[18px] py-4"
+                onScroll={handleChatScroll}
+              >
                 <div className="flex flex-col gap-1.5 font-mono text-sm">
+                  {unreadMessages > 0 && (
+                    <button
+                      type="button"
+                      onClick={scrollChatToBottom}
+                      className="sticky top-0 z-10 mx-auto mb-2 rounded-full border border-cyan-400/30 bg-cyan-400/10 px-3 py-1 text-[11px] font-semibold uppercase tracking-wide text-cyan-200 shadow-lg backdrop-blur"
+                    >
+                      {unreadMessages} new message{unreadMessages === 1 ? '' : 's'}
+                    </button>
+                  )}
                   {displayMessages.map((msg, i) => (
-                    <div key={`${selectedRoom.id}-${i}`} className="grid gap-2.5" style={{ gridTemplateColumns: '50px 100px 1fr' }}>
-                      <span className="text-[var(--terminal-time)]">{msg.at}</span>
-                      <span className={speakerCls(msg.speaker)}>&lt;{msg.speaker}&gt;</span>
+                    <div
+                      key={`${selectedRoom.id}-${i}`}
+                      className="grid gap-2.5 rounded px-1.5 py-0.5"
+                      style={{ gridTemplateColumns: '92px 132px 1fr' }}
+                    >
+                      <span className="whitespace-nowrap text-[var(--terminal-time)]">{msg.at}</span>
+                      <span className={`whitespace-nowrap font-semibold ${speakerCls(msg.speaker)}`}>{speakerGlyph(msg.speaker)} {msg.speaker}</span>
                       <span className={msg.speaker === 'system' ? 'text-[var(--s-blk-tx)]' : 'text-[var(--text)]'}>{msg.text}</span>
                     </div>
                   ))}
-                  {/* Live working indicator */}
-                  <div className="mt-1 grid gap-2.5 text-[var(--terminal-working)]" style={{ gridTemplateColumns: '50px 100px 1fr' }}>
-                    <span>now</span>
-                    <span className="flex items-center gap-1.5">
-                      <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-[var(--terminal-working-label)]" />
-                      &lt;worker&gt;
-                    </span>
-                    <span>$ Working... (2m 14s)</span>
-                  </div>
+                  {visiblePrimeSessions.length > 0 && (
+                    <div className="mt-1 grid animate-pulse gap-2.5 rounded border border-emerald-400/20 bg-emerald-400/5 px-1.5 py-1 text-[var(--terminal-working)]" style={{ gridTemplateColumns: '92px 132px 1fr' }}>
+                      <span className="whitespace-nowrap">{processingTimeLabel}</span>
+                      <span className="whitespace-nowrap font-semibold">
+                        {speakerGlyph(processingLabel)} {processingLabel}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => runningPrimeWork[0] && selectWork(runningPrimeWork[0].id)}
+                        className="min-w-0 truncate text-left text-[var(--terminal-working)] underline-offset-4 hover:underline"
+                      >
+                        <span className="uppercase tracking-wide">{processingVerb}</span>
+                        <span className="mx-1 text-[var(--terminal-working)]">({processingElapsed})</span>
+                        <span className="mx-1 inline-flex w-5 justify-start">
+                          <span className="animate-bounce [animation-delay:-0.2s]">.</span>
+                          <span className="animate-bounce [animation-delay:-0.1s]">.</span>
+                          <span className="animate-bounce">.</span>
+                        </span>
+                        {processingSummary}
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
+
+              {/* Chat input */}
+              <div className="flex shrink-0 items-center gap-2 border-t border-[var(--border-soft)] bg-[var(--panel)] px-4 py-3">
+                <input
+                  className="flex-1 rounded border border-[var(--border-soft)] bg-[var(--panel-subtle)] px-3 py-2 font-mono text-sm text-[var(--text)] outline-none placeholder:text-[var(--muted)] focus:border-[var(--sel-bd)]"
+                  placeholder="$ message room or @agent…"
+                  value={draftMessage}
+                  disabled={!activeRoomId || sendMessage.isPending}
+                  onChange={(e) => setDraftMessage(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey) {
+                      e.preventDefault()
+                      submitMessage()
+                    }
+                  }}
+                />
+                <button
+                  type="button"
+                  disabled={!canSendMessage}
+                  onClick={submitMessage}
+                  className="shrink-0 rounded border border-[var(--sel-bd)] bg-[var(--sel-bg)] px-4 py-2 font-mono text-xs uppercase tracking-wide text-blue-400 transition hover:bg-blue-500/20 disabled:cursor-not-allowed disabled:opacity-45"
+                >
+                  {sendMessage.isPending ? 'Sending…' : 'Send ↵'}
+                </button>
+              </div>
+              {sendMessage.isError && (
+                <div className="shrink-0 border-t border-[var(--s-blk-bd)] bg-[var(--s-blk-bg)] px-4 py-2 font-mono text-xs text-[var(--s-blk-tx)]">
+                  {(sendMessage.error as Error).message}
+                </div>
+              )}
 
               {/* Terminal pane */}
               <div
@@ -456,101 +751,132 @@ export function CollaborationRoomsView({
                     <span className="h-2.5 w-2.5 rounded-full bg-[#28c840]" />
                   </div>
                   <span className="font-mono text-[11px] uppercase tracking-widest text-[#6e7681]">
-                    Agent activity — {selectedRoom.participants[0] ?? 'ops'}
+                    Agent activity — {selectedRoom.participants[0] ?? chiefName}
                   </span>
                   <span className="ml-auto text-[11px] text-[#6e7681]">{termExpanded ? '▲' : '▼'}</span>
                 </div>
 
                 {termExpanded && (
                   <div className="h-[calc(100%-36px)] overflow-y-auto px-3.5 pb-2 font-mono text-[13px] leading-relaxed">
-                    <div className="flex gap-2.5"><span className="text-[#58a6ff]">ops $</span><span className="text-[#79c0ff]">curl -s https://provider.api/health</span></div>
-                    <div className="pl-4 text-[#c9d1d9]">{'{"status":"degraded","latency_p99":4821,"errors":14}'}</div>
-                    <div className="mt-1.5 flex gap-2.5"><span className="text-[#58a6ff]">ops $</span><span className="text-[#79c0ff]">tail -n 50 /var/log/provider-gateway.log | grep ERROR</span></div>
-                    <div className="pl-4 text-[#f85149]">ERROR 10:21:03 connection pool exhausted (max=128)</div>
-                    <div className="pl-4 text-[#f85149]">ERROR 10:21:07 upstream timeout after 5000ms (retry 3/3)</div>
-                    <div className="mt-1.5 flex gap-2.5"><span className="text-[#58a6ff]">ops $</span><span className="text-[#79c0ff]">kubectl get pods -n gateway | grep -v Running</span></div>
-                    <div className="pl-4 text-[#c9d1d9]">gateway-worker-7d9f   0/1   CrashLoopBackOff   7   18m</div>
-                    <div className="mt-1.5 flex gap-2.5"><span className="text-[#58a6ff]">ops $</span><span className="text-[#d29922]">▌</span></div>
+                    {selectedFocus ? (
+                      <>
+                        <div className="flex gap-2.5"><span className="text-[#58a6ff]">{selectedFocus.owner} $</span><span className="text-[#79c0ff]">inspect selected work</span></div>
+                        <div className="pl-4 text-[#c9d1d9]">{selectedFocus.title}</div>
+                        <div className="pl-4 text-[#8b949e]">status={selectedFocus.status} lane={selectedFocus.lane} kind={selectedFocus.kind}</div>
+                        {selectedWorkSession && (
+                          <>
+                            <div className="mt-2 flex gap-2.5"><span className="text-[#58a6ff]">prime $</span><span className="text-[#79c0ff]">session {selectedWorkSession.status}</span></div>
+                            <div className="pl-4 text-[#8b949e]">step={selectedWorkSession.last_step ?? 'n/a'} model={selectedWorkSession.model_used ?? 'pending'}</div>
+                            {selectedWorkSession.workspace_revision && (
+                              <div className="pl-4 text-[#8b949e]">workspace revision: {selectedWorkSession.workspace_revision.slice(0, 12)}</div>
+                            )}
+                            {selectedWorkSession.workspace_root && (
+                              <div className="pl-4 text-[#8b949e]">workspace root: {selectedWorkSession.workspace_root}</div>
+                            )}
+                            {Object.keys(selectedWorkSession.prompt_templates ?? {}).length > 0 && (
+                              <>
+                                <div className="pl-4 text-[#79c0ff]">templates used:</div>
+                                <div className="pl-8 text-[#8b949e]">
+                                  {Object.entries(selectedWorkSession.prompt_templates)
+                                    .map(([name, filePath]) => `${name}=${filePath}`)
+                                    .join(' | ')}
+                                </div>
+                              </>
+                            )}
+                            {selectedWorkSession.reasoning_summary && (
+                              <div className="pl-4 text-[#c9d1d9]">reasoning: {selectedWorkSession.reasoning_summary}</div>
+                            )}
+                            {selectedWorkSession.actions_taken.length > 0 && (
+                              <div className="pl-4 text-[#c9d1d9]">
+                                actions: {selectedWorkSession.actions_taken.map((action) => typeof action === 'object' && action !== null && 'type' in action ? String(action.type) : 'action').join(', ')}
+                              </div>
+                            )}
+                            {selectedWorkSession.error && (
+                              <div className="pl-4 text-[#f85149]">error: {selectedWorkSession.error}</div>
+                            )}
+                            {selectedWorkResponse && (
+                              <div className="pl-4 text-[#c9d1d9]">response: {selectedWorkResponse.content}</div>
+                            )}
+                          </>
+                        )}
+                        <div className="mt-1.5 flex gap-2.5"><span className="text-[#58a6ff]">{selectedFocus.owner} $</span><span className="text-[#d29922]">▌</span></div>
+                      </>
+                    ) : hasLiveActivity ? (
+                      <>
+                        <div className="flex gap-2.5"><span className="text-[#58a6ff]">{selectedRoom.participants[0] ?? chiefName} $</span><span className="text-[#79c0ff]">monitor coordination state</span></div>
+                        <div className="pl-4 text-[#c9d1d9]">{selectedRoom.summary}</div>
+                        <div className="mt-1.5 flex gap-2.5"><span className="text-[#58a6ff]">{selectedRoom.participants[0] ?? chiefName} $</span><span className="text-[#d29922]">▌</span></div>
+                      </>
+                    ) : (
+                      <>
+                        <div className="flex gap-2.5"><span className="text-[#58a6ff]">{chiefName} $</span><span className="text-[#79c0ff]">await first instruction</span></div>
+                        <div className="pl-4 text-[#c9d1d9]">Use this room to kick off the first task, incident, or repo workflow.</div>
+                        <div className="pl-4 text-[#c9d1d9]">Once you send a message, this room becomes the live coordination thread.</div>
+                        <div className="mt-1.5 flex gap-2.5"><span className="text-[#58a6ff]">{chiefName} $</span><span className="text-[#d29922]">▌</span></div>
+                      </>
+                    )}
                   </div>
                 )}
-              </div>
-
-              {/* Chat input */}
-              <div className="flex shrink-0 items-center gap-2 border-t border-[var(--border-soft)] bg-[var(--panel)] px-4 py-3">
-                <input
-                  className="flex-1 rounded border border-[var(--border-soft)] bg-[var(--panel-subtle)] px-3 py-2 font-mono text-sm text-[var(--text)] outline-none placeholder:text-[var(--muted)] focus:border-[var(--sel-bd)]"
-                  placeholder="$ message room or @agent…"
-                />
-                <button
-                  type="button"
-                  className="shrink-0 rounded border border-[var(--sel-bd)] bg-[var(--sel-bg)] px-4 py-2 font-mono text-xs uppercase tracking-wide text-blue-400 transition hover:bg-blue-500/20"
-                >
-                  Send ↵
-                </button>
               </div>
             </div>
 
             {/* Right data column */}
             <div className="flex min-h-0 flex-col overflow-hidden">
 
-              {/* Status */}
-              <div
-                className="shrink-0 border-b border-[var(--border-soft)] px-[18px] py-3.5"
-                style={{ borderLeftWidth: 3, borderLeftStyle: 'solid', borderLeftColor: stateLeftBorderColor(selectedRoom.state) }}
-              >
-                <div className="mb-2.5 font-mono text-[11px] uppercase tracking-widest text-[var(--muted)]">Status</div>
-                <div className={`mb-3 flex items-center gap-2.5 rounded border px-3 py-2 ${stateStatusBg(selectedRoom.state)}`}>
-                  <span className={`rounded-full border px-2.5 py-0.5 font-mono text-[11px] uppercase tracking-wide font-semibold ${stateChip(selectedRoom.state)}`}>
-                    {stateLabel(selectedRoom.state)}
+              {/* Needs attention */}
+              <div className="max-h-[30%] min-h-[120px] overflow-hidden border-b border-[var(--border-soft)] px-[18px] py-3.5">
+                <div className="mb-2 flex items-center justify-between gap-2 font-mono text-[11px] uppercase tracking-widest text-[var(--muted)]">
+                  <span>Needs Attention</span>
+                  <span className="rounded-full border border-[var(--border-soft)] bg-[var(--panel-subtle)] px-2 py-0.5 tracking-normal">
+                    {attentionWork.length + pendingApprovals}
                   </span>
-                  <span className="text-sm text-[var(--muted)]">{selectedRoom.lane}</span>
                 </div>
-                <div className="mb-2 font-mono text-[11px] uppercase tracking-widest text-[var(--muted)]">Participants</div>
-                <div className="flex flex-wrap gap-1.5">
-                  {activeAgents.map((agent) => (
-                    <span
-                      key={`${selectedRoom.id}-p-${agent}`}
-                      className="inline-flex items-center gap-1.5 rounded-full border border-[var(--border-soft)] bg-[var(--panel-subtle)] px-2.5 py-1 font-mono text-xs text-[var(--muted)]"
+                <div className="flex h-[calc(100%-28px)] flex-col gap-2 overflow-y-auto pr-1">
+                  {pendingApprovals > 0 && (
+                    <div className="rounded border border-[var(--s-blk-bd)] bg-[var(--s-blk-bg)] px-3 py-2 text-sm text-[var(--s-blk-tx)]">
+                      {pendingApprovals} approval{pendingApprovals === 1 ? '' : 's'} waiting
+                    </div>
+                  )}
+                  {attentionWork.map((item) => (
+                    <button
+                      key={`${selectedRoom.id}-attention-${item.id}`}
+                      type="button"
+                      onClick={() => selectWork(item.id)}
+                      className={`rounded border px-3 py-2 text-left transition ${
+                        selectedWorkId === item.id
+                          ? 'border-[var(--sel-bd)] bg-[var(--sel-bg)]'
+                          : 'border-[var(--s-blk-bd)] bg-[var(--s-blk-bg)] hover:bg-[var(--panel-strong)]'
+                      }`}
                     >
-                      <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
-                      {agent}
-                    </span>
+                      <div className="truncate text-sm font-medium text-[var(--text)]">{item.title}</div>
+                      <div className="mt-1 font-mono text-[11px] text-[var(--muted)]">{item.owner_label || chiefName} · {laneLabel(item.status)}</div>
+                    </button>
                   ))}
+                  {attentionWork.length === 0 && pendingApprovals === 0 && (
+                    <div className="rounded border border-dashed border-[var(--border-soft)] px-3 py-3 text-xs text-[var(--muted)]">Nothing needs intervention.</div>
+                  )}
                 </div>
               </div>
 
-              {/* Signals */}
-              <div className="min-h-0 flex-1 overflow-hidden border-b border-[var(--border-soft)] px-[18px] py-3.5">
-                <div className="mb-2 font-mono text-[11px] uppercase tracking-widest text-[var(--muted)]">Signals</div>
-                <div className="overflow-y-auto">
-                  {signalRows.map((sig, idx) => (
-                    <div
-                      key={`${selectedRoom.id}-s-${sig.label}`}
-                      className={`flex items-center justify-between py-1.5 ${idx < signalRows.length - 1 ? 'border-b border-[var(--border-soft)]' : ''}`}
-                    >
-                      <span className="font-mono text-xs uppercase tracking-wide text-[var(--muted)]">{sig.label}</span>
-                      <span className={`font-mono text-sm ${sig.hi ? 'text-[var(--s-blk-tx)]' : 'text-[var(--text)]'}`}>{sig.value}</span>
-                    </div>
-                  ))}
+              {/* Active work */}
+              <div className="min-h-[180px] flex-1 overflow-hidden border-b border-[var(--border-soft)] px-[18px] py-3.5">
+                <div className="mb-2 flex items-center justify-between gap-2 font-mono text-[11px] uppercase tracking-widest text-[var(--muted)]">
+                  <span>Active Work</span>
+                  <span className="rounded-full border border-[var(--border-soft)] bg-[var(--panel-subtle)] px-2 py-0.5 tracking-normal">{activeWork.length}</span>
+                </div>
+                <div className="flex h-[calc(100%-28px)] flex-col gap-2 overflow-y-auto pr-1">
+                  {renderWorkRows(activeWork, 'No active work in this room.')}
                 </div>
               </div>
 
-              {/* Artifacts */}
-              <div className="min-h-0 flex-1 overflow-hidden px-[18px] py-3.5">
-                <div className="mb-2 font-mono text-[11px] uppercase tracking-widest text-[var(--muted)]">Artifacts</div>
-                <div className="overflow-y-auto">
-                  {artifactRows.map((art) => (
-                    <div
-                      key={`${selectedRoom.id}-a-${art.id}`}
-                      className="flex items-baseline gap-2 border-b border-[var(--border-soft)] py-1.5 last:border-0"
-                    >
-                      <span className="shrink-0 text-[11px] text-[var(--muted)]">{art.type === 'delegation' ? '◦' : '▪'}</span>
-                      <div className="min-w-0">
-                        <div className="truncate text-sm text-[var(--text)]">{art.title}</div>
-                        <div className="mt-0.5 font-mono text-[11px] text-[var(--muted)]">{art.meta}</div>
-                      </div>
-                    </div>
-                  ))}
+              {/* Pending work */}
+              <div className="min-h-[180px] flex-1 overflow-hidden px-[18px] py-3.5">
+                <div className="mb-2 flex items-center justify-between gap-2 font-mono text-[11px] uppercase tracking-widest text-[var(--muted)]">
+                  <span>Pending Work</span>
+                  <span className="rounded-full border border-[var(--border-soft)] bg-[var(--panel-subtle)] px-2 py-0.5 tracking-normal">{pendingWork.length}</span>
+                </div>
+                <div className="flex h-[calc(100%-28px)] flex-col gap-2 overflow-y-auto pr-1">
+                  {renderWorkRows(pendingWork, 'No pending work queued.')}
                 </div>
               </div>
 
