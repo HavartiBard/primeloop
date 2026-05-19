@@ -222,11 +222,7 @@ export async function handlePrimeMessage(
         sender,
       },
     }
-    if (primeProcessor) {
-      void primeProcessor(primeEvent)
-    } else {
-      await primeQueue.enqueue(primeEvent)
-    }
+    await primeQueue.enqueue(primeEvent)
 
     await insertRuntimeEvent(pool, {
       event_type: 'prime.routed',

@@ -201,6 +201,43 @@ export interface PrimeSession {
   started_at: string
   completed_at?: string
   last_step?: string
+  module_runs?: PrimeSessionModuleRun[]
+}
+
+export interface PrimeSessionModuleRun {
+  id: string
+  session_id: string
+  run_index: number
+  module_id: string
+  stage: string
+  version: string
+  mode?: 'active' | 'shadow'
+  status: 'completed' | 'failed'
+  detail?: string
+  started_at: string
+  completed_at: string
+}
+
+export interface PrimeModuleConfig {
+  module_id: string
+  stage: string
+  default_version: string
+  pinned_version?: string
+  enabled: boolean
+  rollout_mode: 'active' | 'shadow'
+  config: Record<string, unknown>
+  created_at: string
+  updated_at: string
+}
+
+export interface PrimeModuleConfigAudit {
+  id: string
+  module_id: string
+  actor: string
+  changed_fields: string[]
+  previous_config: Record<string, unknown>
+  next_config: Record<string, unknown>
+  created_at: string
 }
 
 export interface RuntimeMemory {

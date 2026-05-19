@@ -4,7 +4,9 @@ import { createPool, runMigrations } from '../../src/db.js'
 import {
   completePrimeSession,
   failPrimeSession,
+  getPrimeSession,
   listPrimeSessions,
+  savePrimeSessionModuleRuns,
   startPrimeSession,
 } from '../../src/prime-agent/session.js'
 
@@ -19,12 +21,14 @@ describe('prime-agent session service', () => {
   })
 
   beforeEach(async () => {
+    await pool.query('DELETE FROM prime_agent_module_runs')
     await pool.query('DELETE FROM prime_agent_sessions')
     await pool.query('DELETE FROM prime_agent_config')
     await runMigrations(pool)
   })
 
   afterAll(async () => {
+    await pool.query('DELETE FROM prime_agent_module_runs')
     await pool.query('DELETE FROM prime_agent_sessions')
     await pool.query('DELETE FROM prime_agent_config')
     await pool.end()
@@ -99,5 +103,51 @@ describe('prime-agent session service', () => {
 
     expect(sessions).toHaveLength(1)
     expect(sessions[0].id).toBe(second.id)
+  })
+
+  it('persists and hydrates module runs for session detail and list views', async () => {
+    const session = await startPrimeSession(pool, {
+      trigger_type: 'prime_message',
+      trigger_payload: { thread_id: 'thread-1' },
+    })
+
+    await savePrimeSessionModuleRuns(pool, session.id, [
+      {
+        id: 'trigger.default',
+        stage: 'trigger',
+        version: '1.0.0',
+        mode: 'active',
+        status: 'completed',
+        detail: 'accepted incoming event',
+        started_at: '2026-05-18T00:00:00.000Z',
+        completed_at: '2026-05-18T00:00:01.000Z',
+      },
+      {
+        id: 'feedback.default',
+        stage: 'feedback',
+        version: '1.0.0',
+        mode: 'shadow',
+        status: 'completed',
+        detail: 'recorded action results',
+        started_at: '2026-05-18T00:00:02.000Z',
+        completed_at: '2026-05-18T00:00:03.000Z',
+      },
+    ])
+
+    const detailed = await getPrimeSession(pool, session.id)
+    const listed = await listPrimeSessions(pool, 10)
+
+    expect(detailed?.module_runs).toHaveLength(2)
+    expect(detailed?.module_runs?.[0]).toMatchObject({
+      session_id: session.id,
+      run_index: 0,
+      module_id: 'trigger.default',
+      stage: 'trigger',
+      version: '1.0.0',
+      mode: 'active',
+      status: 'completed',
+      detail: 'accepted incoming event',
+    })
+    expect(listed.find((entry) => entry.id === session.id)?.module_runs).toHaveLength(2)
   })
 })

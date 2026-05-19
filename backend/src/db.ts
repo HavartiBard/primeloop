@@ -386,6 +386,48 @@ CREATE TABLE IF NOT EXISTS prime_agent_sessions (
 
 CREATE INDEX IF NOT EXISTS idx_prime_agent_sessions_started_at ON prime_agent_sessions (started_at DESC);
 
+CREATE TABLE IF NOT EXISTS prime_agent_modules (
+  module_id TEXT PRIMARY KEY,
+  stage TEXT NOT NULL CHECK (stage IN ('trigger', 'debounce', 'context', 'decision', 'policy', 'action', 'feedback', 'learning', 'observer')),
+  default_version TEXT NOT NULL,
+  pinned_version TEXT,
+  enabled BOOLEAN NOT NULL DEFAULT true,
+  rollout_mode TEXT NOT NULL DEFAULT 'active' CHECK (rollout_mode IN ('active', 'shadow')),
+  config JSONB NOT NULL DEFAULT '{}',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS prime_agent_module_audits (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  module_id TEXT NOT NULL REFERENCES prime_agent_modules(module_id) ON DELETE CASCADE,
+  actor TEXT NOT NULL,
+  changed_fields JSONB NOT NULL DEFAULT '[]',
+  previous_config JSONB NOT NULL,
+  next_config JSONB NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_prime_agent_module_audits_module_created_at
+ON prime_agent_module_audits (module_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS prime_agent_module_runs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  session_id UUID NOT NULL REFERENCES prime_agent_sessions(id) ON DELETE CASCADE,
+  run_index INT NOT NULL,
+  module_id TEXT NOT NULL,
+  stage TEXT NOT NULL CHECK (stage IN ('trigger', 'debounce', 'context', 'decision', 'policy', 'action', 'feedback', 'learning', 'observer')),
+  version TEXT NOT NULL,
+  mode TEXT NOT NULL DEFAULT 'active' CHECK (mode IN ('active', 'shadow')),
+  status TEXT NOT NULL CHECK (status IN ('completed', 'failed')),
+  detail TEXT,
+  started_at TIMESTAMPTZ NOT NULL,
+  completed_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_prime_agent_module_runs_session_index
+ON prime_agent_module_runs (session_id, run_index);
+
 CREATE TABLE IF NOT EXISTS prime_queue_items (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   event_type TEXT NOT NULL,
@@ -440,6 +482,9 @@ WHERE trigger_type = 'chief_message';
 ALTER TABLE prime_agent_sessions
   ADD CONSTRAINT prime_agent_sessions_trigger_type_check
   CHECK (trigger_type IN ('event', 'cron_fast', 'cron_slow', 'prime_message'));
+
+ALTER TABLE prime_agent_module_runs
+  ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'active';
 
     ALTER TABLE prime_agent_config
       ADD COLUMN IF NOT EXISTS setup_complete BOOLEAN NOT NULL DEFAULT false;

@@ -24,6 +24,10 @@ const workspaceMocks = vi.hoisted(() => ({
   loadPrimeWorkspaceTemplates: vi.fn(),
 }))
 
+const moduleRegistryMocks = vi.hoisted(() => ({
+  listConfiguredPrimeModules: vi.fn(),
+}))
+
 vi.mock('../../src/prime-agent/context.js', () => ({
   assemblePrimeContext: contextMocks.assemblePrimeContext,
 }))
@@ -51,13 +55,31 @@ vi.mock('../../src/workspace.js', () => ({
   loadPrimeWorkspaceTemplates: workspaceMocks.loadPrimeWorkspaceTemplates,
 }))
 
+vi.mock('../../src/prime-agent/modules/registry.js', async () => {
+  const actual =
+    await vi.importActual<typeof import('../../src/prime-agent/modules/registry.js')>(
+      '../../src/prime-agent/modules/registry.js'
+    )
+  return {
+    ...actual,
+    listConfiguredPrimeModules: moduleRegistryMocks.listConfiguredPrimeModules,
+  }
+})
+
 import { handlePrimeEvent, PrimeEventLoopError } from '../../src/prime-agent/event-loop.js'
+import { listPrimeModules } from '../../src/prime-agent/modules/registry.js'
 
 const pool = { query: vi.fn().mockResolvedValue({ rows: [], rowCount: 1 }) } as unknown as pg.Pool
 
 describe('prime-agent event loop', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    const modules = listPrimeModules().filter((module) =>
+      ['trigger.event-ingress', 'context.fleet-state', 'decision.llm-router', 'action.dispatch'].includes(module.id)
+    )
+    moduleRegistryMocks.listConfiguredPrimeModules.mockResolvedValue([
+      ...modules.map((module) => ({ module, rollout_mode: 'active' as const, config: {} })),
+    ])
     runtimeMocks.getPrimeProfile.mockResolvedValue({ name: 'Prime Agent' })
     workspaceMocks.loadPrimeWorkspaceTemplates.mockResolvedValue({
       effectiveRoot: '/workspace/prime',
@@ -110,6 +132,7 @@ describe('prime-agent event loop', () => {
     const router = {
       decide: vi.fn().mockResolvedValue({
         reasoning: 'Delegating the implementation task.',
+        response: 'I’m handing this off to the right implementation agent now.',
         actions: [
           {
             type: 'delegate',
@@ -157,6 +180,7 @@ describe('prime-agent event loop', () => {
       expect.objectContaining({
         role: 'assistant',
         sender: 'Prime Agent',
+        content: 'I’m handing this off to the right implementation agent now. Actions: delegate.',
       })
     )
     expect(sessionMocks.completePrimeSession).toHaveBeenCalledWith(
@@ -215,5 +239,75 @@ describe('prime-agent event loop', () => {
     expect(sessionMocks.failPrimeSession).toHaveBeenCalledWith(pool, 'session-2', 'router exploded')
     expect(sessionMocks.completePrimeSession).not.toHaveBeenCalled()
     expect(runtimeMocks.appendThreadMessage).not.toHaveBeenCalled()
+  })
+
+  it('runs shadow policy modules before later active stages', async () => {
+    const modules = listPrimeModules().filter((module) =>
+      ['trigger.event-ingress', 'context.fleet-state', 'decision.llm-router', 'policy.scope-required', 'action.dispatch'].includes(module.id)
+    )
+    moduleRegistryMocks.listConfiguredPrimeModules.mockResolvedValue(
+      modules.map((module) => ({
+        module,
+        rollout_mode: module.id === 'policy.scope-required' ? 'shadow' as const : 'active' as const,
+        config: {},
+      }))
+    )
+    sessionMocks.startPrimeSession.mockResolvedValue({
+      id: 'session-3',
+      status: 'running',
+    })
+    contextMocks.assemblePrimeContext.mockResolvedValue({
+      trigger: {
+        type: 'cron.fast',
+        payload: {
+          triggered_at: '2026-05-19T00:00:00.000Z',
+        },
+      },
+      fleet: { agents: [], workItems: [], delegations: [] },
+      recentEvents: [],
+      recentLessons: [],
+      threadMessages: [],
+    })
+    sessionMocks.failPrimeSession.mockResolvedValue({
+      id: 'session-3',
+      status: 'failed',
+      error: 'Prime policy scope-required blocked delegate actions without allowed_files: implementation',
+    })
+
+    const router = {
+      decide: vi.fn().mockResolvedValue({
+        reasoning: 'Delegate implementation work.',
+        actions: [
+          {
+            type: 'delegate',
+            payload: {
+              capability: 'implementation',
+            },
+            reason: 'delegate it',
+          },
+        ],
+        token_count: 20,
+      }),
+    }
+
+    await expect(
+      handlePrimeEvent(
+        pool,
+        {
+          type: 'cron.fast',
+          payload: {
+            triggered_at: '2026-05-19T00:00:00.000Z',
+          },
+        },
+        { router }
+      )
+    ).rejects.toBeInstanceOf(PrimeEventLoopError)
+
+    expect(actionMocks.dispatchPrimeActions).not.toHaveBeenCalled()
+    expect(sessionMocks.failPrimeSession).toHaveBeenCalledWith(
+      pool,
+      'session-3',
+      'Prime policy scope-required blocked delegate actions without allowed_files: implementation'
+    )
   })
 })

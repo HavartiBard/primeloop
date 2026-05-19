@@ -4,11 +4,15 @@ import type { PrimeActionDispatchResult } from './actions.js'
 import type { PrimeContext } from './context.js'
 import type { PrimeEvent } from './events.js'
 import type { LlmRouter, PrimeDecision } from './llm-router.js'
-import { listPrimeModules, runPrimeModules, summarizePrimeModules } from './modules/registry.js'
-import type { PrimeLoopState } from './modules/types.js'
+import { listConfiguredPrimeModules, runPrimeModules, runShadowPrimeModules } from './modules/registry.js'
+import { PRIME_MODULE_STAGES, type PrimeConfiguredModule, type PrimeLoopState } from './modules/types.js'
 import {
   completePrimeSession,
+  failRunningPrimeMessageSessions,
+  failPrimeMessageSessionsExcept,
   failPrimeSession,
+  listPrimeMessageSessionsByMessageId,
+  savePrimeSessionModuleRuns,
   startPrimeSession,
   type PrimeSession,
   type PrimeSessionTriggerType,
@@ -25,6 +29,8 @@ export interface PrimeEventHandleResult {
   actions: PrimeActionDispatchResult[]
 }
 
+const STALE_DUPLICATE_MESSAGE_SESSION_MS = 5 * 60 * 1000
+
 async function updateLastStep(pool: pg.Pool, sessionId: string, step: string): Promise<void> {
   await pool.query(
     `UPDATE prime_agent_sessions SET last_step = $2 WHERE id = $1`,
@@ -37,8 +43,34 @@ export async function handlePrimeEvent(
   event: PrimeEvent,
   deps: PrimeEventLoopDeps
 ): Promise<PrimeEventHandleResult> {
+  const duplicate = event.type === 'prime.message'
+    ? await reconcilePrimeMessageSession(pool, event.payload.message_id)
+    : null
+  if (duplicate?.kind === 'completed') {
+    return {
+      session: duplicate.session,
+      decision: {
+        reasoning: 'Duplicate Prime message suppressed because it was already completed.',
+        actions: [],
+      },
+      actions: [],
+    }
+  }
+  if (duplicate?.kind === 'running') {
+    return {
+      session: duplicate.session,
+      decision: {
+        reasoning: 'Duplicate Prime message suppressed because it is already being processed.',
+        actions: [],
+      },
+      actions: [],
+    }
+  }
+
   const workspace = await loadPrimeWorkspaceTemplates(pool)
-  const modules = listPrimeModules()
+  const configuredModules = await listConfiguredPrimeModules(pool)
+  const activeModules = configuredModules.filter((entry) => entry.rollout_mode === 'active')
+  const shadowModules = configuredModules.filter((entry) => entry.rollout_mode === 'shadow')
   const session = await startPrimeSession(pool, {
     trigger_type: mapTriggerType(event),
     trigger_payload: event.payload,
@@ -46,38 +78,65 @@ export async function handlePrimeEvent(
     workspace_revision: workspace.revision,
     prompt_templates: {
       ...workspace.templatePaths,
-      prime_modules: summarizePrimeModules(modules),
+      prime_modules: summarizeConfiguredPrimeModules(configuredModules),
     },
   })
+  const state: PrimeLoopState = {
+    event,
+    session,
+    actions: [],
+    diagnostics: [],
+    moduleRuns: [],
+    budget: {
+      llmCalls: 0,
+      actionsDispatched: 0,
+    },
+  }
 
   try {
-    const state: PrimeLoopState = {
-      event,
-      session,
-      actions: [],
-      diagnostics: [],
-      moduleRuns: [],
-      budget: {
-        llmCalls: 0,
-        actionsDispatched: 0,
-      },
-    }
+    for (const stage of PRIME_MODULE_STAGES) {
+      const stageActiveModules = activeModules.filter((entry) => entry.module.stage === stage)
+      const stageShadowModules = shadowModules.filter((entry) => entry.module.stage === stage)
 
-    for (const module of modules) {
-      await updateLastStep(pool, session.id, `module:${module.id}`)
-      await runPrimeModules(state, { pool, router: deps.router, sessionId: session.id }, [module])
+      for (const configured of stageActiveModules) {
+        await updateLastStep(pool, session.id, `module:${configured.module.id}`)
+        await runPrimeModules(state, {
+          pool,
+          router: deps.router,
+          sessionId: session.id,
+          executionMode: 'active',
+          moduleConfig: configured.config,
+        }, [configured.module])
+      }
+
+      for (const configured of stageShadowModules) {
+        await updateLastStep(pool, session.id, `shadow:${configured.module.id}`)
+        await runShadowPrimeModules(
+          state,
+          {
+            pool,
+            router: deps.router,
+            sessionId: session.id,
+            executionMode: 'shadow',
+            moduleConfig: configured.config,
+          },
+          [configured.module]
+        )
+      }
     }
 
     const context = requireContext(state)
     const decision = requireDecision(state)
     const actions = state.actions
 
+    await savePrimeSessionModuleRuns(pool, session.id, state.moduleRuns)
+
     if (event.type === 'prime.message') {
       const primeProfile = await getPrimeProfile(pool)
       await appendThreadMessage(pool, event.payload.thread_id, {
         role: 'assistant',
         sender: primeProfile.name.trim() || 'Prime',
-        content: summarizePrimeResponse(decision, actions),
+        content: presentPrimeResponse(decision, actions),
         metadata: {
           source: 'prime-agent',
           session_id: session.id,
@@ -98,6 +157,12 @@ export async function handlePrimeEvent(
       throw new Error(`failed to complete prime session: ${session.id}`)
     }
     if (event.type === 'prime.message') {
+      await failPrimeMessageSessionsExcept(
+        pool,
+        event.payload.message_id,
+        session.id,
+        `duplicate prime.message session superseded by ${session.id}`
+      )
       await updateIntakeWorkItemStatus(pool, event.payload.message_id, 'review')
     }
 
@@ -107,6 +172,7 @@ export async function handlePrimeEvent(
       actions,
     }
   } catch (error) {
+    await savePrimeSessionModuleRuns(pool, session.id, state.moduleRuns)
     await updateLastStep(pool, session.id, 'failed')
     const message = error instanceof Error ? error.message : String(error)
     const failed = await failPrimeSession(pool, session.id, message)
@@ -126,6 +192,50 @@ export async function handlePrimeEvent(
     }
     throw new PrimeEventLoopError(message, failed ?? session)
   }
+}
+
+async function reconcilePrimeMessageSession(
+  pool: pg.Pool,
+  messageId: string
+): Promise<
+  | { kind: 'completed'; session: PrimeSession }
+  | { kind: 'running'; session: PrimeSession }
+  | null
+> {
+  const sessions = await listPrimeMessageSessionsByMessageId(pool, messageId)
+  const completed = sessions.find((session) => session.status === 'completed' || session.status === 'escalated')
+  if (completed) {
+    await failPrimeMessageSessionsExcept(
+      pool,
+      messageId,
+      completed.id,
+      `duplicate prime.message session superseded by completed session ${completed.id}`
+    )
+    return { kind: 'completed', session: completed }
+  }
+
+  const running = sessions.find((session) => session.status === 'running')
+  if (!running) {
+    return null
+  }
+
+  const startedAt = new Date(running.started_at).getTime()
+  if (Number.isFinite(startedAt) && Date.now() - startedAt >= STALE_DUPLICATE_MESSAGE_SESSION_MS) {
+    await failRunningPrimeMessageSessions(
+      pool,
+      messageId,
+      `stale duplicate prime.message session timed out after ${STALE_DUPLICATE_MESSAGE_SESSION_MS}ms`
+    )
+    return null
+  }
+
+  return { kind: 'running', session: running }
+}
+
+function summarizeConfiguredPrimeModules(modules: PrimeConfiguredModule[]): string {
+  return modules
+    .map(({ module, rollout_mode }) => `${rollout_mode}:${module.stage}:${module.id}@${module.version}`)
+    .join(', ')
 }
 
 async function updateIntakeWorkItemStatus(
@@ -168,16 +278,16 @@ function mapTriggerType(event: PrimeEvent): PrimeSessionTriggerType {
   }
 }
 
-function summarizePrimeResponse(
+function presentPrimeResponse(
   decision: PrimeDecision,
   actions: PrimeActionDispatchResult[]
 ): string {
+  const base = decision.response?.trim() || decision.reasoning.trim()
   const dispatched = actions.map((result) => result.action.type)
-  const summary = decision.reasoning.trim()
   if (dispatched.length === 0) {
-    return summary
+    return base
   }
-  return `${summary} Actions: ${dispatched.join(', ')}.`
+  return `${base} Actions: ${dispatched.join(', ')}.`
 }
 
 export class PrimeEventLoopError extends Error {

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { fetchPrimeSessions, fetchThreadMessages, sendPrimeMessage } from '../api'
+import { fetchPrimeSession, fetchPrimeSessions, fetchThreadMessages, sendPrimeMessage } from '../api'
 import type { RegistryAgent, RuntimeAuditLoop, RuntimeDelegation, RuntimeThread, RuntimeWorkItem } from '../types'
 
 type AgentHealth = {
@@ -130,6 +130,11 @@ function primePhaseLabel(step?: string, status?: string): string {
   if (step === 'completed') return 'responding'
   if (step === 'failed') return 'reporting'
   return 'processing'
+}
+
+function summarizeModuleRun(detail?: string): string {
+  if (!detail) return 'completed without detail'
+  return truncate(detail, 84)
 }
 
 // ─── Data derivation ───────────────────────────────────────────────────────
@@ -460,6 +465,13 @@ export function CollaborationRoomsView({
   const selectedWorkSession = selectedFocus?.messageId
     ? roomPrimeSessions.find((session) => session.trigger_payload?.['message_id'] === selectedFocus.messageId)
     : undefined
+  const { data: selectedWorkSessionDetail } = useQuery({
+    queryKey: ['prime-agent-session', selectedWorkSession?.id],
+    queryFn: () => fetchPrimeSession(selectedWorkSession!.id),
+    enabled: Boolean(selectedWorkSession?.id),
+    refetchInterval: selectedWorkSession?.status === 'running' ? 2_000 : false,
+  })
+  const inspectedPrimeSession = selectedWorkSessionDetail ?? selectedWorkSession
   const selectedWorkResponse = selectedWorkSession
     ? rawMessages.find((message) => message.metadata?.['session_id'] === selectedWorkSession.id)
     : undefined
@@ -763,36 +775,46 @@ export function CollaborationRoomsView({
                         <div className="flex gap-2.5"><span className="text-[#58a6ff]">{selectedFocus.owner} $</span><span className="text-[#79c0ff]">inspect selected work</span></div>
                         <div className="pl-4 text-[#c9d1d9]">{selectedFocus.title}</div>
                         <div className="pl-4 text-[#8b949e]">status={selectedFocus.status} lane={selectedFocus.lane} kind={selectedFocus.kind}</div>
-                        {selectedWorkSession && (
+                        {inspectedPrimeSession && (
                           <>
-                            <div className="mt-2 flex gap-2.5"><span className="text-[#58a6ff]">prime $</span><span className="text-[#79c0ff]">session {selectedWorkSession.status}</span></div>
-                            <div className="pl-4 text-[#8b949e]">step={selectedWorkSession.last_step ?? 'n/a'} model={selectedWorkSession.model_used ?? 'pending'}</div>
-                            {selectedWorkSession.workspace_revision && (
-                              <div className="pl-4 text-[#8b949e]">workspace revision: {selectedWorkSession.workspace_revision.slice(0, 12)}</div>
+                            <div className="mt-2 flex gap-2.5"><span className="text-[#58a6ff]">prime $</span><span className="text-[#79c0ff]">session {inspectedPrimeSession.status}</span></div>
+                            <div className="pl-4 text-[#8b949e]">step={inspectedPrimeSession.last_step ?? 'n/a'} model={inspectedPrimeSession.model_used ?? 'pending'}</div>
+                            {inspectedPrimeSession.workspace_revision && (
+                              <div className="pl-4 text-[#8b949e]">workspace revision: {inspectedPrimeSession.workspace_revision.slice(0, 12)}</div>
                             )}
-                            {selectedWorkSession.workspace_root && (
-                              <div className="pl-4 text-[#8b949e]">workspace root: {selectedWorkSession.workspace_root}</div>
+                            {inspectedPrimeSession.workspace_root && (
+                              <div className="pl-4 text-[#8b949e]">workspace root: {inspectedPrimeSession.workspace_root}</div>
                             )}
-                            {Object.keys(selectedWorkSession.prompt_templates ?? {}).length > 0 && (
+                            {Object.keys(inspectedPrimeSession.prompt_templates ?? {}).length > 0 && (
                               <>
                                 <div className="pl-4 text-[#79c0ff]">templates used:</div>
                                 <div className="pl-8 text-[#8b949e]">
-                                  {Object.entries(selectedWorkSession.prompt_templates)
+                                  {Object.entries(inspectedPrimeSession.prompt_templates)
                                     .map(([name, filePath]) => `${name}=${filePath}`)
                                     .join(' | ')}
                                 </div>
                               </>
                             )}
-                            {selectedWorkSession.reasoning_summary && (
-                              <div className="pl-4 text-[#c9d1d9]">reasoning: {selectedWorkSession.reasoning_summary}</div>
+                            {inspectedPrimeSession.module_runs && inspectedPrimeSession.module_runs.length > 0 && (
+                              <>
+                                <div className="pl-4 text-[#79c0ff]">module runs:</div>
+                                {inspectedPrimeSession.module_runs.map((run) => (
+                                  <div key={run.id} className="pl-8 text-[#8b949e]">
+                                    [{String(run.run_index).padStart(2, '0')}] {run.stage}/{run.module_id}@{run.version} → {run.status} ({formatShortTime(run.completed_at)}) {summarizeModuleRun(run.detail)}
+                                  </div>
+                                ))}
+                              </>
                             )}
-                            {selectedWorkSession.actions_taken.length > 0 && (
+                            {inspectedPrimeSession.reasoning_summary && (
+                              <div className="pl-4 text-[#c9d1d9]">reasoning: {inspectedPrimeSession.reasoning_summary}</div>
+                            )}
+                            {inspectedPrimeSession.actions_taken.length > 0 && (
                               <div className="pl-4 text-[#c9d1d9]">
-                                actions: {selectedWorkSession.actions_taken.map((action) => typeof action === 'object' && action !== null && 'type' in action ? String(action.type) : 'action').join(', ')}
+                                actions: {inspectedPrimeSession.actions_taken.map((action) => typeof action === 'object' && action !== null && 'type' in action ? String(action.type) : 'action').join(', ')}
                               </div>
                             )}
-                            {selectedWorkSession.error && (
-                              <div className="pl-4 text-[#f85149]">error: {selectedWorkSession.error}</div>
+                            {inspectedPrimeSession.error && (
+                              <div className="pl-4 text-[#f85149]">error: {inspectedPrimeSession.error}</div>
                             )}
                             {selectedWorkResponse && (
                               <div className="pl-4 text-[#c9d1d9]">response: {selectedWorkResponse.content}</div>

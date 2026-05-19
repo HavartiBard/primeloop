@@ -1,6 +1,6 @@
 import type pg from 'pg'
 import { setPrimeCoordinatorProcessor, setPrimeCoordinatorQueue } from '../coordinator.js'
-import { getPrimeConfig } from './config.js'
+import { getPrimeConfig, updatePrimeConfig } from './config.js'
 import { handlePrimeEvent } from './event-loop.js'
 import { createConfiguredLlmRouter, type LlmRouter } from './llm-router.js'
 import { createInMemoryPrimeQueue, createPostgresPrimeQueue, type PrimeQueue } from './queue.js'
@@ -41,12 +41,31 @@ export function createPrimeAgentService(
       if (started) return
 
       const config = await getPrimeConfig(pool)
-      if (!config.enabled) return
+      if (!config.enabled) {
+        await updatePrimeConfig(pool, {
+          status: 'stopped',
+          last_error: null,
+        })
+        return
+      }
 
       started = true
+      await updatePrimeConfig(pool, {
+        status: 'running',
+        last_started_at: new Date().toISOString(),
+        last_error: null,
+      })
 
       const processEvent = async (event: Parameters<typeof handlePrimeEvent>[1]) => {
-        await handlePrimeEvent(pool, event, { router })
+        try {
+          await handlePrimeEvent(pool, event, { router })
+        } catch (error) {
+          await updatePrimeConfig(pool, {
+            status: 'running',
+            last_error: error instanceof Error ? error.message : String(error),
+          })
+          throw error
+        }
       }
 
       const processCoordinatorEvent = async (event: Parameters<typeof handlePrimeEvent>[1]) => {
@@ -54,6 +73,10 @@ export function createPrimeAgentService(
           await processEvent(event)
         } catch (error) {
           console.error('[prime-agent] event handling failed:', error)
+          await updatePrimeConfig(pool, {
+            status: 'running',
+            last_error: error instanceof Error ? error.message : String(error),
+          })
         }
       }
 
@@ -81,6 +104,9 @@ export function createPrimeAgentService(
       fastTimer = undefined
       slowTimer = undefined
       setPrimeCoordinatorProcessor(undefined)
+      await updatePrimeConfig(pool, {
+        status: 'stopped',
+      })
       await queue.close()
     },
   }

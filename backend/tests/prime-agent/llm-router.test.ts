@@ -1,5 +1,16 @@
 import { describe, expect, it, vi } from 'vitest'
 import type pg from 'pg'
+
+const workspaceMocks = vi.hoisted(() => ({
+  loadPrimeWorkspaceTemplates: vi.fn(),
+  renderTemplate: vi.fn(),
+}))
+
+vi.mock('../../src/workspace.js', () => ({
+  loadPrimeWorkspaceTemplates: workspaceMocks.loadPrimeWorkspaceTemplates,
+  renderTemplate: workspaceMocks.renderTemplate,
+}))
+
 import {
   buildPrimeSystemPrompt,
   buildPrimeTriggerMessage,
@@ -23,22 +34,44 @@ const minimalContext: PrimeContext = {
   },
   recentEvents: [],
   recentLessons: [],
+  threadMessages: [],
 }
 
+workspaceMocks.loadPrimeWorkspaceTemplates.mockResolvedValue({
+  effectiveRoot: '/workspace/prime',
+  revision: 'abc123',
+  templates: {
+    primeProfile: 'You are Prime.',
+    standingRules: 'Keep work moving.',
+    system: 'Return JSON with "reasoning" and "actions". Allowed: delegate update_work_item request_approval no_op. {{agents}}',
+    request: 'Trigger from {{sender}}: {{user_message}}',
+    llamacpp: '',
+    defaultAgentInstructions: '',
+    defaultAgentSoul: '',
+    delegationTask: '',
+  },
+  templatePaths: {},
+})
+workspaceMocks.renderTemplate.mockImplementation((template: string, values: Record<string, string>) =>
+  template.replace(/\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g, (_match, key) => values[key] ?? '')
+)
+
 describe('prime-agent llm router', () => {
-  it('rejects invalid action types', () => {
-    expect(() =>
-      validatePrimeDecision({
-        reasoning: 'Route the request.',
-        actions: [
-          {
-            type: 'publish_pattern',
-            payload: {},
-            reason: 'not allowed in phase a',
-          },
-        ],
-      })
-    ).toThrow('Unsupported Prime action type: publish_pattern')
+  it('filters invalid action types from otherwise valid decisions', () => {
+    const decision = validatePrimeDecision({
+      reasoning: 'Route the request.',
+      response: 'I will take a look.',
+      actions: [
+        {
+          type: 'publish_pattern',
+          payload: {},
+          reason: 'not allowed in phase a',
+        },
+      ],
+    })
+
+    expect(decision.actions).toEqual([])
+    expect(decision.response).toBe('I will take a look.')
   })
 
   it('rejects malformed decisions', () => {
@@ -49,23 +82,23 @@ describe('prime-agent llm router', () => {
       })
     ).toThrow('Prime decision reasoning must be a non-empty string')
 
-    expect(() =>
-      validatePrimeDecision({
-        reasoning: 'Valid reasoning',
-        actions: [
-          {
-            type: 'delegate',
-            payload: null,
-            reason: 'bad payload',
-          },
-        ],
-      })
-    ).toThrow('Prime action payload must be an object')
+    const decision = validatePrimeDecision({
+      reasoning: 'Valid reasoning',
+      actions: [
+        {
+          type: 'delegate',
+          payload: null,
+          reason: 'bad payload',
+        },
+      ],
+    })
+    expect(decision.actions).toEqual([])
   })
 
   it('returns a valid decision from the mock router', async () => {
     const router = createMockLlmRouter({
       reasoning: 'Delegate the work to a capable agent.',
+      response: 'I’m delegating that to the right agent now.',
       actions: [
         {
           type: 'delegate',
@@ -103,9 +136,11 @@ describe('prime-agent llm router', () => {
       },
       recentEvents: [],
       recentLessons: [],
+      threadMessages: [],
     })
 
     expect(decision.reasoning).toBe('Delegate the work to a capable agent.')
+    expect(decision.response).toBe('I’m delegating that to the right agent now.')
     expect(decision.actions).toHaveLength(2)
     expect(decision.actions[0]?.type).toBe('delegate')
     expect(decision.token_count).toBe(123)
@@ -130,8 +165,22 @@ describe('prime-agent llm router', () => {
         fleet: { agents: [], workItems: [], delegations: [] },
         recentEvents: [],
         recentLessons: [],
+        threadMessages: [],
       })
     ).rejects.toThrow('Prime LLM router is not configured in Phase A')
+  })
+
+  it('parses mislabeled reasoning and response text into separate fields', () => {
+    const decision = validatePrimeDecision({
+      reasoning: `The user asked a casual greeting question.
+
+reasoning: The user asked a casual greeting question. No backend action is required.
+response: What's up? I'm here and ready for the next task.`,
+      actions: [],
+    })
+
+    expect(decision.reasoning).toBe('The user asked a casual greeting question. No backend action is required.')
+    expect(decision.response).toBe("What's up? I'm here and ready for the next task.")
   })
 })
 
@@ -158,13 +207,13 @@ describe('buildPrimeSystemPrompt', () => {
 })
 
 describe('buildPrimeTriggerMessage', () => {
-  it('includes the event type', () => {
-    const msg = buildPrimeTriggerMessage(minimalContext)
+  it('includes the event type', async () => {
+    const msg = await buildPrimeTriggerMessage(minimalContext, mockPool)
     expect(msg).toContain('cron.fast')
   })
 
-  it('ends with the survey instruction', () => {
-    const msg = buildPrimeTriggerMessage(minimalContext)
+  it('ends with the survey instruction', async () => {
+    const msg = await buildPrimeTriggerMessage(minimalContext, mockPool)
     expect(msg).toContain('Survey the fleet')
   })
 })

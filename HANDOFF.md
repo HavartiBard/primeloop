@@ -7,6 +7,10 @@
 - Reworked the `Agents` page so the registry is the selector, health is shown in-table, and edit flows open inline in the lower detail panel.
 - CP tokens are now masked by default with an explicit `Show` toggle in the bridge panel.
 - Live review stack is currently running on the `agent-cp-*` deployment path with `pgvector/pgvector:pg16` and `SECRET_ENCRYPTION_KEY` configured.
+- Prime setup now restarts the Prime service after a successful wizard launch, so a fresh instance can handle the first message without a manual backend restart.
+- Prime chat replies now come from a dedicated user-facing `response` field instead of reusing the internal `reasoning` summary.
+- Prime messages now go through the shared queue, duplicate `prime.message` sessions are reconciled by `message_id`, and Prime runtime status is written back to `prime_agent_config`.
+- The local dev wrapper is the expected startup path; use `./scripts/dev-up.sh` and set `ACP_VM_IP=127.0.0.1` explicitly if hostname detection is unavailable in the current shell.
 
 ## Current direction
 
@@ -89,13 +93,18 @@ Build passed after the room-centric rewrite.
 
 At the time of handoff, preview server was expected at:
 
-- `http://localhost:4174/`
-- `http://192.168.20.60:4174/`
+- `http://localhost:5173/`
+- `http://<vm-ip>:5173/`
+- backend API at `http://<vm-ip>:3100/`
 
-If not running, restart the local dev server from `web/`.
+Use `./scripts/dev-up.sh` from the repo root instead of starting `web/` manually. The script clears stale listeners on `3100` and `5173`, starts both services together, binds Vite on the VM interface, and points the backend at the Unraid dev database by default.
 
 ## Environment notes
 
 - sandboxing is working again in this environment
 - this latest room-centric rewrite is local work in `agent-control-plane`
 - no live deploy was done as part of this UI iteration
+- local backend dev requires `DATABASE_URL` plus `SECRET_ENCRYPTION_KEY`; the wrapper script now supplies defaults for the Unraid-backed dev setup
+- development assumes the shared hosted dev DB, not a local long-lived Postgres instance
+- the Docker-backed `test:db` flow is only an optional disposable backend test database via `TEST_DATABASE_URL`
+- when Prime looks stuck, check `prime_agent_sessions` first; duplicate sessions for the same message can indicate a stale run that should be marked failed instead of waiting indefinitely

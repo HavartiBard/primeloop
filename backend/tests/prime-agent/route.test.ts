@@ -7,7 +7,15 @@ const configMocks = vi.hoisted(() => ({
 }))
 
 const sessionMocks = vi.hoisted(() => ({
+  getPrimeSession: vi.fn(),
   listPrimeSessions: vi.fn(),
+}))
+
+const moduleMocks = vi.hoisted(() => ({
+  getPrimeModuleConfig: vi.fn(),
+  listPrimeModuleConfigAudits: vi.fn(),
+  listPrimeModuleConfigs: vi.fn(),
+  updatePrimeModuleConfig: vi.fn(),
 }))
 
 vi.mock('../../src/prime-agent/config.js', () => ({
@@ -16,7 +24,15 @@ vi.mock('../../src/prime-agent/config.js', () => ({
 }))
 
 vi.mock('../../src/prime-agent/session.js', () => ({
+  getPrimeSession: sessionMocks.getPrimeSession,
   listPrimeSessions: sessionMocks.listPrimeSessions,
+}))
+
+vi.mock('../../src/prime-agent/modules/registry.js', () => ({
+  getPrimeModuleConfig: moduleMocks.getPrimeModuleConfig,
+  listPrimeModuleConfigAudits: moduleMocks.listPrimeModuleConfigAudits,
+  listPrimeModuleConfigs: moduleMocks.listPrimeModuleConfigs,
+  updatePrimeModuleConfig: moduleMocks.updatePrimeModuleConfig,
 }))
 
 import { createPrimeAgentRouter } from '../../src/routes/prime-agent.js'
@@ -90,6 +106,7 @@ describe('prime-agent router', () => {
       {
         id: 'session-1',
         trigger_type: 'prime_message',
+        module_runs: [],
       },
     ])
 
@@ -98,6 +115,132 @@ describe('prime-agent router', () => {
     expect(res.statusCode).toBe(200)
     expect(res.body).toHaveLength(1)
     expect(res.body[0].trigger_type).toBe('prime_message')
+  })
+
+  it('GET /sessions/:id returns a stored session with module runs', async () => {
+    sessionMocks.getPrimeSession.mockResolvedValue({
+      id: 'session-1',
+      trigger_type: 'prime_message',
+      trigger_payload: {},
+      prompt_templates: {},
+      actions_taken: [],
+      token_count: 0,
+      status: 'completed',
+      started_at: '2026-05-18T00:00:00.000Z',
+      module_runs: [
+        {
+          id: 'run-1',
+          session_id: 'session-1',
+          run_index: 0,
+          module_id: 'trigger.default',
+          stage: 'trigger',
+          version: '1.0.0',
+          mode: 'active',
+          status: 'completed',
+          started_at: '2026-05-18T00:00:00.000Z',
+          completed_at: '2026-05-18T00:00:01.000Z',
+        },
+      ],
+    })
+
+    const res = await invokeRoute('get', '/sessions/session-1')
+
+    expect(res.statusCode).toBe(200)
+    expect(sessionMocks.getPrimeSession).toHaveBeenCalledWith(pool, 'session-1')
+    expect((res.body as { module_runs: unknown[] }).module_runs).toHaveLength(1)
+  })
+
+  it('GET /modules returns persisted module configs', async () => {
+    moduleMocks.listPrimeModuleConfigs.mockResolvedValue([
+      {
+        module_id: 'trigger.event-ingress',
+        stage: 'trigger',
+        default_version: '1.0.0',
+        enabled: true,
+        rollout_mode: 'active',
+        config: {},
+      },
+    ])
+
+    const res = await invokeRoute('get', '/modules')
+
+    expect(res.statusCode).toBe(200)
+    expect((res.body as Array<{ module_id: string }>)[0].module_id).toBe('trigger.event-ingress')
+  })
+
+  it('PATCH /modules/:id updates a persisted module config', async () => {
+    moduleMocks.getPrimeModuleConfig.mockResolvedValue({
+      module_id: 'feedback.approval-continuation',
+    })
+    moduleMocks.updatePrimeModuleConfig.mockResolvedValue({
+      module_id: 'feedback.approval-continuation',
+      stage: 'feedback',
+      default_version: '1.0.0',
+      pinned_version: '1.0.0',
+      enabled: false,
+      rollout_mode: 'shadow',
+      config: { note: 'disabled for rollout' },
+    })
+
+    const res = await invokeRoute('patch', '/modules/feedback.approval-continuation', {
+      enabled: false,
+      rollout_mode: 'shadow',
+      pinned_version: '1.0.0',
+      config: { note: 'disabled for rollout' },
+    })
+
+    expect(res.statusCode).toBe(200)
+    expect(moduleMocks.updatePrimeModuleConfig).toHaveBeenCalledWith(
+      pool,
+      'feedback.approval-continuation',
+      {
+        enabled: false,
+        rollout_mode: 'shadow',
+        pinned_version: '1.0.0',
+        config: { note: 'disabled for rollout' },
+      },
+      'api'
+    )
+  })
+
+  it('PATCH /modules/:id returns 400 for invalid required-module changes', async () => {
+    moduleMocks.getPrimeModuleConfig.mockResolvedValue({
+      module_id: 'decision.llm-router',
+    })
+    moduleMocks.updatePrimeModuleConfig.mockRejectedValue(
+      new Error('invalid prime module patch: decision.llm-router must remain enabled and active')
+    )
+
+    const res = await invokeRoute('patch', '/modules/decision.llm-router', {
+      rollout_mode: 'shadow',
+    })
+
+    expect(res.statusCode).toBe(400)
+    expect(res.body).toEqual({
+      error: 'invalid prime module patch: decision.llm-router must remain enabled and active',
+    })
+  })
+
+  it('GET /modules/:id/audit returns persisted module audits', async () => {
+    moduleMocks.getPrimeModuleConfig.mockResolvedValue({
+      module_id: 'feedback.approval-continuation',
+    })
+    moduleMocks.listPrimeModuleConfigAudits.mockResolvedValue([
+      {
+        id: 'audit-1',
+        module_id: 'feedback.approval-continuation',
+        actor: 'james',
+        changed_fields: ['rollout_mode'],
+        previous_config: { rollout_mode: 'active' },
+        next_config: { rollout_mode: 'shadow' },
+        created_at: '2026-05-18T00:00:00.000Z',
+      },
+    ])
+
+    const res = await invokeRoute('get', '/modules/feedback.approval-continuation/audit')
+
+    expect(res.statusCode).toBe(200)
+    expect((res.body as Array<{ actor: string }>)[0].actor).toBe('james')
   })
 
   it('POST /events enqueues a valid Phase A event', async () => {
@@ -162,6 +305,9 @@ describe('prime-agent router', () => {
     body?: unknown
   ): Promise<{ statusCode: number; body: unknown }> {
     const router = createPrimeAgentRouter({ pool, queue })
+    const sessionMatch = url.match(/^\/sessions\/([^/]+)$/)
+    const moduleAuditMatch = url.match(/^\/modules\/([^/]+)\/audit$/)
+    const moduleMatch = !moduleAuditMatch ? url.match(/^\/modules\/([^/]+)$/) : null
 
     return await new Promise((resolve, reject) => {
       const req = {
@@ -171,8 +317,18 @@ describe('prime-agent router', () => {
         path: url,
         body,
         query: {},
-        params: {},
+        params: sessionMatch
+          ? { id: sessionMatch[1] }
+          : moduleAuditMatch
+            ? { id: moduleAuditMatch[1] }
+            : moduleMatch
+              ? { id: moduleMatch[1] }
+              : {},
         headers: {},
+        header(name: string) {
+          const value = (this.headers as Record<string, string | undefined>)[name.toLowerCase()]
+          return value
+        },
       }
 
       const result = {

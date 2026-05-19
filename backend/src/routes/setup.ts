@@ -6,7 +6,13 @@ import { encrypt } from '../crypto.js'
 import { appendThreadMessage, createThread } from '../runtime.js'
 import { ensureWorkspaceScaffold, updateWorkspaceConfig } from '../workspace.js'
 
-export function createSetupRouter({ pool }: { pool: pg.Pool }) {
+export function createSetupRouter({
+  pool,
+  onSetupCompleted,
+}: {
+  pool: pg.Pool
+  onSetupCompleted?: () => Promise<void> | void
+}) {
   const router = Router()
 
   router.get('/status', async (_req, res) => {
@@ -250,6 +256,8 @@ export function createSetupRouter({ pool }: { pool: pg.Pool }) {
           })
         }
       }
+
+      await onSetupCompleted?.()
 
       res.json({ ok: true })
     } catch (err) {

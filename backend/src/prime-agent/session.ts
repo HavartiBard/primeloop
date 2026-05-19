@@ -20,6 +20,21 @@ export interface PrimeSession {
   error?: string
   started_at: string
   completed_at?: string
+  module_runs?: PrimeSessionModuleRun[]
+}
+
+export interface PrimeSessionModuleRun {
+  id: string
+  session_id: string
+  run_index: number
+  module_id: string
+  stage: string
+  version: string
+  mode: 'active' | 'shadow'
+  status: 'completed' | 'failed'
+  detail?: string
+  started_at: string
+  completed_at: string
 }
 
 export interface StartPrimeSessionInput {
@@ -121,11 +136,155 @@ export async function failPrimeSession(pool: pg.Pool, id: string, error: string)
   return rows[0] ?? null
 }
 
+export async function savePrimeSessionModuleRuns(
+  pool: pg.Pool,
+  sessionId: string,
+  moduleRuns: Array<{
+    id: string
+    stage: string
+    version: string
+    mode: 'active' | 'shadow'
+    status: 'completed' | 'failed'
+    detail?: string
+    started_at: string
+    completed_at: string
+  }>
+): Promise<void> {
+  await pool.query(`DELETE FROM prime_agent_module_runs WHERE session_id = $1`, [sessionId])
+
+  for (const [index, run] of moduleRuns.entries()) {
+    await pool.query(
+      `INSERT INTO prime_agent_module_runs (
+         session_id, run_index, module_id, stage, version, mode, status, detail, started_at, completed_at
+       )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+      [
+        sessionId,
+        index,
+        run.id,
+        run.stage,
+        run.version,
+        run.mode,
+        run.status,
+        run.detail ?? null,
+        run.started_at,
+        run.completed_at,
+      ]
+    )
+  }
+}
+
+export async function getPrimeSession(pool: pg.Pool, id: string): Promise<PrimeSession | null> {
+  const { rows } = await pool.query(
+    `SELECT * FROM prime_agent_sessions WHERE id = $1`,
+    [id]
+  )
+
+  const session = rows[0] as PrimeSession | undefined
+  if (!session) return null
+  return hydratePrimeSessions(pool, [session]).then((sessions) => sessions[0] ?? null)
+}
+
 export async function listPrimeSessions(pool: pg.Pool, limit = 50): Promise<PrimeSession[]> {
   const { rows } = await pool.query(
     `SELECT * FROM prime_agent_sessions ORDER BY started_at DESC LIMIT $1`,
     [Math.max(1, Math.min(limit, 500))]
   )
 
-  return rows
+  return hydratePrimeSessions(pool, rows as PrimeSession[])
+}
+
+export async function listPrimeMessageSessionsByMessageId(
+  pool: pg.Pool,
+  messageId: string
+): Promise<PrimeSession[]> {
+  const { rows } = await pool.query(
+    `SELECT *
+     FROM prime_agent_sessions
+     WHERE trigger_type = 'prime_message'
+       AND trigger_payload->>'message_id' = $1
+     ORDER BY started_at DESC`,
+    [messageId]
+  )
+
+  return hydratePrimeSessions(pool, rows as PrimeSession[])
+}
+
+export async function failPrimeMessageSessionsExcept(
+  pool: pg.Pool,
+  messageId: string,
+  keepId: string,
+  error: string
+): Promise<number> {
+  const { rowCount } = await pool.query(
+    `UPDATE prime_agent_sessions
+     SET status = 'failed',
+         error = $3,
+         completed_at = COALESCE(completed_at, now())
+     WHERE trigger_type = 'prime_message'
+       AND trigger_payload->>'message_id' = $1
+       AND id <> $2
+       AND status = 'running'`,
+    [messageId, keepId, error]
+  )
+
+  return rowCount ?? 0
+}
+
+export async function failRunningPrimeMessageSessions(
+  pool: pg.Pool,
+  messageId: string,
+  error: string
+): Promise<number> {
+  const { rowCount } = await pool.query(
+    `UPDATE prime_agent_sessions
+     SET status = 'failed',
+         error = $2,
+         completed_at = COALESCE(completed_at, now())
+     WHERE trigger_type = 'prime_message'
+       AND trigger_payload->>'message_id' = $1
+       AND status = 'running'`,
+    [messageId, error]
+  )
+
+  return rowCount ?? 0
+}
+
+async function hydratePrimeSessions(pool: pg.Pool, sessions: PrimeSession[]): Promise<PrimeSession[]> {
+  if (sessions.length === 0) return sessions
+
+  const sessionIds = sessions.map((session) => session.id)
+  const { rows } = await pool.query<PrimeSessionModuleRun>(
+    `SELECT
+       id,
+       session_id::text,
+       run_index,
+       module_id,
+       stage,
+       version,
+       mode,
+       status,
+       detail,
+       started_at::text,
+       completed_at::text
+     FROM prime_agent_module_runs
+     WHERE session_id = ANY($1::uuid[])
+     ORDER BY session_id, run_index`,
+    [sessionIds]
+  )
+
+  const runsBySession = new Map<string, PrimeSessionModuleRun[]>()
+  for (const row of rows) {
+    const runs = runsBySession.get(row.session_id) ?? []
+    runs.push({
+      ...row,
+      detail: row.detail ?? undefined,
+    })
+    runsBySession.set(row.session_id, runs)
+  }
+
+  return sessions.map((session) => ({
+    ...session,
+    module_runs: runsBySession.get(session.id) ?? [],
+  }))
 }

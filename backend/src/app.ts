@@ -28,6 +28,7 @@ interface AppDeps {
   sshUser: string
   primeQueue: PrimeQueue
   onPrimeConfigUpdated?: () => Promise<void> | void
+  onSetupCompleted?: () => Promise<void> | void
   onAgentCreated: (agent: RegistryAgent) => void
   onAgentUpdated?: (agent: RegistryAgent) => void
   onAgentDeleted: (id: string) => void
@@ -124,7 +125,10 @@ export function createApp(deps: AppDeps): express.Express {
     queue: deps.primeQueue,
     onConfigUpdated: deps.onPrimeConfigUpdated,
   }))
-  app.use('/api/setup', createSetupRouter({ pool: deps.pool }))
+  app.use('/api/setup', createSetupRouter({
+    pool: deps.pool,
+    onSetupCompleted: deps.onSetupCompleted,
+  }))
   app.use('/api', createRuntimeRouter({ pool: deps.pool }))
 
   // Serve React SPA — must come after all API routes

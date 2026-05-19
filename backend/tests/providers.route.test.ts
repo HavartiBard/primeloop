@@ -90,9 +90,11 @@ describe('providers router', () => {
   it('DELETE /:id removes a provider', async () => {
     const list = await request(app).get('/api/providers')
     const id = list.body[0].id
+    const initialCount = list.body.length
     const res = await request(app).delete(`/api/providers/${id}`)
     expect(res.status).toBe(204)
     const list2 = await request(app).get('/api/providers')
-    expect(list2.body).toEqual([])
+    expect(list2.body).toHaveLength(initialCount - 1)
+    expect(list2.body.some((provider: { id: string }) => provider.id === id)).toBe(false)
   })
 })
