@@ -33,6 +33,7 @@ import type {
   CodexDeviceAuthResult,
   CodexDeviceAuthPoll,
   MCPServer,
+  ModelCapabilityAssessment,
 } from './types'
 
 const API_ORIGIN = ((import.meta.env.VITE_API_BASE as string | undefined) ?? '').replace(/\/+$/, '')
@@ -127,6 +128,16 @@ export async function replaceProviderKey(id: string, api_key: string): Promise<P
 export async function deleteProvider(id: string): Promise<void> {
   const res = await fetch(`${API_BASE}/providers/${id}`, { method: 'DELETE' })
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
+}
+
+export async function fetchModelCapability(model: string): Promise<ModelCapabilityAssessment> {
+  const res = await fetch(`${API_BASE}/providers/model-capability`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model }),
+  })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json() as Promise<ModelCapabilityAssessment>
 }
 
 export async function fetchSetupProviderModels(data: {
