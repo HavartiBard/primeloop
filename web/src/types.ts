@@ -75,7 +75,7 @@ export interface AgentControlPlaneToken {
 export interface WorkItem {
   id: string
   title: string
-  status: 'active' | 'blocked' | 'approval' | 'review' | 'deploy' | 'follow-up'
+  status: 'active' | 'blocked' | 'approval' | 'review' | 'deploy' | 'follow-up' | 'done'
   owner: string
   lane: string
   updated_at: string
