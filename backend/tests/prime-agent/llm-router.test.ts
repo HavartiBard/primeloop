@@ -189,15 +189,33 @@ response: What's up? I'm here and ready for the next task.`,
         reasoning: 'Internal note about the request.',
         actions: [],
       }, { isUserFacing: true })
-    ).toThrow('Prime decision response must be at least 10 characters')
+    ).toThrow('Prime decision response must be at least 1 character')
   })
 
-  it('rejects short response on user-facing events', () => {
+  it('accepts short response when no substantive actions (conversational)', () => {
+    const decision = validatePrimeDecision({
+      reasoning: 'Simple greeting — no action needed.',
+      response: 'Hi!',
+      actions: [],
+    }, { isUserFacing: true })
+    expect(decision.response).toBe('Hi!')
+  })
+
+  it('accepts short response with only no_op actions (conversational)', () => {
+    const decision = validatePrimeDecision({
+      reasoning: 'Acknowledgment.',
+      response: 'Got it.',
+      actions: [{ type: 'no_op', payload: {}, reason: 'No action needed' }],
+    }, { isUserFacing: true })
+    expect(decision.response).toBe('Got it.')
+  })
+
+  it('rejects short response when substantive actions exist', () => {
     expect(() =>
       validatePrimeDecision({
         reasoning: 'Internal note about the request.',
         response: 'Ok.',
-        actions: [],
+        actions: [{ type: 'delegate', payload: { title: 'Fix bug' }, reason: 'Need to fix this' }],
       }, { isUserFacing: true })
     ).toThrow('Prime decision response must be at least 10 characters')
   })

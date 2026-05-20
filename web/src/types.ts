@@ -446,7 +446,7 @@ export interface CodexDeviceAuthPoll {
 export interface PrimeMessageResult {
   user_message: ThreadMessage
   prime_message?: ThreadMessage
-  work_item: RuntimeWorkItem
+  work_item?: RuntimeWorkItem
   delegation?: RuntimeDelegation
   selected_agent?: RegistryAgent
   route: PrimeRoute

@@ -42,7 +42,7 @@ export interface PrimeRoute {
 export interface PrimeMessageResult {
   user_message: ThreadMessage
   prime_message?: ThreadMessage
-  work_item: WorkItem
+  work_item?: WorkItem
   delegation?: Delegation
   selected_agent?: RegistryAgent
   route: PrimeRoute
@@ -190,29 +190,12 @@ export async function handlePrimeMessage(
 
   const primeConfig = primeQueue ? await getPrimeConfig(pool) : null
   if (primeQueue && primeConfig?.enabled) {
-    const route: PrimeRoute = {
-      capability: 'coordination',
-      lane: 'intake',
-      priority: 'normal',
-      status: 'active',
-      requiresApproval: false,
-      reason: `${coordinatorName} intake is enabled for message routing.`,
-    }
-
-    const workItem = await createWorkItem(pool, {
-      title: titleFromContent(content),
-      description: content,
-      status: route.status,
-      priority: route.priority,
-      lane: route.lane,
-      owner_label: coordinatorName,
-      thread_id: threadId,
-      metadata: {
-        source: 'prime-agent-intake',
-        message_id: userMessage.id,
-      },
-    })
-
+    // Prime-enabled path: conversation-first workflow.
+    // Do NOT create a work item here. The LLM decision phase determines
+    // if this message requires actual work. Work items are created by
+    // dispatchDelegate only when the decision includes delegate actions.
+    // This allows conversational messages ("hi", "thanks") to flow
+    // naturally without polluting the work item list.
     const primeEvent: PrimeEvent = {
       type: 'prime.message',
       payload: {
@@ -228,7 +211,6 @@ export async function handlePrimeMessage(
       event_type: 'prime.routed',
       actor: coordinatorName,
       thread_id: threadId,
-      work_item_id: workItem.id,
       payload: {
         message_id: userMessage.id,
         prime_enabled: true,
@@ -241,18 +223,24 @@ export async function handlePrimeMessage(
         role: 'assistant',
         sender: coordinatorName,
         content: 'I could not process that yet because Prime processing is not running.',
-        metadata: {
-          route,
-          work_item_id: workItem.id,
-          prime_processing: false,
-        },
+        metadata: { prime_processing: false },
       })
+    }
+
+    // No work_item in the response — conversation-first workflow.
+    // Real work items are created by dispatchDelegate only when needed.
+    const route: PrimeRoute = {
+      capability: 'coordination',
+      lane: 'intake',
+      priority: 'normal',
+      status: 'pending',
+      requiresApproval: false,
+      reason: `${coordinatorName} intake is enabled for message routing.`,
     }
 
     return {
       user_message: userMessage,
       ...(primeMessage ? { prime_message: primeMessage } : {}),
-      work_item: workItem,
       route,
     }
   }

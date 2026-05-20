@@ -51,11 +51,22 @@ export function validatePrimeDecision(value: unknown, options?: { isUserFacing?:
 
   const isUserFacing = options?.isUserFacing === true
 
-  // For user-facing events (prime.message), response must be present and meaningful
+  // Parse actions first so we can check if this is a conversational response.
+  const rawActions = Array.isArray(value.actions)
+    ? value.actions.map(validatePrimeActionOrNull).filter((a): a is PrimeAction => a !== null)
+    : []
+  const hasSubstantiveActions = rawActions.some((action) => action.type !== 'no_op')
+
+  // For user-facing events (prime.message), response must be present and meaningful.
+  // Conversational responses (no substantive actions) can be short — "Hi!", "Got it",
+  // "Thanks" are valid. Action-bearing decisions need longer responses to explain what's happening.
   if (isUserFacing) {
     const responseText = normalized.response ?? ''
-    if (responseText.length < 10) {
-      throw new Error(`Prime decision response must be at least 10 characters for user-facing messages (got ${responseText.length})`)
+    const minLen = hasSubstantiveActions ? 10 : 1
+    if (responseText.length < minLen) {
+      throw new Error(
+        `Prime decision response must be at least ${minLen} character${minLen === 1 ? '' : 's'} for user-facing messages (got ${responseText.length})`
+      )
     }
     // Reject responses that contain internal schema labels
     if (/\b(?:reasoning|response|actions):/.test(responseText)) {
@@ -63,9 +74,7 @@ export function validatePrimeDecision(value: unknown, options?: { isUserFacing?:
     }
   }
 
-  const actions = value.actions
-    .map(validatePrimeActionOrNull)
-    .filter((action): action is PrimeAction => action !== null)
+  const actions = rawActions
   const decision: PrimeDecision = {
     reasoning: normalized.reasoning,
     actions,

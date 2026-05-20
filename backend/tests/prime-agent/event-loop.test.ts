@@ -325,6 +325,71 @@ describe('prime-agent event loop', () => {
     )
   })
 
+  it('marks intake work item as done for conversational responses (no substantive actions)', async () => {
+    const queryMock = vi.fn()
+    const mockPool = { query: queryMock.mockResolvedValue({ rows: [], rowCount: 1 }) } as unknown as pg.Pool
+
+    sessionMocks.startPrimeSession.mockResolvedValue({
+      id: 'session-5',
+      status: 'running',
+    })
+    contextMocks.assemblePrimeContext.mockResolvedValue({
+      trigger: {
+        type: 'prime.message',
+        payload: {
+          thread_id: 'thread-1',
+          message_id: 'message-conv',
+          content: 'hi',
+          sender: 'james',
+        },
+      },
+      fleet: { agents: [], workItems: [], delegations: [] },
+      recentEvents: [],
+      recentLessons: [],
+      threadMessages: [],
+    })
+    actionMocks.dispatchPrimeActions.mockResolvedValue([])
+    runtimeMocks.appendThreadMessage.mockResolvedValue({ id: 'thread-msg-conv' })
+    sessionMocks.completePrimeSession.mockResolvedValue({
+      id: 'session-5',
+      status: 'completed',
+      reasoning_summary: 'Conversational greeting.',
+    })
+
+    const router = {
+      decide: vi.fn().mockResolvedValue({
+        reasoning: 'Simple greeting — no action needed.',
+        response: 'Hi! How can I help?',
+        actions: [{ type: 'no_op', payload: {}, reason: 'No action needed' }],
+        token_count: 10,
+      }),
+    }
+
+    await handlePrimeEvent(
+      mockPool,
+      {
+        type: 'prime.message',
+        payload: {
+          thread_id: 'thread-1',
+          message_id: 'message-conv',
+          content: 'hi',
+          sender: 'james',
+        },
+      },
+      { router }
+    )
+
+    // Should mark intake work item as 'done' (not 'review') for conversational responses
+    const updateCall = queryMock.mock.calls.find(
+      (call: unknown[]) =>
+        typeof call[0] === 'string' &&
+        call[0].includes('UPDATE work_items') &&
+        call[0].includes("SET status = $")
+    )
+    expect(updateCall).toBeDefined()
+    expect(updateCall![1]).toEqual(['message-conv', 'done'])
+  })
+
   it('runs shadow policy modules before later active stages', async () => {
     const modules = listPrimeModules().filter((module) =>
       ['trigger.event-ingress', 'context.fleet-state', 'decision.llm-router', 'policy.scope-required', 'action.dispatch'].includes(module.id)

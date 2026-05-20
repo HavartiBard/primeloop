@@ -163,7 +163,14 @@ export async function handlePrimeEvent(
         session.id,
         `duplicate prime.message session superseded by ${session.id}`
       )
-      await updateIntakeWorkItemStatus(pool, event.payload.message_id, 'review')
+      // Update intake work item status based on whether this was conversational or action-bearing.
+      const hasSubstantiveActions = decision.actions.some((action) => action.type !== 'no_op')
+      if (hasSubstantiveActions) {
+        await updateIntakeWorkItemStatus(pool, event.payload.message_id, 'review')
+      } else {
+        // Conversational response — mark any intake work item as done so it doesn't clutter the view.
+        await updateIntakeWorkItemStatus(pool, event.payload.message_id, 'done')
+      }
     }
 
     return {
@@ -241,7 +248,7 @@ function summarizeConfiguredPrimeModules(modules: PrimeConfiguredModule[]): stri
 async function updateIntakeWorkItemStatus(
   pool: pg.Pool,
   messageId: string,
-  status: 'review' | 'blocked'
+  status: 'review' | 'blocked' | 'done'
 ): Promise<void> {
   await pool.query(
     `UPDATE work_items
