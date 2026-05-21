@@ -504,7 +504,32 @@ async function callOpenAI(
   const client = new OpenAI({ apiKey, baseURL: baseURL || undefined, timeout: timeoutMs })
   const response = await withProviderTimeout(client.chat.completions.create({
     model,
-    response_format: { type: 'json_object' },
+    response_format: {
+      type: 'json_schema',
+      json_schema: {
+        name: 'prime_decision',
+        schema: {
+          type: 'object',
+          properties: {
+            reasoning: { type: 'string' },
+            response: { type: 'string' },
+            actions: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  type: { type: 'string', enum: ['delegate', 'update_work_item', 'request_approval', 'no_op'] },
+                  payload: { type: 'object' },
+                  reason: { type: 'string' },
+                },
+                required: ['type', 'payload', 'reason'],
+              },
+            },
+          },
+          required: ['reasoning', 'response', 'actions'],
+        },
+      },
+    },
     messages: [
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userMessage },
