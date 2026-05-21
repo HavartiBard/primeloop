@@ -1,10 +1,14 @@
 import { Router } from 'express'
 import type pg from 'pg'
-import { promises as fs } from 'node:fs'
-import path from 'node:path'
 import { encrypt } from '../crypto.js'
 import { appendThreadMessage, createThread } from '../runtime.js'
-import { ensureWorkspaceScaffold, updateWorkspaceConfig } from '../workspace.js'
+import {
+  ensureWorkspaceScaffold,
+  readProfileFiles,
+  writeProfileFiles,
+  updateWorkspaceConfig,
+} from '../workspace.js'
+import type { SoulSectionKey, OperatingSectionKey } from '../prime-agent/profile-sections.js'
 
 export function createSetupRouter({
   pool,
@@ -122,6 +126,11 @@ export function createSetupRouter({
     const body = req.body as {
       providers?: Array<{ id?: string; name: string; type: string; base_url: string; api_key?: string; model?: string }>
       routing?: Record<string, Array<{ provider_name: string; model: string }>>
+      profile?: {
+        name?: string
+        soul?: { identity?: string; voice_tone?: string; decision_style?: string }
+        operating?: { default_behaviors?: string; approval_thresholds?: string }
+      }
       persona?: { name: string; focus: string; tone: string; instructions?: string }
       rules?: { presets: string[]; custom: string }
       cost_controls?: { monthly_token_budget: number }
@@ -129,8 +138,8 @@ export function createSetupRouter({
       launch?: boolean
     }
 
-    if (!Array.isArray(body?.providers) || !body?.routing || !body?.persona || !body?.rules) {
-      return res.status(400).json({ error: 'providers, routing, persona, and rules are required' })
+    if (!Array.isArray(body?.providers) || !body?.routing || !body?.rules || (!body.profile && !body.persona)) {
+      return res.status(400).json({ error: 'providers, routing, rules, and (profile or persona) are required' })
     }
 
     try {
@@ -179,31 +188,66 @@ export function createSetupRouter({
         if (resolved.length > 0) routing[routeName] = resolved
       }
 
-      const persona = body.persona
-      const toneLabel =
-        persona.tone === 'direct' ? 'Direct & concise'
-        : persona.tone === 'thorough' ? 'Thorough & deliberate'
-        : 'Collaborative & inquisitive'
+      // --- profile block (structured or legacy persona) ---
+      const name = body.profile?.name?.trim() || body.persona?.name?.trim() || 'Prime'
 
-      const personaLines = [`You are ${persona.name}, ${persona.focus}.`, `Tone: ${toneLabel}.`]
-      if (persona.instructions?.trim()) personaLines.push('', persona.instructions.trim())
+      let soulSections: Record<SoulSectionKey, string>
+      let operatingSections: Record<OperatingSectionKey, string>
 
+      if (body.profile) {
+        soulSections = {
+          identity:       body.profile.soul?.identity       ?? '',
+          voice_tone:     body.profile.soul?.voice_tone     ?? '',
+          decision_style: body.profile.soul?.decision_style ?? '',
+        }
+        operatingSections = {
+          default_behaviors:   body.profile.operating?.default_behaviors   ?? '',
+          approval_thresholds: body.profile.operating?.approval_thresholds ?? '',
+        }
+      } else {
+        const p = body.persona!
+        const toneLabel =
+          p.tone === 'direct' ? 'Direct & concise.'
+          : p.tone === 'thorough' ? 'Thorough & deliberate.'
+          : 'Collaborative & inquisitive.'
+        soulSections = {
+          identity:       `You are ${name}, ${p.focus || 'the coordination agent'}.`,
+          voice_tone:     toneLabel,
+          decision_style: (p.instructions ?? '').trim() || 'Smallest useful next step wins.',
+        }
+        operatingSections = { default_behaviors: '', approval_thresholds: '' }
+      }
+
+      await ensureWorkspaceScaffold(pool)
+
+      // Seed chief_profiles row if missing; writeProfileFiles overwrites it immediately after.
+      await pool.query(
+        `INSERT INTO chief_profiles (id, name, persona, operating_policy)
+         VALUES ('default', $1, '', '')
+         ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, updated_at = now()`,
+        [name],
+      )
+
+      // Read existing so unknown sections are preserved across legacy → structured upgrade
+      const current = await readProfileFiles(pool)
+      current.soul.sections = soulSections
+      if (body.profile) {
+        current.operating.sections = operatingSections
+      }
+      await writeProfileFiles(pool, current)
+
+      // --- standing rules ---
       const rules = body.rules
       const presetLines = rules.presets.map((k) => PRESET_LABELS[k]).filter(Boolean)
       const policyParts = [...presetLines]
       if (rules.custom?.trim()) policyParts.push('', rules.custom.trim())
 
       await pool.query(
-        `INSERT INTO chief_profiles (id, name, persona, operating_policy)
-         VALUES ('default', $1, $2, $3)
-         ON CONFLICT (id) DO UPDATE
-           SET name = EXCLUDED.name,
-               persona = EXCLUDED.persona,
-               operating_policy = EXCLUDED.operating_policy,
-               updated_at = now()`,
-        [persona.name, personaLines.join('\n'), policyParts.join('\n')]
+        `UPDATE chief_profiles SET operating_policy = $1, updated_at = now() WHERE id = 'default'`,
+        [policyParts.join('\n')],
       )
 
+      // --- cost controls + workspace + launch ---
       const costControls = body.cost_controls ?? { monthly_token_budget: 0 }
       const launch = body.launch === true
       const workspace = body.workspace ?? {}
@@ -213,15 +257,6 @@ export function createSetupRouter({
         ...(workspace.root_path ? { root_path: workspace.root_path } : {}),
         remote_url: workspace.remote_url?.trim() || null,
         branch: workspace.branch?.trim() || 'main',
-      })
-      const workspaceStatus = await ensureWorkspaceScaffold(pool)
-
-      await writeWorkspaceSetupFiles(workspaceStatus.effective_root, {
-        primeName: persona.name,
-        primeFocus: persona.focus,
-        primeTone: toneLabel,
-        primeInstructions: persona.instructions?.trim() ?? '',
-        policy: policyParts.join('\n').trim(),
       })
 
       await pool.query(
@@ -237,7 +272,7 @@ export function createSetupRouter({
         )
 
         if (threadRows[0]?.count === 0) {
-          const primeName = persona.name?.trim() || 'Prime'
+          const primeName = name
           const onboardingThread = await createThread(pool, {
             title: `Getting started with ${primeName}`,
             metadata: {
@@ -266,35 +301,4 @@ export function createSetupRouter({
   })
 
   return router
-}
-
-async function writeWorkspaceSetupFiles(
-  root: string,
-  data: {
-    primeName: string
-    primeFocus: string
-    primeTone: string
-    primeInstructions: string
-    policy: string
-  }
-): Promise<void> {
-  const profile = [
-    '# Prime Profile',
-    '',
-    `You are ${data.primeName || 'Prime'}, ${data.primeFocus || 'the coordination agent for the Agent Control Plane'}.`,
-    '',
-    `- Tone: ${data.primeTone}.`,
-    '- Operate as the primary user-facing coordinator.',
-    '- Prefer direct, concrete progress over generic acknowledgements.',
-    '- When action is required, choose the next smallest useful step.',
-    data.primeInstructions ? '' : null,
-    data.primeInstructions || null,
-  ].filter(Boolean).join('\n')
-
-  const rules = ['# Standing Rules', '', data.policy || '- Keep work moving with bounded delegation.'].join('\n')
-
-  await fs.mkdir(path.join(root, 'agents'), { recursive: true })
-  await fs.mkdir(path.join(root, 'policies'), { recursive: true })
-  await fs.writeFile(path.join(root, 'agents', 'prime.md'), profile, 'utf8')
-  await fs.writeFile(path.join(root, 'policies', 'standing-rules.md'), rules, 'utf8')
 }
