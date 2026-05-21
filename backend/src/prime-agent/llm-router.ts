@@ -379,7 +379,7 @@ async function callLlamaCpp(
             },
           },
         },
-        required: ['reasoning', 'actions'],
+        required: ['reasoning', 'response', 'actions'],
       },
     }),
   }, timeoutMs)
