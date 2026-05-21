@@ -5,6 +5,11 @@ import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import type pg from 'pg'
+import {
+  parseProfileSections,
+  renderProfileSections,
+  type ParsedProfile,
+} from './prime-agent/profile-sections.js'
 
 const execFile = promisify(execFileCallback)
 const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url))
@@ -415,6 +420,35 @@ export class WorkspaceVersionConflictError extends Error {
     super(`workspace file has changed since it was opened: ${relativePath}`)
     this.name = 'WorkspaceVersionConflictError'
   }
+}
+
+export interface ProfileBundle {
+  soul: ParsedProfile
+  operating: ParsedProfile
+}
+
+export async function readProfileFiles(pool: pg.Pool): Promise<ProfileBundle> {
+  const bundle = await loadPrimeWorkspaceTemplates(pool)
+  return {
+    soul:      parseProfileSections(bundle.templates.primeSoul,    'soul'),
+    operating: parseProfileSections(bundle.templates.primeProfile, 'operating'),
+  }
+}
+
+export async function writeProfileFiles(pool: pg.Pool, bundle: ProfileBundle): Promise<void> {
+  const status = await ensureWorkspaceScaffold(pool)
+  const soulMd      = renderProfileSections('soul',      bundle.soul)
+  const operatingMd = renderProfileSections('operating', bundle.operating)
+
+  await fs.mkdir(path.join(status.effective_root, 'agents'), { recursive: true })
+  await fs.writeFile(path.join(status.effective_root, 'agents', 'prime-soul.md'), soulMd, 'utf8')
+  await fs.writeFile(path.join(status.effective_root, 'agents', 'prime.md'),      operatingMd, 'utf8')
+
+  const personaConcat = [soulMd.trim(), operatingMd.trim()].filter(Boolean).join('\n\n')
+  await pool.query(
+    `UPDATE chief_profiles SET persona = $1, updated_at = now() WHERE id = 'default'`,
+    [personaConcat],
+  )
 }
 
 async function readGitMetadata(root: string): Promise<{ dirty: boolean; lastCommit?: string; files: string[] }> {
