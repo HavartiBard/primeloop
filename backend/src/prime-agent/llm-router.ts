@@ -385,7 +385,7 @@ async function callLlamaCpp(
             items: {
               type: 'object',
               properties: {
-                type: { type: 'string', enum: ['delegate', 'update_work_item', 'request_approval', 'no_op'] },
+                type: { type: 'string', enum: ['delegate', 'update_work_item', 'request_approval', 'update_profile', 'no_op'] },
                 payload: { type: 'object' },
                 reason: { type: 'string' },
               },
@@ -532,7 +532,7 @@ async function callOpenAI(
               items: {
                 type: 'object',
                 properties: {
-                  type: { type: 'string', enum: ['delegate', 'update_work_item', 'request_approval', 'no_op'] },
+                  type: { type: 'string', enum: ['delegate', 'update_work_item', 'request_approval', 'update_profile', 'no_op'] },
                   payload: { type: 'object' },
                   reason: { type: 'string' },
                 },
