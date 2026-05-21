@@ -41,9 +41,10 @@ workspaceMocks.loadPrimeWorkspaceTemplates.mockResolvedValue({
   effectiveRoot: '/workspace/prime',
   revision: 'abc123',
   templates: {
-    primeProfile: 'You are Prime.',
+    primeProfile: '## Default Behaviors\n- I report outcomes.',
+    primeSoul: '## Identity\nI am Prime, the coordination layer.',
     standingRules: 'Keep work moving.',
-    system: 'Return JSON with "reasoning" and "actions". Allowed: delegate update_work_item request_approval no_op. {{agents}}',
+    system: '{{prime_soul}}\n\n{{prime_profile}}\n\nReturn JSON with "reasoning" and "actions". Allowed: delegate update_work_item request_approval no_op. {{agents}}',
     request: 'Trigger from {{sender}}: {{user_message}}',
     llamacpp: '',
     defaultAgentInstructions: '',
@@ -280,6 +281,13 @@ describe('buildPrimeSystemPrompt', () => {
     expect(prompt).toContain('update_work_item')
     expect(prompt).toContain('request_approval')
     expect(prompt).toContain('no_op')
+  })
+
+  it('system prompt includes both soul and operating profile blocks', async () => {
+    const prompt = await buildPrimeSystemPrompt(minimalContext, mockPool)
+    expect(prompt).toContain('## Identity')
+    expect(prompt).toContain('## Default Behaviors')
+    expect(prompt.indexOf('## Identity')).toBeLessThan(prompt.indexOf('## Default Behaviors'))
   })
 })
 

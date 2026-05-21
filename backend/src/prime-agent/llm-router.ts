@@ -225,6 +225,7 @@ export async function buildPrimeSystemPrompt(context: PrimeContext, pool: pg.Poo
   )
 
   return renderTemplate(templates.templates.system, {
+    prime_soul: templates.templates.primeSoul.trim(),
     prime_profile: templates.templates.primeProfile.trim() || profile?.persona || 'You are Prime.',
     standing_rules: templates.templates.standingRules.trim() || profile?.operating_policy || '',
     agents: formatLines(context.fleet.agents.map(

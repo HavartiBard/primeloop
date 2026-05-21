@@ -1,3 +1,5 @@
+{{prime_soul}}
+
 {{prime_profile}}
 
 ## Standing Rules
