@@ -183,13 +183,21 @@ response: What's up? I'm here and ready for the next task.`,
     expect(decision.response).toBe("What's up? I'm here and ready for the next task.")
   })
 
-  it('rejects empty response on user-facing events', () => {
-    expect(() =>
-      validatePrimeDecision({
-        reasoning: 'Internal note about the request.',
-        actions: [],
-      }, { isUserFacing: true })
-    ).toThrow('Prime decision response must be at least 1 character')
+  it('falls back to reasoning when response is missing on user-facing events', () => {
+    const decision = validatePrimeDecision({
+      reasoning: 'Internal note about the request.',
+      actions: [],
+    }, { isUserFacing: true })
+    expect(decision.response).toBe('Internal note about the request.')
+  })
+
+  it('falls back to reasoning when response is empty string on user-facing events', () => {
+    const decision = validatePrimeDecision({
+      reasoning: 'Valid reasoning here.',
+      response: '',
+      actions: [],
+    }, { isUserFacing: true })
+    expect(decision.response).toBe('Valid reasoning here.')
   })
 
   it('accepts short response when no substantive actions (conversational)', () => {
@@ -248,7 +256,8 @@ response: What's up? I'm here and ready for the next task.`,
     }, { isUserFacing: false })
 
     expect(decision.reasoning).toBe('Cron check complete. No action needed.')
-    expect(decision.response).toBeUndefined()
+    // response falls back to reasoning when not explicitly provided
+    expect(decision.response).toBe('Cron check complete. No action needed.')
   })
 })
 

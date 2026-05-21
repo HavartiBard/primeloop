@@ -174,8 +174,11 @@ function normalizePrimeDecisionTextFields(value: Record<string, unknown>): {
     return labeled
   }
 
+  // No response field provided — use reasoning as the fallback for user-facing events.
+  // This covers cases where the LLM returns only { reasoning, actions } without a response.
   return {
     reasoning: explicitReasoning,
+    response: explicitReasoning || undefined,
   }
 }
 
