@@ -54,6 +54,7 @@ const WORKSPACE_FILE_DIRS = ['agents', 'prompts', 'skills', 'policies', 'memory'
 const EDITABLE_EXTENSIONS = new Set(['.md', '.txt', '.yaml', '.yml', '.json'])
 const TEMPLATE_PATHS = {
   primeProfile: 'agents/prime.md',
+  primeSoul: 'agents/prime-soul.md',
   standingRules: 'policies/standing-rules.md',
   system: 'prompts/prime/system.md',
   request: 'prompts/prime/request.md',
@@ -230,8 +231,9 @@ export async function writeWorkspaceFile(
 
 export async function loadPrimeWorkspaceTemplates(pool: pg.Pool): Promise<WorkspaceTemplateBundle> {
   const status = await ensureWorkspaceScaffold(pool)
-  const [primeProfile, standingRules, system, request, llamacpp, defaultAgentInstructions, defaultAgentSoul, delegationTask] = await Promise.all([
+  const [primeProfile, primeSoul, standingRules, system, request, llamacpp, defaultAgentInstructions, defaultAgentSoul, delegationTask] = await Promise.all([
     readWorkspaceOrFallback(status.effective_root, TEMPLATE_PATHS.primeProfile, 'agents/prime.md'),
+    readWorkspaceOrFallback(status.effective_root, TEMPLATE_PATHS.primeSoul, 'agents/prime-soul.md'),
     readWorkspaceOrFallback(status.effective_root, TEMPLATE_PATHS.standingRules, 'policies/standing-rules.md'),
     readWorkspaceOrFallback(status.effective_root, TEMPLATE_PATHS.system, 'prime/system.md'),
     readWorkspaceOrFallback(status.effective_root, TEMPLATE_PATHS.request, 'prime/request.md'),
@@ -246,6 +248,7 @@ export async function loadPrimeWorkspaceTemplates(pool: pg.Pool): Promise<Worksp
     revision: gitMeta.lastCommit,
     templates: {
       primeProfile,
+      primeSoul,
       standingRules,
       system,
       request,
@@ -321,6 +324,8 @@ function keyToFallbackPath(key: keyof typeof TEMPLATE_PATHS): string {
   switch (key) {
     case 'primeProfile':
       return 'agents/prime.md'
+    case 'primeSoul':
+      return 'agents/prime-soul.md'
     case 'standingRules':
       return 'policies/standing-rules.md'
     case 'system':
