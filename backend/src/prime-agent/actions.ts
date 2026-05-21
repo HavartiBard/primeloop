@@ -171,6 +171,52 @@ async function dispatchRequestApproval(
     throw new Error('request_approval requires action text')
   }
 
+  // Deduplication: check if a similar pending approval already exists
+  const normalizedAction = approvalAction.toLowerCase().replace(/\s+/g, ' ').trim()
+  const newKeywords = extractKeywords(normalizedAction)
+
+  const { rows: existingApprovals } = await pool.query(
+    `SELECT approval_id, action, run_id, status, created_at::text
+     FROM approvals
+     WHERE status = 'pending'
+     ORDER BY created_at DESC
+     LIMIT 20`
+  )
+
+  // First try exact match, then fall back to keyword overlap (≥3 shared keywords)
+  let existingMatch = existingApprovals.find((a: { action: string }) =>
+    a.action.toLowerCase().replace(/\s+/g, ' ').trim() === normalizedAction
+  )
+  if (!existingMatch) {
+    for (const candidate of existingApprovals) {
+      const candidateKeywords = extractKeywords(candidate.action.toLowerCase().replace(/\s+/g, ' ').trim())
+      const sharedKeywords = newKeywords.filter((kw: string) => candidateKeywords.includes(kw))
+      if (sharedKeywords.length >= 3) {
+        existingMatch = candidate
+        break
+      }
+    }
+  }
+  if (existingMatch) {
+    // Reuse the existing approval instead of creating a duplicate
+    const existingWorkItem = await pool.query(
+      `SELECT id, title, description, status, lane, owner_label, metadata, created_at::text, updated_at::text
+       FROM work_items WHERE id = $1`,
+      [existingMatch.run_id]
+    )
+    return {
+      action,
+      status: 'dispatched',
+      work_item: existingWorkItem.rows[0] ?? null,
+      approval: {
+        approval_id: existingMatch.approval_id,
+        run_id: existingMatch.run_id,
+        action: existingMatch.action,
+        status: existingMatch.status,
+      },
+    }
+  }
+
   const approver = stringField(action.payload, 'approver') || 'human'
   const context = objectField(action.payload, 'context') ?? {}
 
@@ -301,3 +347,32 @@ function objectField(payload: Record<string, unknown>, key: string): Record<stri
     ? value as Record<string, unknown>
     : undefined
 }
+
+const STOP_WORDS = new Set([
+  'a', 'an', 'the', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
+  'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should',
+  'may', 'might', 'shall', 'can', 'need', 'dare', 'ought', 'used',
+  'to', 'of', 'in', 'for', 'on', 'with', 'at', 'by', 'from', 'as',
+  'into', 'through', 'during', 'before', 'after', 'above', 'below',
+  'between', 'out', 'off', 'over', 'under', 'again', 'further', 'then',
+  'once', 'here', 'there', 'when', 'where', 'why', 'how', 'all', 'both',
+  'each', 'few', 'more', 'most', 'other', 'some', 'such', 'no', 'nor',
+  'not', 'only', 'own', 'same', 'so', 'than', 'too', 'very', 'just',
+  'because', 'but', 'and', 'or', 'if', 'while', 'this', 'that', 'these',
+  'those', 'i', 'me', 'my', 'we', 'our', 'you', 'your', 'it', 'its',
+  'they', 'them', 'their', 'what', 'which', 'who', 'whom',
+  'any', 'must', 'required', 'proceeding', 'proceed', 'proceeds',
+  'without', 'explicit', 'user', 'approval', 'standing', 'rules',
+  'per', 'mandate', 'require', 'requires', 'prohibit', 'prohibits',
+  'initiating', 'initiate', 'initiated', 'cannot',
+  'next', 'smallest', 'useful', 'step', 'break', 'logjam', 'efficiently',
+  'compliance', 'maintain', 'enable', 'unblock', 'progress',
+  'granted', 'yet', 'currently', 'exists', 'exist', 'none',
+])
+
+function extractKeywords(text: string): string[] {
+  return text
+    .split(/[^a-z0-9]+/)
+    .filter((word) => word.length >= 3 && !STOP_WORDS.has(word))
+}
+

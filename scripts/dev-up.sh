@@ -38,15 +38,12 @@ kill_listeners_on_port() {
   local port="$1"
   local pids=""
 
-  if command -v lsof >/dev/null 2>&1; then
-    pids="$(lsof -tiTCP:${port} -sTCP:LISTEN 2>/dev/null || true)"
-  elif command -v fuser >/dev/null 2>&1; then
-    pids="$(fuser "${port}/tcp" 2>/dev/null || true)"
-  elif command -v ss >/dev/null 2>&1; then
+  # Use ss to find PIDs listening on the port
+  if command -v ss >/dev/null 2>&1; then
     pids="$(
       ss -ltnp 2>/dev/null \
         | awk -v target=":${port}" '$4 ~ target { print $NF }' \
-        | rg -o '[0-9]+' \
+        | sed -n 's/.*pid=\([0-9]*\).*/\1/p' \
         | sort -u \
         || true
     )"
@@ -87,14 +84,34 @@ cleanup() {
 
 trap cleanup EXIT INT TERM
 
+# Stop Docker containers that conflict with local dev ports
+stop_docker_containers() {
+  if command -v docker >/dev/null 2>&1; then
+    for container in agent-control-plane-backend-dev-1 agent-cp-backend-1; do
+      if docker ps --format '{{.Names}}' | grep -q "^${container}$"; then
+        echo "Stopping Docker container ${container} (conflicts with local dev)"
+        docker stop "${container}" 2>/dev/null || true
+      fi
+    done
+  fi
+}
+
+stop_docker_containers
 kill_listeners_on_port "${PORT}"
 kill_listeners_on_port "${WEB_PORT}"
+
+echo "Starting local dev backend (tsx watch) on port ${PORT}"
+echo "Starting local dev web (vite) on port ${WEB_PORT}"
+echo "Press Ctrl+C to stop both"
+echo
 
 (
   cd "${ROOT_DIR}/backend"
   npm run dev
 ) &
 backend_pid=$!
+
+sleep 1  # Give backend time to start before web connects
 
 (
   cd "${ROOT_DIR}/web"

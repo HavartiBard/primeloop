@@ -216,6 +216,14 @@ export async function buildPrimeSystemPrompt(context: PrimeContext, pool: pg.Poo
   const profile = rows[0]
   const templates = await loadPrimeWorkspaceTemplates(pool)
 
+  const { rows: pendingApprovals } = await pool.query(
+    `SELECT approval_id, action, created_at::text
+     FROM approvals
+     WHERE status = 'pending'
+     ORDER BY created_at DESC
+     LIMIT 20`
+  )
+
   return renderTemplate(templates.templates.system, {
     prime_profile: templates.templates.primeProfile.trim() || profile?.persona || 'You are Prime.',
     standing_rules: templates.templates.standingRules.trim() || profile?.operating_policy || '',
@@ -225,6 +233,11 @@ export async function buildPrimeSystemPrompt(context: PrimeContext, pool: pg.Poo
     work_items: formatLines(context.fleet.workItems.map(
       (w) => `- [${w.id.slice(0, 8)}] ${w.title} (${w.status}/${w.lane})`,
     )),
+    pending_approvals: pendingApprovals.length > 0
+      ? formatLines(pendingApprovals.map((a: { approval_id: string; action: string; created_at: string }) =>
+        `- [${a.approval_id}] ${a.action} (since ${a.created_at})`,
+      ))
+      : '(none)',
     delegations: formatLines(context.fleet.delegations.map(
       (d) => `- [${d.id.slice(0, 8)}] ${d.capability} -> ${d.to_agent_id ?? 'unassigned'} (${d.status})`,
     )),
