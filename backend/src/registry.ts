@@ -180,6 +180,11 @@ export async function getAgent(pool: pg.Pool, id: string): Promise<RegistryAgent
   return rows[0] ?? null
 }
 
+export async function getAgentByRole(pool: pg.Pool, role: string): Promise<RegistryAgent | null> {
+  const { rows } = await pool.query('SELECT * FROM agents WHERE role = $1 LIMIT 1', [role])
+  return rows[0] ?? null
+}
+
 export async function insertAgent(
   pool: pg.Pool,
   data: Omit<RegistryAgent, 'id' | 'created_at'>
