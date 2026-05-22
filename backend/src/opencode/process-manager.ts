@@ -5,7 +5,7 @@ import { promisify } from 'node:util'
 import type pg from 'pg'
 import { getOrCreateAgentToken } from '../agent-tokens.js'
 import { decryptEnvVars } from '../mcp-registry.js'
-import { listControlPlaneTools, type McpToolDefinition } from '../mcp/service.js'
+import { listControlPlaneToolsForGrant, type McpToolDefinition } from '../mcp/service.js'
 import { loadWorkspaceTemplate, renderTemplate } from '../workspace.js'
 import {
   getProviderApiKey,
@@ -289,7 +289,6 @@ export class OpenCodeProcessManager {
     const assignedServers = await this.listAssignedMcpServers(agent.id)
     const controlPlaneToken = await getOrCreateAgentToken(this.pool, agent.id)
     const model = await this.resolveModel(agent)
-    const controlPlaneTools = await listControlPlaneTools()
     const fallbackProviderAdapters = assignedServers.map((server) => ({
       kind: server.type,
       ref: server.name,
@@ -298,7 +297,8 @@ export class OpenCodeProcessManager {
         : { command: server.command ?? null, args: server.args ?? [] },
     }))
 
-    await resolveToolGrant(this.pool, {
+    // Slice 3: persist a baseline tool grant for this agent
+    const grant = await resolveToolGrant(this.pool, {
       agent,
       routingCapability: agent.role ?? agent.capabilities[0] ?? agent.type,
       fallbackProviderAdapters,
@@ -308,6 +308,12 @@ export class OpenCodeProcessManager {
         assigned_mcp_servers: assignedServers.map((server) => server.name),
       },
     })
+
+    // Slice 4: filter control-plane tools based on resolved grant (CP-001, CP-004)
+    const controlPlaneTools = listControlPlaneToolsForGrant(
+      grant.granted_primitives ?? [],
+      false,
+    )
 
     await mkdir(worktreePath, { recursive: true })
     await writeFile(path.join(worktreePath, 'AGENTS.md'), `${(await defaultAgentInstructions(this.pool, agent)).trim()}\n`)

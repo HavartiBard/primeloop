@@ -39,7 +39,37 @@ export interface McpToolDefinition {
     readOnlyHint?: boolean
   }
   prime_only?: boolean
+  primitive_name?: string
 }
+
+/**
+ * Canonical platform primitive → control-plane tool name mapping.
+ * Used by listControlPlaneToolsForGrant() to filter tools based on resolved grants.
+ */
+const PRIMITIVE_TO_TOOL: Record<string, string> = {
+  delegate: 'delegate_to_agent',
+  request_peer_review: 'request_peer_review',
+  request_approval: 'request_approval',
+  update_work_item: 'update_work_item',
+  'soul.read': 'soul_read',
+  'soul.write': 'soul_update',
+  'memory.read': 'memory_search',
+  'memory.write': 'memory_store',
+  'lesson.read': 'lessons_check',
+  'lesson.write': 'lessons_log',
+  'context.assemble': 'context_get',
+  'loop.inspect': 'loop_check',
+  'snapshot.create': 'snapshot_create',
+  'fleet.learnings': 'query_fleet_learnings',
+  'pattern.publish': 'publish_pattern',
+  'agent.soul.update': 'update_agent_soul',
+  'approval.resolve': 'resolve_approval',
+}
+
+/** Reverse mapping: tool name → canonical primitive name */
+const TOOL_TO_PRIMITIVE: Record<string, string> = Object.fromEntries(
+  Object.entries(PRIMITIVE_TO_TOOL).map(([primitive, tool]) => [tool, primitive]),
+) as Record<string, string>
 
 interface FleetLearningResult {
   kind: 'memory' | 'lesson'
@@ -133,6 +163,7 @@ export async function createPrimePortalContext(pool: pg.Pool): Promise<AgentAuth
   }
 }
 
+// Attach primitive_name to each tool definition for grant filtering
 const TOOL_DEFINITIONS: McpToolDefinition[] = [
     {
       name: 'delegate_to_agent',
@@ -670,6 +701,33 @@ function validateValue(path: string, schema: JsonSchemaShape, value: unknown): v
 
 export async function listControlPlaneTools(): Promise<McpToolDefinition[]> {
   return TOOL_DEFINITIONS
+}
+
+/**
+ * Return only the control-plane tools that the agent is allowed to use
+ * based on its resolved tool grant's granted_primitives.
+ *
+ * - prime_only tools are always excluded unless is_prime is true.
+ * - If granted_primitives is empty, all non-prime-only tools are returned
+ *   (backward compat for agents without resolved grants yet).
+ * - Otherwise, only tools whose canonical primitive name is in granted_primitives.
+ */
+export function listControlPlaneToolsForGrant(
+  grantedPrimitives: string[],
+  isPrime: boolean,
+): McpToolDefinition[] {
+  return TOOL_DEFINITIONS.filter((tool) => {
+    // Always exclude prime_only tools from non-Prime agents (CP-003)
+    if (tool.prime_only && !isPrime) return false
+
+    // If no grant specified, return all non-prime-only tools (backward compat)
+    if (grantedPrimitives.length === 0) return true
+
+    // Check if this tool's canonical primitive is in the granted set
+    const primitive = TOOL_TO_PRIMITIVE[tool.name]
+    if (!primitive) return false
+    return grantedPrimitives.includes(primitive)
+  })
 }
 
 export function getControlPlaneToolDefinition(name: string): McpToolDefinition | undefined {

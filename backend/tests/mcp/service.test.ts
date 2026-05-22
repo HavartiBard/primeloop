@@ -5,6 +5,7 @@ import {
   callControlPlaneTool,
   getControlPlaneToolDefinition,
   listControlPlaneTools,
+  listControlPlaneToolsForGrant,
   type AgentAuthContext,
 } from '../../src/mcp/service.js'
 
@@ -241,5 +242,46 @@ describe('control-plane MCP service', () => {
     expect(Array.isArray(result.patterns)).toBe(true)
     expect(Array.isArray(result.memories)).toBe(true)
     expect(Array.isArray(result.lessons)).toBe(true)
+  })
+
+  it('listControlPlaneToolsForGrant excludes prime_only tools for non-Prime agents', () => {
+    const tools = listControlPlaneToolsForGrant([], false)
+    const primeOnlyTools = tools.filter((tool) => tool.prime_only)
+    expect(primeOnlyTools).toHaveLength(0)
+  })
+
+  it('listControlPlaneToolsForGrant returns all non-prime-only tools when grant is empty', () => {
+    const tools = listControlPlaneToolsForGrant([], false)
+    // 19 total tools minus 4 prime_only = 15
+    expect(tools.length).toBe(15)
+  })
+
+  it('listControlPlaneToolsForGrant returns only granted primitives', () => {
+    const tools = listControlPlaneToolsForGrant(['delegate', 'update_work_item', 'soul.read'], false)
+    const names = tools.map((t) => t.name)
+    expect(names).toContain('delegate_to_agent')
+    expect(names).toContain('update_work_item')
+    expect(names).toContain('soul_read')
+    expect(names).not.toContain('memory_search')
+    expect(names).not.toContain('query_fleet_learnings')
+  })
+
+  it('listControlPlaneToolsForGrant includes prime_only tools when is_prime is true', () => {
+    const tools = listControlPlaneToolsForGrant(
+      ['fleet.learnings', 'approval.resolve', 'delegate'],
+      true,
+    )
+    const names = tools.map((t) => t.name)
+    expect(names).toContain('query_fleet_learnings')
+    expect(names).toContain('resolve_approval')
+    expect(names).toContain('delegate_to_agent')
+  })
+
+  it('listControlPlaneToolsForGrant never returns non-granted tools even for Prime', () => {
+    const tools = listControlPlaneToolsForGrant(['delegate'], true)
+    const names = tools.map((t) => t.name)
+    expect(names).toContain('delegate_to_agent')
+    expect(names).not.toContain('query_fleet_learnings')
+    expect(names).not.toContain('update_work_item')
   })
 })
