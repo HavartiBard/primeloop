@@ -190,9 +190,6 @@ export class OpenCodeProcessManager {
   async syncAgent(agent: RegistryAgent): Promise<RegistryAgent> {
     if (!isManagedLocalAgent(agent)) {
       this.stopAgent(agent.id)
-      if (agent.state && agent.state !== 'terminated' && agent.state !== 'error') {
-        await this.setAgentState(agent.id, 'terminated', 'managed local agent disabled or unmanaged')
-      }
       return agent
     }
 

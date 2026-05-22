@@ -22,7 +22,7 @@ export async function routeResult(
   const threadId = typeof delegation.request['thread_id'] === 'string'
     ? delegation.request['thread_id']
     : undefined
-  const nextState = await resolveNextAgentState(pool, delegation.to_agent_id, outcome.success)
+  const nextState = await resolveNextAgentState(pool, delegation.to_agent_id)
 
   if (outcome.success) {
     await pool.query(
@@ -116,10 +116,8 @@ export async function routeResult(
 async function resolveNextAgentState(
   pool: pg.Pool,
   agentId: string | null | undefined,
-  success: boolean,
 ): Promise<AgentState | null> {
   if (!agentId) return null
-  if (!success) return 'error'
 
   const { rows } = await pool.query<{ tier: string | null }>(
     `SELECT tier FROM agents

@@ -227,6 +227,27 @@ describe('OpenCodeProcessManager', () => {
     expect(child.kill).toHaveBeenCalled()
   })
 
+  it('does not force unmanaged agents to terminated during sync', async () => {
+    const query = vi.fn(async (sql: string) => {
+      if (isLifecycleUpdate(sql) || isRuntimeEventInsert(sql)) {
+        throw new Error(`unexpected lifecycle query: ${sql}`)
+      }
+      throw new Error(`unexpected query: ${sql}`)
+    })
+    const pool = { query } as unknown as pg.Pool
+    const manager = new OpenCodeProcessManager(pool)
+    const unmanaged = createAgent({
+      execution_mode: 'external',
+      enabled: true,
+      state: 'ready',
+    })
+
+    const result = await manager.syncAgent(unmanaged)
+
+    expect(result).toEqual(unmanaged)
+    expect(query).not.toHaveBeenCalled()
+  })
+
   it('getRunningHarness returns undefined for an agent that has not started yet', () => {
     const manager = new OpenCodeProcessManager({} as unknown as pg.Pool)
     const result = manager.getRunningHarness('unknown-agent-id')
