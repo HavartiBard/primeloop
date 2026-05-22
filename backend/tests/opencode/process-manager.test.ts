@@ -108,6 +108,7 @@ describe('OpenCodeProcessManager', () => {
     expect(opencodeConfig).toContain('control-plane')
     expect(opencodeConfig).toContain('soullayer')
     expect(opencodeConfig).toContain('http://gitea:3000/mcp')
+    expect(query).toHaveBeenCalledWith(expect.stringContaining('JOIN agent_mcp_assignments ama'), ['agent-1'])
   })
 
   it('allocates a port and worktree path when agent metadata is missing', async () => {
