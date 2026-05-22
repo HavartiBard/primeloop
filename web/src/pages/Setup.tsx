@@ -43,11 +43,31 @@ interface RoutingDraft {
   discussion: RoutingEntry[]
 }
 
-interface PersonaDraft {
+export interface ProfileSectionSet {
+  identity: string
+  voice_tone: string
+  decision_style: string
+  default_behaviors: string
+  approval_thresholds: string
+}
+
+export interface ProfileDraft {
   name: string
-  focus: string
-  tone: 'direct' | 'thorough' | 'collaborative'
-  instructions: string
+  view_mode: 'sections' | 'markdown'
+  soul: { identity: string; voice_tone: string; decision_style: string }
+  operating: { default_behaviors: string; approval_thresholds: string }
+  shipped_defaults: ProfileSectionSet
+}
+
+export const INITIAL_PROFILE_STATE: ProfileDraft = {
+  name: 'Prime',
+  view_mode: 'sections',
+  soul:      { identity: '', voice_tone: '', decision_style: '' },
+  operating: { default_behaviors: '', approval_thresholds: '' },
+  shipped_defaults: {
+    identity: '', voice_tone: '', decision_style: '',
+    default_behaviors: '', approval_thresholds: '',
+  },
 }
 
 interface RulesDraft {
@@ -65,7 +85,7 @@ interface WorkspaceDraft {
 interface WizardState {
   providers: ProviderDraft[]
   routing: RoutingDraft
-  persona: PersonaDraft
+  profile: ProfileDraft
   rules: RulesDraft
   costControls: { monthlyTokenBudget: number }
   workspace: WorkspaceDraft
@@ -78,7 +98,7 @@ const INITIAL_STATE: WizardState = {
     { name: 'local-main', type: 'ollama', base_url: 'http://localhost:11434', model: '', active: false },
   ],
   routing: { planning: [], dispatching: [], discussion: [] },
-  persona: { name: 'Prime', focus: '', tone: 'direct', instructions: '' },
+  profile:   INITIAL_PROFILE_STATE,
   rules: { presets: [], custom: '' },
   costControls: { monthlyTokenBudget: 0 },
   workspace: { mode: 'local', root_path: '../.agent-workspace', remote_url: '', branch: 'main' },
@@ -153,11 +173,15 @@ function stepProgress(state: WizardState, step: Step): number {
   }
 
   if (step === 3) {
-    let score = 0.15
-    if (state.persona.name.trim()) score += 0.25
-    if (state.persona.focus.trim()) score += 0.35
-    if (state.persona.tone) score += 0.15
-    if (state.persona.instructions.trim()) score += Math.min(0.1, state.persona.instructions.trim().length / 400)
+    let score = 0
+    if (state.profile.name.trim()) score += 0.2
+    const profileSections: (keyof ProfileSectionSet)[] = ['identity', 'voice_tone', 'decision_style', 'default_behaviors', 'approval_thresholds']
+    for (const key of profileSections) {
+      const val = SOUL_SECTION_KEYS.includes(key)
+        ? (state.profile.soul as Record<string, string>)[key]
+        : (state.profile.operating as Record<string, string>)[key]
+      if (val?.trim()) score += 0.16
+    }
     return clamp01(score)
   }
 
@@ -186,10 +210,12 @@ function stepProgress(state: WizardState, step: Step): number {
   let score = 0.15
   if (activeProviders.length > 0) score += 0.25
   if (Object.values(state.routing).some((entries) => entries.length > 0)) score += 0.2
-  if (state.persona.focus.trim()) score += 0.2
+  if (state.profile.soul.identity.trim()) score += 0.2
   if (state.rules.presets.length > 0 || state.rules.custom.trim()) score += 0.2
   return clamp01(score)
 }
+
+const SOUL_SECTION_KEYS: (keyof ProfileSectionSet)[] = ['identity', 'voice_tone', 'decision_style']
 
 function ProviderLogo({ draft }: { draft: ProviderDraft }) {
   const active = draft.active
@@ -838,79 +864,221 @@ function StepRouting({ state, onChange }: { state: WizardState; onChange: (s: Wi
   )
 }
 
-const TONE_OPTIONS: Array<{ value: PersonaDraft['tone']; label: string }> = [
-  { value: 'direct', label: 'Direct & concise' },
-  { value: 'thorough', label: 'Thorough & deliberate' },
-  { value: 'collaborative', label: 'Collaborative & inquisitive' },
-]
+const SECTION_LABELS: Record<keyof ProfileSectionSet, string> = {
+  identity: 'Identity',
+  voice_tone: 'Voice & Tone',
+  decision_style: 'Decision Style',
+  default_behaviors: 'Default Behaviors',
+  approval_thresholds: 'Approval Thresholds',
+}
 
-function StepPersonality({ state, onChange }: { state: WizardState; onChange: (s: WizardState) => void }) {
-  const [showAdvanced, setShowAdvanced] = useState(false)
-  const update = (patch: Partial<PersonaDraft>) =>
-    onChange({ ...state, persona: { ...state.persona, ...patch } })
+const SOUL_KEYS: (keyof ProfileSectionSet)[] = ['identity', 'voice_tone', 'decision_style']
+const OP_KEYS: (keyof ProfileSectionSet)[] = ['default_behaviors', 'approval_thresholds']
+
+function getSection(profile: ProfileDraft, key: keyof ProfileSectionSet): string {
+  if (SOUL_KEYS.includes(key)) return profile.soul[key as keyof ProfileDraft['soul']]
+  return profile.operating[key as keyof ProfileDraft['operating']]
+}
+
+function withSection(profile: ProfileDraft, key: keyof ProfileSectionSet, value: string): ProfileDraft {
+  if (SOUL_KEYS.includes(key)) {
+    return { ...profile, soul: { ...profile.soul, [key]: value } }
+  }
+  return { ...profile, operating: { ...profile.operating, [key]: value } }
+}
+
+export function StepPersonality({ profile, onChange }: { profile: ProfileDraft; onChange: (next: ProfileDraft) => void }) {
+  const setMode = (mode: ProfileDraft['view_mode']) => onChange({ ...profile, view_mode: mode })
+
+  const clearAll = () => onChange({
+    ...profile,
+    soul: { identity: '', voice_tone: '', decision_style: '' },
+    operating: { default_behaviors: '', approval_thresholds: '' },
+  })
+
+  const resetAll = () => onChange({
+    ...profile,
+    soul: {
+      identity:       profile.shipped_defaults.identity,
+      voice_tone:     profile.shipped_defaults.voice_tone,
+      decision_style: profile.shipped_defaults.decision_style,
+    },
+    operating: {
+      default_behaviors:   profile.shipped_defaults.default_behaviors,
+      approval_thresholds: profile.shipped_defaults.approval_thresholds,
+    },
+  })
+
+  const renderSectionField = (key: keyof ProfileSectionSet) => {
+    const value = getSection(profile, key)
+    const diverges = value.trim() !== profile.shipped_defaults[key].trim()
+    return (
+      <div key={key}>
+        <label className={LABEL_CLS}>{SECTION_LABELS[key]}</label>
+        <textarea
+          aria-label={SECTION_LABELS[key]}
+          value={value}
+          onChange={(e) => onChange(withSection(profile, key, e.target.value))}
+          rows={6}
+          className={INPUT_CLS + ' resize-y'}
+        />
+        {diverges && (
+          <button
+            type="button"
+            onClick={() => onChange(withSection(profile, key, profile.shipped_defaults[key]))}
+            aria-label={`Reset ${SECTION_LABELS[key]}`}
+            className="mt-1 text-xs text-[var(--muted)] hover:text-[var(--text)] underline"
+          >
+            Reset {SECTION_LABELS[key]} to default
+          </button>
+        )}
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-4">
-      <div>
-        <label className={LABEL_CLS}>Name</label>
-        <input
-          value={state.persona.name}
-          onChange={(e) => update({ name: e.target.value })}
-          placeholder="Prime"
-          className={INPUT_CLS}
-        />
-      </div>
-      <div>
-        <label className={LABEL_CLS}>Focus</label>
-        <input
-          value={state.persona.focus}
-          onChange={(e) => update({ focus: e.target.value })}
-          placeholder="e.g. Senior backend engineer, DevOps specialist"
-          className={INPUT_CLS}
-        />
-      </div>
-      <div>
-        <label className={LABEL_CLS}>Tone</label>
-        <div className="flex flex-wrap gap-2">
-          {TONE_OPTIONS.map((opt) => (
-            <button
-              key={opt.value}
-              type="button"
-              onClick={() => update({ tone: opt.value })}
-              className={`px-3 py-1.5 text-xs rounded-full border transition ${
-                state.persona.tone === opt.value
-                  ? 'border-[var(--sel-bd)] bg-[var(--sel-bg)] text-blue-400'
-                  : 'border-[var(--border-soft)] text-[var(--muted)] hover:text-[var(--text)]'
-              }`}
-            >
-              {opt.label}
-            </button>
-          ))}
+      <div className="flex items-end justify-between gap-3">
+        <div className="flex-1">
+          <label className={LABEL_CLS}>Name</label>
+          <input
+            value={profile.name}
+            onChange={(e) => onChange({ ...profile, name: e.target.value })}
+            placeholder="Prime"
+            className={INPUT_CLS}
+          />
+        </div>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            onClick={() => setMode('sections')}
+            className={`px-3 py-1.5 text-xs rounded border transition ${profile.view_mode === 'sections' ? 'border-[#6ee7ff] bg-[#1f6feb] text-white' : 'border-[var(--border-soft)] text-[var(--muted)]'}`}
+          >
+            Sections
+          </button>
+          <button
+            type="button"
+            onClick={() => setMode('markdown')}
+            className={`px-3 py-1.5 text-xs rounded border transition ${profile.view_mode === 'markdown' ? 'border-[#6ee7ff] bg-[#1f6feb] text-white' : 'border-[var(--border-soft)] text-[var(--muted)]'}`}
+          >
+            Markdown
+          </button>
         </div>
       </div>
-      <div>
-        <button
-          type="button"
-          onClick={() => setShowAdvanced((v) => !v)}
-          className="flex items-center gap-1 text-xs text-[var(--muted)] hover:text-[var(--text)]"
-        >
-          <span>{showAdvanced ? '▾' : '▸'}</span> Advanced
-        </button>
-        {showAdvanced && (
-          <div className="mt-2">
-            <label className={LABEL_CLS}>Additional instructions</label>
+
+      {profile.view_mode === 'sections' ? (
+        <>
+          <fieldset className="rounded-lg border border-[var(--border-soft)] p-3 space-y-3">
+            <legend className="px-1 text-xs uppercase tracking-[0.14em] text-[var(--muted)]">Who Prime is</legend>
+            {SOUL_KEYS.map(renderSectionField)}
+          </fieldset>
+          <fieldset className="rounded-lg border border-[var(--border-soft)] p-3 space-y-3">
+            <legend className="px-1 text-xs uppercase tracking-[0.14em] text-[var(--muted)]">How Prime works here</legend>
+            {OP_KEYS.map(renderSectionField)}
+          </fieldset>
+        </>
+      ) : (
+        <>
+          <div>
+            <label className={LABEL_CLS}>prime-soul.md</label>
             <textarea
-              value={state.persona.instructions}
-              onChange={(e) => update({ instructions: e.target.value })}
-              placeholder="Behavioral notes, decision-making style, domain expertise, etc."
-              rows={4}
-              className={INPUT_CLS + ' resize-none'}
+              aria-label="prime-soul markdown"
+              value={renderSoulMarkdown(profile)}
+              onChange={(e) => onChange(applySoulMarkdown(profile, e.target.value))}
+              rows={14}
+              className={INPUT_CLS + ' font-mono text-xs resize-y'}
             />
           </div>
-        )}
+          <div>
+            <label className={LABEL_CLS}>prime.md</label>
+            <textarea
+              aria-label="prime operating markdown"
+              value={renderOperatingMarkdown(profile)}
+              onChange={(e) => onChange(applyOperatingMarkdown(profile, e.target.value))}
+              rows={14}
+              className={INPUT_CLS + ' font-mono text-xs resize-y'}
+            />
+          </div>
+        </>
+      )}
+
+      <div className="flex flex-wrap gap-3 pt-2">
+        <button type="button" onClick={clearAll} className={BTN_SECONDARY}>Clear all (start from scratch)</button>
+        <button type="button" onClick={resetAll} className={BTN_SECONDARY}>Reset all to defaults</button>
       </div>
     </div>
   )
+}
+
+function renderSoulMarkdown(p: ProfileDraft): string {
+  const parts: string[] = []
+  if (p.soul.identity.trim())       parts.push(`## Identity\n${p.soul.identity.trim()}`)
+  if (p.soul.voice_tone.trim())     parts.push(`## Voice & Tone\n${p.soul.voice_tone.trim()}`)
+  if (p.soul.decision_style.trim()) parts.push(`## Decision Style\n${p.soul.decision_style.trim()}`)
+  return parts.join('\n\n') + (parts.length ? '\n' : '')
+}
+
+function renderOperatingMarkdown(p: ProfileDraft): string {
+  const parts: string[] = []
+  if (p.operating.default_behaviors.trim())   parts.push(`## Default Behaviors\n${p.operating.default_behaviors.trim()}`)
+  if (p.operating.approval_thresholds.trim()) parts.push(`## Approval Thresholds\n${p.operating.approval_thresholds.trim()}`)
+  return parts.join('\n\n') + (parts.length ? '\n' : '')
+}
+
+function applySoulMarkdown(p: ProfileDraft, md: string): ProfileDraft {
+  const sections = parseMdSections(md, { identity: 'Identity', voice_tone: 'Voice & Tone', decision_style: 'Decision Style' })
+  return { ...p, soul: {
+    identity:       sections.identity ?? '',
+    voice_tone:     sections.voice_tone ?? '',
+    decision_style: sections.decision_style ?? '',
+  } }
+}
+
+function applyOperatingMarkdown(p: ProfileDraft, md: string): ProfileDraft {
+  const sections = parseMdSections(md, { default_behaviors: 'Default Behaviors', approval_thresholds: 'Approval Thresholds' })
+  return { ...p, operating: {
+    default_behaviors:   sections.default_behaviors ?? '',
+    approval_thresholds: sections.approval_thresholds ?? '',
+  } }
+}
+
+function parseMdSections(md: string, headingMap: Record<string, string>): Record<string, string> {
+  const lower: Record<string, string> = {}
+  for (const [key, heading] of Object.entries(headingMap)) lower[heading.toLowerCase()] = key
+  const out: Record<string, string> = {}
+  const lines = md.replace(/\r\n/g, '\n').split('\n')
+  let currentKey: string | null = null
+  let buf: string[] = []
+  const flush = () => {
+    if (currentKey) out[currentKey] = buf.join('\n').replace(/^\n+|\n+$/g, '')
+    buf = []
+  }
+  for (const line of lines) {
+    const m = /^##\s+(.+?)\s*$/.exec(line)
+    if (m) {
+      flush()
+      currentKey = lower[m[1].trim().toLowerCase()] ?? null
+      continue
+    }
+    if (currentKey) buf.push(line)
+  }
+  flush()
+  return out
+}
+
+export function profileSubmitPayload(p: ProfileDraft) {
+  return {
+    name: p.name,
+    soul: {
+      identity:       p.soul.identity,
+      voice_tone:     p.soul.voice_tone,
+      decision_style: p.soul.decision_style,
+    },
+    operating: {
+      default_behaviors:   p.operating.default_behaviors,
+      approval_thresholds: p.operating.approval_thresholds,
+    },
+  }
 }
 
 function StepRules({ state, onChange }: { state: WizardState; onChange: (s: WizardState) => void }) {
@@ -1058,11 +1226,7 @@ function StepIntro() {
   )
 }
 
-const TONE_LABEL: Record<PersonaDraft['tone'], string> = {
-  direct: 'Direct & concise',
-  thorough: 'Thorough & deliberate',
-  collaborative: 'Collaborative & inquisitive',
-}
+
 
 function StepLaunch({ state, onSubmit, submitting, error, onGoToStep }: {
   state: WizardState
@@ -1116,9 +1280,8 @@ function StepLaunch({ state, onSubmit, submitting, error, onGoToStep }: {
           <button type="button" onClick={() => onGoToStep(3)} className="text-xs text-blue-400 hover:underline">Edit</button>
         </div>
         <div className="text-xs text-[var(--muted)] space-y-0.5">
-          <div>Name: <span className="text-[var(--text)]">{state.persona.name || '—'}</span></div>
-          <div>Focus: <span className="text-[var(--text)]">{state.persona.focus || '—'}</span></div>
-          <div>Tone: <span className="text-[var(--text)]">{TONE_LABEL[state.persona.tone]}</span></div>
+          <div>Name: <span className="text-[var(--text)]">{state.profile.name || '—'}</span></div>
+          <div>Voice & Tone: <span className="text-[var(--text)]">{(state.profile.soul.voice_tone?.slice(0, 80) || '—')}{state.profile.soul.voice_tone?.length > 80 ? '…' : ''}</span></div>
         </div>
       </div>
 
@@ -1185,6 +1348,23 @@ export function Setup({ onSkip }: { onSkip?: () => void }) {
   const [step, setStep] = useState<Step>(0)
   const [state, setState] = useState<WizardState>(INITIAL_STATE)
   const [submitting, setSubmitting] = useState(false)
+
+  useEffect(() => {
+    import('../api').then(({ fetchPrimeProfile }) =>
+      fetchPrimeProfile().then((res: any) => {
+        setState((current) => ({
+          ...current,
+          profile: {
+            ...current.profile,
+            name: res.name,
+            soul: res.soul,
+            operating: res.operating,
+            shipped_defaults: res.shipped_defaults,
+          },
+        }))
+      }).catch(() => { /* keep wizard defaults */ })
+    )
+  }, [])
   const [submitError, setSubmitError] = useState<string | null>(null)
   const progress = (STEPS.map((_, index) => stepProgress(state, index as Step)))
   const progressSteps = STEPS.slice(1)
@@ -1211,12 +1391,7 @@ export function Setup({ onSkip }: { onSkip?: () => void }) {
           dispatching: state.routing.dispatching,
           discussion: state.routing.discussion,
         },
-        persona: {
-          name: state.persona.name,
-          focus: state.persona.focus,
-          tone: state.persona.tone,
-          instructions: state.persona.instructions,
-        },
+        profile: profileSubmitPayload(state.profile),
         rules: {
           presets: state.rules.presets,
           custom: state.rules.custom,
@@ -1325,7 +1500,7 @@ export function Setup({ onSkip }: { onSkip?: () => void }) {
           {step === 0 && <StepIntro />}
           {step === 1 && <StepProviders state={state} onChange={setState} />}
           {step === 2 && <StepRouting state={state} onChange={setState} />}
-          {step === 3 && <StepPersonality state={state} onChange={setState} />}
+          {step === 3 && <StepPersonality profile={state.profile} onChange={(next) => setState((s) => ({ ...s, profile: next }))} />}
           {step === 4 && <StepRules state={state} onChange={setState} />}
           {step === 5 && <StepWorkspace state={state} onChange={setState} />}
           {step === 6 && (
