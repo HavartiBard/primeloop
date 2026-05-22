@@ -233,7 +233,7 @@ export async function buildPrimeSystemPrompt(context: PrimeContext, pool: pg.Poo
       (a) => `- ${a.name} [${(a.capabilities as string[]).join(', ')}]${a.enabled ? '' : ' (disabled)'}`,
     )),
     work_items: formatLines(context.fleet.workItems.map(
-      (w) => `- [${w.id.slice(0, 8)}] ${w.title} (${w.status}/${w.lane})`,
+      (w) => `- id=${w.id} ${w.title} (${w.status}/${w.lane})`,
     )),
     pending_approvals: pendingApprovals.length > 0
       ? formatLines(pendingApprovals.map((a: { approval_id: string; action: string; created_at: string }) =>
@@ -241,7 +241,7 @@ export async function buildPrimeSystemPrompt(context: PrimeContext, pool: pg.Poo
       ))
       : '(none)',
     delegations: formatLines(context.fleet.delegations.map(
-      (d) => `- [${d.id.slice(0, 8)}] ${d.capability} -> ${d.to_agent_id ?? 'unassigned'} (${d.status})`,
+      (d) => `- id=${d.id} ${d.capability} -> ${d.to_agent_id ?? 'unassigned'} (${d.status})`,
     )),
     recent_events: formatLines(context.recentEvents.slice(0, 20).map(
       (e) => `- ${e.event_type} by ${e.actor}`,
