@@ -7,14 +7,18 @@ export interface Approval {
   status: 'pending' | 'approved' | 'denied'
   created_at: string
   decided_at?: string
+  title?: string
+  description?: string
 }
 
 export async function listPendingApprovals(pool: pg.Pool): Promise<Approval[]> {
   const { rows } = await pool.query(
-    `SELECT approval_id, run_id, action, status, created_at::text, decided_at::text
-     FROM approvals
-     WHERE status = 'pending'
-     ORDER BY created_at ASC`
+    `SELECT a.approval_id, a.run_id, a.action, a.status, a.created_at::text, a.decided_at::text,
+            wi.title, wi.description
+     FROM approvals a
+     LEFT JOIN work_items wi ON wi.id = a.run_id
+     WHERE a.status = 'pending'
+     ORDER BY a.created_at ASC`
   )
   return rows
 }

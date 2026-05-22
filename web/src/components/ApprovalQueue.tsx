@@ -14,9 +14,16 @@ export function ApprovalQueue({ approvals, onApprove, onDeny }: Props) {
   return (
     <div className="flex flex-col gap-3 p-4">
       {approvals.map((a) => (
-        <div key={a.approval_id} className="bg-gray-900 border border-red-800 rounded p-3">
-          <div className="text-red-400 font-mono text-sm mb-1">{a.action}</div>
-          <div className="text-gray-500 text-xs mb-3">run {a.run_id}</div>
+        <div key={a.approval_id} className="bg-gray-900 border border-red-800 rounded p-4">
+          <div className="text-red-400 font-semibold text-sm mb-2">
+            {a.title || a.action}
+          </div>
+          {a.description && a.description !== a.action && (
+            <div className="text-gray-300 text-sm mb-2 leading-relaxed">
+              {a.description}
+            </div>
+          )}
+          <div className="text-gray-500 text-xs mb-3">requested {new Date(a.created_at).toLocaleString()}</div>
           <div className="flex gap-2">
             <button
               onClick={() => onApprove(a.approval_id)}
