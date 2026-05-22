@@ -462,3 +462,26 @@ export interface ModelCapabilityAssessment {
   warning: string
   isBlocked: boolean
 }
+
+export interface PrimeProfileSoul {
+  identity: string
+  voice_tone: string
+  decision_style: string
+}
+
+export interface PrimeProfileOperating {
+  default_behaviors: string
+  approval_thresholds: string
+}
+
+export type PrimeSectionKey =
+  | 'identity' | 'voice_tone' | 'decision_style'
+  | 'default_behaviors' | 'approval_thresholds'
+
+export interface PrimeProfileResponse {
+  name: string
+  soul: PrimeProfileSoul
+  operating: PrimeProfileOperating
+  defaults_match: Record<PrimeSectionKey, boolean>
+  shipped_defaults: Record<PrimeSectionKey, string>
+}
