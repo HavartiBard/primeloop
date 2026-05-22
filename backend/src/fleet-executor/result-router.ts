@@ -2,6 +2,7 @@ import type pg from 'pg'
 import { appendThreadMessage, type Delegation } from '../runtime.js'
 import type { PrimeQueue } from '../prime-agent/queue.js'
 import type { AgentState } from '../registry.js'
+import { retireEphemeralAgent } from '../ephemeral-templates.js'
 import type { TaskResult } from './harness.js'
 
 export interface ResultRouterDeps {
@@ -77,6 +78,13 @@ export async function routeResult(
   if (delegation.to_agent_id && nextState) {
     if (nextState === 'retiring') {
       await setAgentState(pool, delegation.to_agent_id, 'retiring', `delegation ${delegation.id} completed; teardown starting`)
+
+      // Retire ephemeral agent: revoke grants, persist outcome, keep row for audit
+      await retireEphemeralAgent(pool, delegation.to_agent_id, {
+        success: outcome.success,
+        error: outcome.success ? undefined : outcome.error,
+      })
+
       await setAgentState(pool, delegation.to_agent_id, 'terminated', `delegation ${delegation.id} teardown complete`)
     } else {
       await setAgentState(

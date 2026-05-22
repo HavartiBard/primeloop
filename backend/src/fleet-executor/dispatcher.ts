@@ -5,6 +5,7 @@ import { appendThreadMessage, type Delegation } from '../runtime.js'
 import type { PrimeQueue } from '../prime-agent/queue.js'
 import type { AgentState } from '../registry.js'
 import { loadWorkspaceTemplate, renderTemplate } from '../workspace.js'
+import { spawnEphemeralAgent, retireEphemeralAgent } from '../ephemeral-templates.js'
 import type { AgentHarness, TaskPrompt } from './harness.js'
 import { routeResult } from './result-router.js'
 
@@ -71,9 +72,48 @@ export class FleetDispatcher {
       return
     }
 
-    const harness = this.getHarness(agentId)
+    let harness = this.getHarness(agentId)
+
+    // If no harness exists, check if this is an ephemeral template spawn request
     if (!harness) {
-      // requeue — harness not running yet
+      const templateId = typeof delegation.request['template_id'] === 'string'
+        ? delegation.request['template_id'] as string
+        : undefined
+
+      if (templateId) {
+        try {
+          // Spawn ephemeral agent from template
+          const spawnResult = await spawnEphemeralAgent(this.pool, templateId, {
+            delegationId: delegation.id,
+            workItemId: delegation.work_item_id ?? undefined,
+            taskScope: delegation.request['task_scope'] as Record<string, unknown> | undefined,
+          })
+
+          // Update delegation to point to the spawned agent
+          await this.pool.query(
+            `UPDATE delegations SET to_agent_id = $1 WHERE id = $2`,
+            [spawnResult.agent.id, delegation.id],
+          )
+
+          // Note: harness will be available after process manager syncs the new agent
+          // Requeue for next poll cycle
+          await this.pool.query(
+            `UPDATE delegations SET status='queued', updated_at=now() WHERE id=$1`,
+            [delegation.id],
+          )
+          return
+        } catch (err: unknown) {
+          const message = err instanceof Error ? err.message : String(err)
+          await routeResult(
+            { pool: this.pool, primeQueue: this.primeQueue },
+            delegation,
+            { success: false, error: `ephemeral spawn failed: ${message}` },
+          )
+          return
+        }
+      }
+
+      // No template — requeue for existing agent harness
       await this.pool.query(
         `UPDATE delegations SET status='queued', updated_at=now() WHERE id=$1`,
         [delegation.id],
