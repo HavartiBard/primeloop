@@ -76,6 +76,46 @@ async function dispatchDelegate(
   const requestedTargetId = stringField(action.payload, 'target_agent_id')
   const targetAgent = selectTargetAgent(ctx, capability, requestedTargetId)
 
+  if (!targetAgent) {
+    // No eligible agent — create a pending work item and return no_op instead of an unassigned delegation
+    const pendingWorkItem = await createWorkItem(pool, {
+      title,
+      description,
+      status: 'pending',
+      lane: 'operations',
+      owner_label: coordinatorName,
+      thread_id: threadId,
+      metadata: {
+        source: 'prime-agent',
+        action_type: 'pending_delegation',
+        capability,
+        reason: `No agent available with capability '${capability}'`,
+        requested_target_id: requestedTargetId ?? null,
+      },
+    })
+
+    await insertRuntimeEvent(pool, {
+      event_type: 'prime.action.no_op',
+      actor: coordinatorName,
+      thread_id: threadId,
+      work_item_id: pendingWorkItem.id,
+      payload: {
+        capability,
+        reason: `Cannot delegate: no agent available for capability '${capability}'. Work item ${pendingWorkItem.id} created in pending state.`,
+      },
+    })
+
+    return {
+      action: {
+        type: 'no_op',
+        payload: action.payload,
+        reason: `Cannot delegate: no agent available for capability '${capability}'. Work item ${pendingWorkItem.id} created in pending state.`,
+      },
+      status: 'dispatched',
+      work_item: pendingWorkItem,
+    }
+  }
+
   const workItem = await createWorkItem(pool, {
     title,
     description,

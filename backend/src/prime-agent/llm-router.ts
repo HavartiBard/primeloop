@@ -229,9 +229,11 @@ export async function buildPrimeSystemPrompt(context: PrimeContext, pool: pg.Poo
     prime_soul: templates.templates.primeSoul.trim(),
     prime_profile: templates.templates.primeProfile.trim() || profile?.persona || 'You are Prime.',
     standing_rules: templates.templates.standingRules.trim() || profile?.operating_policy || '',
-    agents: formatLines(context.fleet.agents.map(
-      (a) => `- ${a.name} [${(a.capabilities as string[]).join(', ')}]${a.enabled ? '' : ' (disabled)'}`,
-    )),
+    agents: context.fleet.agents.length > 0
+      ? formatLines(context.fleet.agents.map(
+        (a) => `- ${a.name} [${(a.capabilities as string[]).join(', ')}]${a.enabled ? '' : ' (disabled)'}`,
+      ))
+      : '(no agents available — respond directly to the user)',
     work_items: formatLines(context.fleet.workItems.map(
       (w) => `- id=${w.id} ${w.title} (${w.status}/${w.lane})`,
     )),
