@@ -174,6 +174,19 @@ export async function runMigrations(pool: pg.Pool): Promise<void> {
       updated_at     TIMESTAMPTZ NOT NULL DEFAULT now()
     );
 
+    CREATE TABLE IF NOT EXISTS capability_profiles (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      name TEXT NOT NULL UNIQUE,
+      description TEXT,
+      platform_primitives JSONB NOT NULL DEFAULT '[]',
+      capability_bundles JSONB NOT NULL DEFAULT '[]',
+      deny_rules JSONB NOT NULL DEFAULT '[]',
+      approval_rules JSONB NOT NULL DEFAULT '{}',
+      config JSONB NOT NULL DEFAULT '{}',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+
     CREATE TABLE IF NOT EXISTS tool_servers (
       id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       name       TEXT NOT NULL UNIQUE,
@@ -263,8 +276,19 @@ export async function runMigrations(pool: pg.Pool): Promise<void> {
 
     ALTER TABLE agents ADD COLUMN IF NOT EXISTS local_port INTEGER;
     ALTER TABLE agents ADD COLUMN IF NOT EXISTS worktree_path TEXT;
+    ALTER TABLE agents ADD COLUMN IF NOT EXISTS workspace_root TEXT;
     ALTER TABLE agents ADD COLUMN IF NOT EXISTS system_prompt TEXT;
     ALTER TABLE agents ADD COLUMN IF NOT EXISTS soul TEXT;
+    ALTER TABLE agents ADD COLUMN IF NOT EXISTS tier TEXT;
+    ALTER TABLE agents ADD COLUMN IF NOT EXISTS role TEXT;
+    ALTER TABLE agents ADD COLUMN IF NOT EXISTS state TEXT;
+    ALTER TABLE agents ADD COLUMN IF NOT EXISTS persona_file TEXT;
+
+    ALTER TABLE agent_runtime_configs
+      ADD COLUMN IF NOT EXISTS capability_profile_id UUID REFERENCES capability_profiles(id) ON DELETE SET NULL;
+
+    ALTER TABLE agent_runtime_configs
+      ADD COLUMN IF NOT EXISTS tool_grant_defaults JSONB NOT NULL DEFAULT '{}';
 
     CREATE TABLE IF NOT EXISTS agent_tokens (
       agent_id UUID PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE,
@@ -288,6 +312,37 @@ export async function runMigrations(pool: pg.Pool): Promise<void> {
       agent_id UUID NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
       mcp_server_id UUID NOT NULL REFERENCES mcp_servers(id) ON DELETE CASCADE,
       PRIMARY KEY (agent_id, mcp_server_id)
+    );
+
+    CREATE TABLE IF NOT EXISTS capability_bundle_adapters (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      capability_bundle TEXT NOT NULL,
+      provider_adapter_kind TEXT NOT NULL,
+      provider_adapter_ref TEXT NOT NULL,
+      priority INTEGER NOT NULL DEFAULT 100,
+      config JSONB NOT NULL DEFAULT '{}',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+
+    CREATE TABLE IF NOT EXISTS tool_grants (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      agent_id UUID NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+      delegation_id UUID REFERENCES delegations(id) ON DELETE SET NULL,
+      work_item_id UUID REFERENCES work_items(id) ON DELETE SET NULL,
+      capability_profile_id UUID REFERENCES capability_profiles(id) ON DELETE SET NULL,
+      routing_capability TEXT,
+      granted_primitives JSONB NOT NULL DEFAULT '[]',
+      granted_capability_bundles JSONB NOT NULL DEFAULT '[]',
+      selected_provider_adapters JSONB NOT NULL DEFAULT '[]',
+      exclusion_reasons JSONB NOT NULL DEFAULT '[]',
+      task_scope JSONB NOT NULL DEFAULT '{}',
+      approval_state JSONB NOT NULL DEFAULT '{}',
+      environment_context JSONB NOT NULL DEFAULT '{}',
+      revocation_state TEXT NOT NULL DEFAULT 'active',
+      revoked_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
 
     CREATE TABLE IF NOT EXISTS agent_patterns (

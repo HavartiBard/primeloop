@@ -12,6 +12,12 @@ import {
   insertAgent,
   updateAgent,
   deleteAgent,
+  insertCapabilityProfile,
+  getCapabilityProfile,
+  insertCapabilityBundleAdapter,
+  listCapabilityBundleAdapters,
+  insertToolGrant,
+  getToolGrant,
 } from '../src/registry.js'
 
 const TEST_DB = process.env.TEST_DATABASE_URL!
@@ -22,12 +28,24 @@ let pool: pg.Pool
 beforeAll(async () => {
   pool = createPool(TEST_DB)
   await runMigrations(pool)
+  await pool.query('DELETE FROM tool_grants')
+  await pool.query('DELETE FROM capability_bundle_adapters')
+  await pool.query('DELETE FROM agent_runtime_configs')
+  await pool.query('DELETE FROM capability_profiles')
+  await pool.query('DELETE FROM delegations')
+  await pool.query('DELETE FROM work_items')
   // Clean slate — agents must be deleted before providers due to FK
   await pool.query('DELETE FROM agents')
   await pool.query('DELETE FROM providers')
 })
 
 afterAll(async () => {
+  await pool.query('DELETE FROM tool_grants')
+  await pool.query('DELETE FROM capability_bundle_adapters')
+  await pool.query('DELETE FROM agent_runtime_configs')
+  await pool.query('DELETE FROM capability_profiles')
+  await pool.query('DELETE FROM delegations')
+  await pool.query('DELETE FROM work_items')
   await pool.query('DELETE FROM agents')
   await pool.query('DELETE FROM providers')
   await pool.end()
@@ -146,8 +164,13 @@ describe('registry — agents', () => {
       enabled: true,
       local_port: 7777,
       worktree_path: '/tmp/worktree-a',
+      workspace_root: '/tmp/agent-a',
       system_prompt: 'Be precise',
       soul: 'Builder spirit',
+      tier: 'durable',
+      role: 'architect',
+      state: 'idle',
+      persona_file: 'prompts/agents/architect.md',
     })
     expect(agent.id).toBeTruthy()
     expect(agent.name).toBe('test-agent')
@@ -164,8 +187,13 @@ describe('registry — agents', () => {
     expect(agent.enabled).toBe(true)
     expect(agent.local_port).toBe(7777)
     expect(agent.worktree_path).toBe('/tmp/worktree-a')
+    expect(agent.workspace_root).toBe('/tmp/agent-a')
     expect(agent.system_prompt).toBe('Be precise')
     expect(agent.soul).toBe('Builder spirit')
+    expect(agent.tier).toBe('durable')
+    expect(agent.role).toBe('architect')
+    expect(agent.state).toBe('idle')
+    expect(agent.persona_file).toBe('prompts/agents/architect.md')
     expect(agent.created_at).toBeTruthy()
   })
 
@@ -189,8 +217,13 @@ describe('registry — agents', () => {
     expect(agent.ssh_user).toBeNull()
     expect(agent.local_port).toBeNull()
     expect(agent.worktree_path).toBeNull()
+    expect(agent.workspace_root).toBeNull()
     expect(agent.system_prompt).toBeNull()
     expect(agent.soul).toBeNull()
+    expect(agent.tier).toBeNull()
+    expect(agent.role).toBeNull()
+    expect(agent.state).toBeNull()
+    expect(agent.persona_file).toBeNull()
   })
 
   it('listAgents — returns inserted agents', async () => {
@@ -212,6 +245,10 @@ describe('registry — agents', () => {
       enabled: false,
       system_prompt: 'Route carefully',
       soul: 'Operations first',
+      tier: 'ephemeral',
+      role: 'verification',
+      state: 'provisioning',
+      persona_file: 'prompts/agents/verification.md',
     })
     const fetched = await getAgent(pool, agent.id)
     expect(fetched).not.toBeNull()
@@ -221,6 +258,10 @@ describe('registry — agents', () => {
     expect(fetched!.config).toEqual({ key: 'value' })
     expect(fetched!.system_prompt).toBe('Route carefully')
     expect(fetched!.soul).toBe('Operations first')
+    expect(fetched!.tier).toBe('ephemeral')
+    expect(fetched!.role).toBe('verification')
+    expect(fetched!.state).toBe('provisioning')
+    expect(fetched!.persona_file).toBe('prompts/agents/verification.md')
   })
 
   it('getAgent — returns null for unknown id', async () => {
@@ -248,8 +289,13 @@ describe('registry — agents', () => {
       config: { updated: true },
       local_port: 8787,
       worktree_path: '/tmp/worktree-b',
+      workspace_root: '/tmp/agent-b',
       system_prompt: 'Review changes',
       soul: 'Skeptical collaborator',
+      tier: 'durable',
+      role: 'reviewer',
+      state: 'busy',
+      persona_file: 'prompts/agents/reviewer.md',
     })
     expect(updated.id).toBe(agent.id)
     expect(updated.runtime_family).toBe('openclaw')
@@ -261,8 +307,13 @@ describe('registry — agents', () => {
     expect(updated.config).toEqual({ updated: true })
     expect(updated.local_port).toBe(8787)
     expect(updated.worktree_path).toBe('/tmp/worktree-b')
+    expect(updated.workspace_root).toBe('/tmp/agent-b')
     expect(updated.system_prompt).toBe('Review changes')
     expect(updated.soul).toBe('Skeptical collaborator')
+    expect(updated.tier).toBe('durable')
+    expect(updated.role).toBe('reviewer')
+    expect(updated.state).toBe('busy')
+    expect(updated.persona_file).toBe('prompts/agents/reviewer.md')
     expect(updated.name).toBe('update-me-agent')
   })
 
@@ -279,5 +330,109 @@ describe('registry — agents', () => {
     await deleteAgent(pool, agent.id)
     const fetched = await getAgent(pool, agent.id)
     expect(fetched).toBeNull()
+  })
+})
+
+describe('registry — capability profiles and tool grants', () => {
+  it('insertCapabilityProfile/getCapabilityProfile persist a reusable profile', async () => {
+    const profile = await insertCapabilityProfile(pool, {
+      name: 'ephemeral-qa-default',
+      description: 'Minimal read-only QA profile',
+      platform_primitives: ['update_work_item'],
+      capability_bundles: ['repo.read', 'ci.inspect'],
+      deny_rules: [{ bundle: 'repo.write', reason: 'read-only' }],
+      approval_rules: { 'deploy.production': 'approval-required' },
+      config: { tier: 'ephemeral' },
+    })
+    expect(profile.id).toBeTruthy()
+    expect(profile.capability_bundles).toEqual(['repo.read', 'ci.inspect'])
+
+    const fetched = await getCapabilityProfile(pool, profile.id)
+    expect(fetched).not.toBeNull()
+    expect(fetched!.platform_primitives).toEqual(['update_work_item'])
+    expect(fetched!.deny_rules).toEqual([{ bundle: 'repo.write', reason: 'read-only' }])
+  })
+
+  it('insertCapabilityBundleAdapter/listCapabilityBundleAdapters preserve provider adapter mapping', async () => {
+    await insertCapabilityBundleAdapter(pool, {
+      capability_bundle: 'repo.read',
+      provider_adapter_kind: 'mcp_server',
+      provider_adapter_ref: 'gitea',
+      priority: 5,
+      config: { transport: 'http' },
+    })
+
+    const adapters = await listCapabilityBundleAdapters(pool, 'repo.read')
+    expect(adapters).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          capability_bundle: 'repo.read',
+          provider_adapter_kind: 'mcp_server',
+          provider_adapter_ref: 'gitea',
+          priority: 5,
+        }),
+      ]),
+    )
+  })
+
+  it('insertToolGrant/getToolGrant persist run-scoped granted and excluded access', async () => {
+    const agent = await insertAgent(pool, {
+      name: 'grant-target-agent',
+      type: 'custom',
+      runtime_family: 'custom',
+      execution_mode: 'local',
+      capabilities: ['implementation'],
+      config: {},
+      enabled: true,
+      tier: 'ephemeral',
+      role: 'implementation',
+      state: 'busy',
+    })
+    const profile = await insertCapabilityProfile(pool, {
+      name: 'grant-target-profile',
+      description: 'Implementation profile',
+      platform_primitives: ['update_work_item'],
+      capability_bundles: ['repo.read'],
+      deny_rules: [],
+      approval_rules: {},
+      config: {},
+    })
+    const workItem = await pool.query(
+      `INSERT INTO work_items (title) VALUES ('Implement slice 1') RETURNING id`,
+    )
+    const delegation = await pool.query(
+      `INSERT INTO delegations (work_item_id, capability, request)
+       VALUES ($1, $2, $3)
+       RETURNING id, capability`,
+      [workItem.rows[0].id, 'implementation', '{}'],
+    )
+    expect(delegation.rows[0].capability).toBe('implementation')
+
+    const grant = await insertToolGrant(pool, {
+      agent_id: agent.id,
+      delegation_id: delegation.rows[0].id,
+      work_item_id: workItem.rows[0].id,
+      capability_profile_id: profile.id,
+      routing_capability: 'implementation',
+      granted_primitives: ['update_work_item'],
+      granted_capability_bundles: ['repo.read'],
+      selected_provider_adapters: [{ kind: 'mcp_server', ref: 'gitea' }],
+      exclusion_reasons: [{ kind: 'approval', bundle: 'deploy.production', reason: 'missing approval' }],
+      task_scope: { allowed_files: ['backend/src/db.ts'] },
+      approval_state: { approved: false },
+      environment_context: { environment: 'test' },
+      revocation_state: 'active',
+    })
+    expect(grant.id).toBeTruthy()
+    expect(grant.routing_capability).toBe('implementation')
+    expect(grant.granted_capability_bundles).toEqual(['repo.read'])
+
+    const fetched = await getToolGrant(pool, grant.id)
+    expect(fetched).not.toBeNull()
+    expect(fetched!.selected_provider_adapters).toEqual([{ kind: 'mcp_server', ref: 'gitea' }])
+    expect(fetched!.exclusion_reasons).toEqual([
+      { kind: 'approval', bundle: 'deploy.production', reason: 'missing approval' },
+    ])
+    expect(fetched!.revocation_state).toBe('active')
   })
 })

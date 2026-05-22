@@ -29,8 +29,57 @@ export interface RegistryAgent {
   created_at: string
   local_port?: number
   worktree_path?: string
+  workspace_root?: string
   system_prompt?: string
   soul?: string
+  tier?: string
+  role?: string
+  state?: string
+  persona_file?: string
+}
+
+export interface CapabilityProfile {
+  id: string
+  name: string
+  description?: string
+  platform_primitives: string[]
+  capability_bundles: string[]
+  deny_rules: Array<Record<string, unknown>>
+  approval_rules: Record<string, unknown>
+  config: Record<string, unknown>
+  created_at: string
+  updated_at: string
+}
+
+export interface CapabilityBundleAdapter {
+  id: string
+  capability_bundle: string
+  provider_adapter_kind: string
+  provider_adapter_ref: string
+  priority: number
+  config: Record<string, unknown>
+  created_at: string
+  updated_at: string
+}
+
+export interface ToolGrant {
+  id: string
+  agent_id: string
+  delegation_id?: string
+  work_item_id?: string
+  capability_profile_id?: string
+  routing_capability?: string
+  granted_primitives: string[]
+  granted_capability_bundles: string[]
+  selected_provider_adapters: Array<Record<string, unknown>>
+  exclusion_reasons: Array<Record<string, unknown>>
+  task_scope: Record<string, unknown>
+  approval_state: Record<string, unknown>
+  environment_context: Record<string, unknown>
+  revocation_state: string
+  revoked_at?: string
+  created_at: string
+  updated_at: string
 }
 
 export async function listProviders(pool: pg.Pool): Promise<Provider[]> {
@@ -116,9 +165,9 @@ export async function insertAgent(
     `INSERT INTO agents (
       name, type, provider_id, runtime_family, execution_mode, endpoint, capabilities,
       host, container_name, ssh_user, config, enabled, local_port, worktree_path,
-      system_prompt, soul
+      workspace_root, system_prompt, soul, tier, role, state, persona_file
     )
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16) RETURNING *`,
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21) RETURNING *`,
     [
       data.name,
       data.type,
@@ -134,8 +183,13 @@ export async function insertAgent(
       data.enabled ?? true,
       data.local_port ?? null,
       data.worktree_path ?? null,
+      data.workspace_root ?? null,
       data.system_prompt ?? null,
       data.soul ?? null,
+      data.tier ?? null,
+      data.role ?? null,
+      data.state ?? null,
+      data.persona_file ?? null,
     ]
   )
   return rows[0]
@@ -162,8 +216,13 @@ export async function updateAgent(
     ['enabled', 'enabled'],
     ['local_port', 'local_port'],
     ['worktree_path', 'worktree_path'],
+    ['workspace_root', 'workspace_root'],
     ['system_prompt', 'system_prompt'],
     ['soul', 'soul'],
+    ['tier', 'tier'],
+    ['role', 'role'],
+    ['state', 'state'],
+    ['persona_file', 'persona_file'],
   ]
 
   for (const [key, col] of scalarFields) {
@@ -194,6 +253,107 @@ export async function updateAgent(
 
 export async function deleteAgent(pool: pg.Pool, id: string): Promise<void> {
   await pool.query('DELETE FROM agents WHERE id = $1', [id])
+}
+
+export async function insertCapabilityProfile(
+  pool: pg.Pool,
+  data: Omit<CapabilityProfile, 'id' | 'created_at' | 'updated_at'>
+): Promise<CapabilityProfile> {
+  const { rows } = await pool.query(
+    `INSERT INTO capability_profiles (
+      name, description, platform_primitives, capability_bundles,
+      deny_rules, approval_rules, config
+    )
+    VALUES ($1, $2, $3, $4, $5, $6, $7)
+    RETURNING *`,
+    [
+      data.name,
+      data.description ?? null,
+      JSON.stringify(data.platform_primitives ?? []),
+      JSON.stringify(data.capability_bundles ?? []),
+      JSON.stringify(data.deny_rules ?? []),
+      JSON.stringify(data.approval_rules ?? {}),
+      JSON.stringify(data.config ?? {}),
+    ],
+  )
+  return rows[0]
+}
+
+export async function getCapabilityProfile(pool: pg.Pool, id: string): Promise<CapabilityProfile | null> {
+  const { rows } = await pool.query('SELECT * FROM capability_profiles WHERE id = $1', [id])
+  return rows[0] ?? null
+}
+
+export async function insertCapabilityBundleAdapter(
+  pool: pg.Pool,
+  data: Omit<CapabilityBundleAdapter, 'id' | 'created_at' | 'updated_at'>
+): Promise<CapabilityBundleAdapter> {
+  const { rows } = await pool.query(
+    `INSERT INTO capability_bundle_adapters (
+      capability_bundle, provider_adapter_kind, provider_adapter_ref, priority, config
+    )
+    VALUES ($1, $2, $3, $4, $5)
+    RETURNING *`,
+    [
+      data.capability_bundle,
+      data.provider_adapter_kind,
+      data.provider_adapter_ref,
+      data.priority ?? 100,
+      JSON.stringify(data.config ?? {}),
+    ],
+  )
+  return rows[0]
+}
+
+export async function listCapabilityBundleAdapters(
+  pool: pg.Pool,
+  capabilityBundle: string,
+): Promise<CapabilityBundleAdapter[]> {
+  const { rows } = await pool.query(
+    `SELECT * FROM capability_bundle_adapters
+     WHERE capability_bundle = $1
+     ORDER BY priority ASC, created_at ASC`,
+    [capabilityBundle],
+  )
+  return rows
+}
+
+export async function insertToolGrant(
+  pool: pg.Pool,
+  data: Omit<ToolGrant, 'id' | 'created_at' | 'updated_at'>
+): Promise<ToolGrant> {
+  const { rows } = await pool.query(
+    `INSERT INTO tool_grants (
+      agent_id, delegation_id, work_item_id, capability_profile_id, routing_capability,
+      granted_primitives, granted_capability_bundles, selected_provider_adapters,
+      exclusion_reasons, task_scope, approval_state, environment_context,
+      revocation_state, revoked_at
+    )
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+    RETURNING *`,
+    [
+      data.agent_id,
+      data.delegation_id ?? null,
+      data.work_item_id ?? null,
+      data.capability_profile_id ?? null,
+      data.routing_capability ?? null,
+      JSON.stringify(data.granted_primitives ?? []),
+      JSON.stringify(data.granted_capability_bundles ?? []),
+      JSON.stringify(data.selected_provider_adapters ?? []),
+      JSON.stringify(data.exclusion_reasons ?? []),
+      JSON.stringify(data.task_scope ?? {}),
+      JSON.stringify(data.approval_state ?? {}),
+      JSON.stringify(data.environment_context ?? {}),
+      data.revocation_state,
+      data.revoked_at ?? null,
+    ],
+  )
+  return rows[0]
+}
+
+export async function getToolGrant(pool: pg.Pool, id: string): Promise<ToolGrant | null> {
+  const { rows } = await pool.query('SELECT * FROM tool_grants WHERE id = $1', [id])
+  return rows[0] ?? null
 }
 
 export async function upsertLocalCodexProvider(pool: pg.Pool): Promise<void> {
