@@ -69,11 +69,37 @@ describe('OpenCodeProcessManager', () => {
       if (sql.startsWith('SELECT * FROM providers')) {
         return { rows: [{ id: 'provider-1', type: 'llm', model: 'anthropic/claude-sonnet-4-5', base_url: 'https://proxy.example.com', api_key: 'encrypted' }] }
       }
+      if (sql.startsWith('SELECT * FROM agent_runtime_configs WHERE agent_id = $1')) {
+        return { rows: [] }
+      }
       if (sql.startsWith('SELECT token FROM agent_tokens')) {
         return { rows: [] }
       }
       if (sql.startsWith('INSERT INTO agent_tokens')) {
         return { rows: [{ token: 'agent-token-1' }] }
+      }
+      if (sql.startsWith('INSERT INTO tool_grants')) {
+        return {
+          rows: [{
+            id: 'grant-1',
+            agent_id: 'agent-1',
+            delegation_id: null,
+            work_item_id: null,
+            capability_profile_id: null,
+            routing_capability: 'implementation',
+            granted_primitives: [],
+            granted_capability_bundles: [],
+            selected_provider_adapters: [{ kind: 'http', ref: 'gitea' }],
+            exclusion_reasons: [{ kind: 'missing-profile', target: 'implementation', reason: 'no capability profile assigned' }],
+            task_scope: {},
+            approval_state: {},
+            environment_context: {},
+            revocation_state: 'active',
+            revoked_at: null,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          }],
+        }
       }
       if (sql.includes('FROM mcp_servers ms')) {
         return { rows: [{ id: 'mcp-1', name: 'gitea', description: 'Pull requests and issues', type: 'http', url: 'http://gitea:3000/mcp', env_vars: { GITEA_TOKEN: 'secret' } }] }
@@ -161,8 +187,34 @@ describe('OpenCodeProcessManager', () => {
       if (sql.startsWith('SELECT * FROM providers')) {
         return { rows: [] }
       }
+      if (sql.startsWith('SELECT * FROM agent_runtime_configs WHERE agent_id = $1')) {
+        return { rows: [] }
+      }
       if (sql.startsWith('SELECT token FROM agent_tokens')) {
         return { rows: [{ token: 'agent-token-2' }] }
+      }
+      if (sql.startsWith('INSERT INTO tool_grants')) {
+        return {
+          rows: [{
+            id: 'grant-2',
+            agent_id: 'agent-1',
+            delegation_id: null,
+            work_item_id: null,
+            capability_profile_id: null,
+            routing_capability: 'implementation',
+            granted_primitives: [],
+            granted_capability_bundles: [],
+            selected_provider_adapters: [],
+            exclusion_reasons: [{ kind: 'missing-profile', target: 'implementation', reason: 'no capability profile assigned' }],
+            task_scope: {},
+            approval_state: {},
+            environment_context: {},
+            revocation_state: 'active',
+            revoked_at: null,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          }],
+        }
       }
       if (sql.includes('FROM mcp_servers ms')) {
         return { rows: [] }
@@ -206,7 +258,31 @@ describe('OpenCodeProcessManager', () => {
         return { rows: [{ ...createAgent({ worktree_path: path.join(rootDir, 'agents', 'builder-one') }), state: 'idle' }] }
       }
       if (sql.startsWith('SELECT * FROM providers')) return { rows: [] }
+      if (sql.startsWith('SELECT * FROM agent_runtime_configs WHERE agent_id = $1')) return { rows: [] }
       if (sql.startsWith('SELECT token FROM agent_tokens')) return { rows: [{ token: 'agent-token-3' }] }
+      if (sql.startsWith('INSERT INTO tool_grants')) {
+        return {
+          rows: [{
+            id: 'grant-3',
+            agent_id: 'agent-1',
+            delegation_id: null,
+            work_item_id: null,
+            capability_profile_id: null,
+            routing_capability: 'implementation',
+            granted_primitives: [],
+            granted_capability_bundles: [],
+            selected_provider_adapters: [],
+            exclusion_reasons: [{ kind: 'missing-profile', target: 'implementation', reason: 'no capability profile assigned' }],
+            task_scope: {},
+            approval_state: {},
+            environment_context: {},
+            revocation_state: 'active',
+            revoked_at: null,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          }],
+        }
+      }
       if (sql.includes('FROM mcp_servers ms')) return { rows: [] }
       throw new Error(`unexpected query: ${sql}`)
     })
@@ -290,8 +366,34 @@ describe('OpenCodeProcessManager', () => {
       if (sql.startsWith('SELECT * FROM providers')) {
         return { rows: [] }
       }
+      if (sql.startsWith('SELECT * FROM agent_runtime_configs WHERE agent_id = $1')) {
+        return { rows: [] }
+      }
       if (sql.startsWith('SELECT token FROM agent_tokens')) {
         return { rows: [{ token: 'agent-token-4' }] }
+      }
+      if (sql.startsWith('INSERT INTO tool_grants')) {
+        return {
+          rows: [{
+            id: 'grant-4',
+            agent_id: durable.id,
+            delegation_id: null,
+            work_item_id: null,
+            capability_profile_id: null,
+            routing_capability: 'implementation',
+            granted_primitives: [],
+            granted_capability_bundles: [],
+            selected_provider_adapters: [],
+            exclusion_reasons: [{ kind: 'missing-profile', target: 'implementation', reason: 'no capability profile assigned' }],
+            task_scope: {},
+            approval_state: {},
+            environment_context: {},
+            revocation_state: 'active',
+            revoked_at: null,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          }],
+        }
       }
       if (sql.includes('FROM mcp_servers ms')) {
         return { rows: [] }

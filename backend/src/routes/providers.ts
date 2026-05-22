@@ -50,7 +50,7 @@ export function createProvidersRouter({ pool }: { pool: pg.Pool }) {
     }
   })
 
-  router.post('/model-capability', (_req, res) => {
+  router.post('/model-capability', (req, res) => {
     const { model } = req.body
     if (!model || typeof model !== 'string') {
       return res.status(400).json({ error: '"model" string required in request body' })

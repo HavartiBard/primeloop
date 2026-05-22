@@ -14,6 +14,7 @@ import {
   type RegistryAgent,
   updateAgent,
 } from '../registry.js'
+import { resolveToolGrant } from '../tool-grants.js'
 import { PiHarness } from '../fleet-executor/pi-harness.js'
 import type { AgentHarness } from '../fleet-executor/harness.js'
 
@@ -289,6 +290,24 @@ export class OpenCodeProcessManager {
     const controlPlaneToken = await getOrCreateAgentToken(this.pool, agent.id)
     const model = await this.resolveModel(agent)
     const controlPlaneTools = await listControlPlaneTools()
+    const fallbackProviderAdapters = assignedServers.map((server) => ({
+      kind: server.type,
+      ref: server.name,
+      config: server.type === 'http'
+        ? { url: server.url ?? null }
+        : { command: server.command ?? null, args: server.args ?? [] },
+    }))
+
+    await resolveToolGrant(this.pool, {
+      agent,
+      routingCapability: agent.role ?? agent.capabilities[0] ?? agent.type,
+      fallbackProviderAdapters,
+      taskScope: {},
+      approvalState: {},
+      environmentContext: {
+        assigned_mcp_servers: assignedServers.map((server) => server.name),
+      },
+    })
 
     await mkdir(worktreePath, { recursive: true })
     await writeFile(path.join(worktreePath, 'AGENTS.md'), `${(await defaultAgentInstructions(this.pool, agent)).trim()}\n`)
