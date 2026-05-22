@@ -163,7 +163,6 @@ export async function handlePrimeEvent(
         session.id,
         `duplicate prime.message session superseded by ${session.id}`
       )
-      await updateIntakeWorkItemStatus(pool, event.payload.message_id, 'review')
     }
 
     return {
@@ -177,7 +176,6 @@ export async function handlePrimeEvent(
     const message = error instanceof Error ? error.message : String(error)
     const failed = await failPrimeSession(pool, session.id, message)
     if (event.type === 'prime.message') {
-      await updateIntakeWorkItemStatus(pool, event.payload.message_id, 'blocked')
       const primeProfile = await getPrimeProfile(pool)
       await appendThreadMessage(pool, event.payload.thread_id, {
         role: 'assistant',
@@ -236,20 +234,6 @@ function summarizeConfiguredPrimeModules(modules: PrimeConfiguredModule[]): stri
   return modules
     .map(({ module, rollout_mode }) => `${rollout_mode}:${module.stage}:${module.id}@${module.version}`)
     .join(', ')
-}
-
-async function updateIntakeWorkItemStatus(
-  pool: pg.Pool,
-  messageId: string,
-  status: 'review' | 'blocked'
-): Promise<void> {
-  await pool.query(
-    `UPDATE work_items
-     SET status = $2, updated_at = now()
-     WHERE metadata->>'source' = 'prime-agent-intake'
-       AND metadata->>'message_id' = $1`,
-    [messageId, status]
-  )
 }
 
 function requireContext(state: PrimeLoopState): PrimeContext {

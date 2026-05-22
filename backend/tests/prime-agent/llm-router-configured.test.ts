@@ -83,9 +83,10 @@ describe('createConfiguredLlmRouter', () => {
       effectiveRoot: '/workspace/prime',
       revision: 'abc123',
       templates: {
+        primeSoul: 'Soul block.',
         primeProfile: 'You are Prime.',
         standingRules: 'Keep work moving.',
-        system: 'SYSTEM {{prime_profile}} {{standing_rules}}',
+        system: 'SYSTEM {{prime_soul}} {{prime_profile}} {{standing_rules}}',
         request: 'REQUEST {{user_message}}',
         llamacpp: '',
         defaultAgentInstructions: '',

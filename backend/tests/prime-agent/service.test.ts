@@ -4,6 +4,7 @@ import type { PrimeEvent } from '../../src/prime-agent/events.js'
 
 const configMocks = vi.hoisted(() => ({
   getPrimeConfig: vi.fn(),
+  updatePrimeConfig: vi.fn(),
 }))
 
 const eventLoopMocks = vi.hoisted(() => ({
@@ -17,6 +18,7 @@ const coordinatorMocks = vi.hoisted(() => ({
 
 vi.mock('../../src/prime-agent/config.js', () => ({
   getPrimeConfig: configMocks.getPrimeConfig,
+  updatePrimeConfig: configMocks.updatePrimeConfig,
 }))
 
 vi.mock('../../src/prime-agent/event-loop.js', () => ({

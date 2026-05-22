@@ -41,9 +41,10 @@ workspaceMocks.loadPrimeWorkspaceTemplates.mockResolvedValue({
   effectiveRoot: '/workspace/prime',
   revision: 'abc123',
   templates: {
-    primeProfile: 'You are Prime.',
+    primeProfile: '## Default Behaviors\n- I report outcomes.',
+    primeSoul: '## Identity\nI am Prime, the coordination layer.',
     standingRules: 'Keep work moving.',
-    system: 'Return JSON with "reasoning" and "actions". Allowed: delegate update_work_item request_approval no_op. {{agents}}',
+    system: '{{prime_soul}}\n\n{{prime_profile}}\n\nReturn JSON with "reasoning" and "actions". Allowed: delegate update_work_item request_approval no_op. {{agents}}',
     request: 'Trigger from {{sender}}: {{user_message}}',
     llamacpp: '',
     defaultAgentInstructions: '',
@@ -183,21 +184,47 @@ response: What's up? I'm here and ready for the next task.`,
     expect(decision.response).toBe("What's up? I'm here and ready for the next task.")
   })
 
-  it('rejects empty response on user-facing events', () => {
-    expect(() =>
-      validatePrimeDecision({
-        reasoning: 'Internal note about the request.',
-        actions: [],
-      }, { isUserFacing: true })
-    ).toThrow('Prime decision response must be at least 10 characters')
+  it('falls back to reasoning when response is missing on user-facing events', () => {
+    const decision = validatePrimeDecision({
+      reasoning: 'Internal note about the request.',
+      actions: [],
+    }, { isUserFacing: true })
+    expect(decision.response).toBe('Internal note about the request.')
   })
 
-  it('rejects short response on user-facing events', () => {
+  it('falls back to reasoning when response is empty string on user-facing events', () => {
+    const decision = validatePrimeDecision({
+      reasoning: 'Valid reasoning here.',
+      response: '',
+      actions: [],
+    }, { isUserFacing: true })
+    expect(decision.response).toBe('Valid reasoning here.')
+  })
+
+  it('accepts short response when no substantive actions (conversational)', () => {
+    const decision = validatePrimeDecision({
+      reasoning: 'Simple greeting — no action needed.',
+      response: 'Hi!',
+      actions: [],
+    }, { isUserFacing: true })
+    expect(decision.response).toBe('Hi!')
+  })
+
+  it('accepts short response with only no_op actions (conversational)', () => {
+    const decision = validatePrimeDecision({
+      reasoning: 'Acknowledgment.',
+      response: 'Got it.',
+      actions: [{ type: 'no_op', payload: {}, reason: 'No action needed' }],
+    }, { isUserFacing: true })
+    expect(decision.response).toBe('Got it.')
+  })
+
+  it('rejects short response when substantive actions exist', () => {
     expect(() =>
       validatePrimeDecision({
         reasoning: 'Internal note about the request.',
         response: 'Ok.',
-        actions: [],
+        actions: [{ type: 'delegate', payload: { title: 'Fix bug' }, reason: 'Need to fix this' }],
       }, { isUserFacing: true })
     ).toThrow('Prime decision response must be at least 10 characters')
   })
@@ -230,7 +257,8 @@ response: What's up? I'm here and ready for the next task.`,
     }, { isUserFacing: false })
 
     expect(decision.reasoning).toBe('Cron check complete. No action needed.')
-    expect(decision.response).toBeUndefined()
+    // response falls back to reasoning when not explicitly provided
+    expect(decision.response).toBe('Cron check complete. No action needed.')
   })
 })
 
@@ -253,6 +281,13 @@ describe('buildPrimeSystemPrompt', () => {
     expect(prompt).toContain('update_work_item')
     expect(prompt).toContain('request_approval')
     expect(prompt).toContain('no_op')
+  })
+
+  it('system prompt includes both soul and operating profile blocks', async () => {
+    const prompt = await buildPrimeSystemPrompt(minimalContext, mockPool)
+    expect(prompt).toContain('## Identity')
+    expect(prompt).toContain('## Default Behaviors')
+    expect(prompt.indexOf('## Identity')).toBeLessThan(prompt.indexOf('## Default Behaviors'))
   })
 })
 

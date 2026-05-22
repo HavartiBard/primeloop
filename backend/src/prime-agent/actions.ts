@@ -1,6 +1,7 @@
 import type pg from 'pg'
 import { ensurePendingApproval } from '../approvals.js'
 import {
+  appendThreadMessage,
   createDelegation,
   createWorkItem,
   getPrimeProfile,
@@ -9,8 +10,13 @@ import {
   type Delegation,
   type WorkItem,
 } from '../runtime.js'
+import { readProfileFiles, writeProfileFiles } from '../workspace.js'
 import type { PrimeContext } from './context.js'
 import type { PrimeAction, PrimeDecision } from './llm-router.js'
+import {
+  SECTION_DEFS,
+  type SectionKey,
+} from './profile-sections.js'
 
 export interface PrimeActionDispatchResult {
   action: PrimeAction
@@ -42,6 +48,9 @@ export async function dispatchPrimeActions(
         break
       case 'request_approval':
         results.push(await dispatchRequestApproval(pool, ctx, action))
+        break
+      case 'update_profile':
+        results.push(await dispatchUpdateProfile(pool, ctx, action))
         break
       case 'no_op':
         results.push(await dispatchNoOp(pool, ctx, action))
@@ -166,17 +175,74 @@ async function dispatchRequestApproval(
   action: PrimeAction
 ): Promise<PrimeActionDispatchResult> {
   const coordinatorName = await getCoordinatorName(pool)
-  const approvalAction = stringField(action.payload, 'action') || action.reason
+
+  // Extract structured fields from payload, fall back to reason
+  const approvalTitle = stringField(action.payload, 'title')
+    || stringField(action.payload, 'action')
+    || titleFromPrompt(action.reason, 'Approval request')
+  const approvalDescription = stringField(action.payload, 'description')
+    || stringField(action.payload, 'reason')
+    || action.reason
+  const approvalAction = stringField(action.payload, 'action')
+    || stringField(action.payload, 'title')
+    || action.reason
+
   if (!approvalAction) {
     throw new Error('request_approval requires action text')
+  }
+
+  // Deduplication: check if a similar pending approval already exists
+  const normalizedAction = approvalTitle.toLowerCase().replace(/\s+/g, ' ').trim()
+  const newKeywords = extractKeywords(normalizedAction)
+
+  const { rows: existingApprovals } = await pool.query(
+    `SELECT approval_id, action, run_id, status, created_at::text
+     FROM approvals
+     WHERE status = 'pending'
+     ORDER BY created_at DESC
+     LIMIT 20`
+  )
+
+  // First try exact match, then fall back to keyword overlap (≥3 shared keywords)
+  let existingMatch = existingApprovals.find((a: { action: string }) =>
+    a.action.toLowerCase().replace(/\s+/g, ' ').trim() === normalizedAction
+  )
+  if (!existingMatch) {
+    for (const candidate of existingApprovals) {
+      const candidateKeywords = extractKeywords(candidate.action.toLowerCase().replace(/\s+/g, ' ').trim())
+      const sharedKeywords = newKeywords.filter((kw: string) => candidateKeywords.includes(kw))
+      if (sharedKeywords.length >= 3) {
+        existingMatch = candidate
+        break
+      }
+    }
+  }
+  if (existingMatch) {
+    // Reuse the existing approval instead of creating a duplicate
+    const existingWorkItem = await pool.query(
+      `SELECT id, title, description, status, lane, owner_label, metadata, created_at::text, updated_at::text
+       FROM work_items WHERE id = $1`,
+      [existingMatch.run_id]
+    )
+    return {
+      action,
+      status: 'dispatched',
+      work_item: existingWorkItem.rows[0] ?? null,
+      approval: {
+        approval_id: existingMatch.approval_id,
+        run_id: existingMatch.run_id,
+        action: existingMatch.action,
+        status: existingMatch.status,
+      },
+    }
   }
 
   const approver = stringField(action.payload, 'approver') || 'human'
   const context = objectField(action.payload, 'context') ?? {}
 
   const workItem = await createWorkItem(pool, {
-    title: titleFromPrompt(approvalAction, 'Approval request'),
-    description: approvalAction,
+    title: approvalTitle,
+    description: approvalDescription,
     lane: 'approval',
     status: 'approval',
     owner_label: approver === 'human' ? 'Human approval' : 'Approval flow',
@@ -191,7 +257,7 @@ async function dispatchRequestApproval(
   const approval = await ensurePendingApproval(pool, {
     approval_id: `prime:${workItem.id}`,
     run_id: workItem.id,
-    action: approvalAction,
+    action: approvalTitle,
   })
 
   let delegation: Delegation | undefined
@@ -254,6 +320,72 @@ async function dispatchNoOp(
   }
 }
 
+function unifiedDiff(oldText: string, newText: string, label: string): string {
+  const oldLines = oldText.split('\n')
+  const newLines = newText.split('\n')
+  const lines: string[] = [`--- ${label} (current)`, `+++ ${label} (proposed)`]
+  for (const line of oldLines) lines.push(`-${line}`)
+  for (const line of newLines) lines.push(`+${line}`)
+  return lines.join('\n')
+}
+
+async function dispatchUpdateProfile(
+  pool: pg.Pool,
+  ctx: PrimeContext,
+  action: PrimeAction,
+): Promise<PrimeActionDispatchResult> {
+  const sectionKey = stringField(action.payload, 'section_key') as SectionKey | undefined
+  const newText = typeof action.payload.new_text === 'string' ? action.payload.new_text : undefined
+  if (!sectionKey || !(sectionKey in SECTION_DEFS)) {
+    throw new Error(`update_profile: unknown section key ${String(sectionKey)}`)
+  }
+  if (typeof newText !== 'string') {
+    throw new Error('update_profile: new_text required')
+  }
+
+  const file = SECTION_DEFS[sectionKey].file
+  const heading = SECTION_DEFS[sectionKey].heading
+  const current = await readProfileFiles(pool)
+  const previous = current[file].sections[sectionKey] ?? ''
+  current[file].sections[sectionKey] = newText
+  await writeProfileFiles(pool, current)
+
+  const coordinatorName = await getCoordinatorName(pool)
+  const threadId = stringField(action.payload, 'thread_id') ?? threadIdFromContext(ctx)
+  const diff = unifiedDiff(previous, newText, heading)
+  if (threadId) {
+    await appendThreadMessage(pool, threadId, {
+      role: 'assistant',
+      sender: coordinatorName,
+      content: [
+        `Updated **${heading}**. Reason: ${action.reason}`,
+        '',
+        '```diff',
+        diff,
+        '```',
+      ].join('\n'),
+      metadata: {
+        kind: 'profile-update',
+        section_key: sectionKey,
+        file,
+      },
+    })
+  }
+
+  await insertRuntimeEvent(pool, {
+    event_type: 'prime.action.update_profile',
+    actor: coordinatorName,
+    thread_id: threadId,
+    payload: {
+      file,
+      section_key: sectionKey,
+      reason: action.reason,
+    },
+  })
+
+  return { action, status: 'dispatched' }
+}
+
 async function getCoordinatorName(pool: pg.Pool): Promise<string> {
   const primeProfile = await getPrimeProfile(pool)
   return primeProfile.name.trim() || 'Prime'
@@ -301,3 +433,32 @@ function objectField(payload: Record<string, unknown>, key: string): Record<stri
     ? value as Record<string, unknown>
     : undefined
 }
+
+const STOP_WORDS = new Set([
+  'a', 'an', 'the', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
+  'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could', 'should',
+  'may', 'might', 'shall', 'can', 'need', 'dare', 'ought', 'used',
+  'to', 'of', 'in', 'for', 'on', 'with', 'at', 'by', 'from', 'as',
+  'into', 'through', 'during', 'before', 'after', 'above', 'below',
+  'between', 'out', 'off', 'over', 'under', 'again', 'further', 'then',
+  'once', 'here', 'there', 'when', 'where', 'why', 'how', 'all', 'both',
+  'each', 'few', 'more', 'most', 'other', 'some', 'such', 'no', 'nor',
+  'not', 'only', 'own', 'same', 'so', 'than', 'too', 'very', 'just',
+  'because', 'but', 'and', 'or', 'if', 'while', 'this', 'that', 'these',
+  'those', 'i', 'me', 'my', 'we', 'our', 'you', 'your', 'it', 'its',
+  'they', 'them', 'their', 'what', 'which', 'who', 'whom',
+  'any', 'must', 'required', 'proceeding', 'proceed', 'proceeds',
+  'without', 'explicit', 'user', 'approval', 'standing', 'rules',
+  'per', 'mandate', 'require', 'requires', 'prohibit', 'prohibits',
+  'initiating', 'initiate', 'initiated', 'cannot',
+  'next', 'smallest', 'useful', 'step', 'break', 'logjam', 'efficiently',
+  'compliance', 'maintain', 'enable', 'unblock', 'progress',
+  'granted', 'yet', 'currently', 'exists', 'exist', 'none',
+])
+
+function extractKeywords(text: string): string[] {
+  return text
+    .split(/[^a-z0-9]+/)
+    .filter((word) => word.length >= 3 && !STOP_WORDS.has(word))
+}
+

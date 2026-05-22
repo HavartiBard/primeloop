@@ -75,7 +75,7 @@ export interface AgentControlPlaneToken {
 export interface WorkItem {
   id: string
   title: string
-  status: 'active' | 'blocked' | 'approval' | 'review' | 'deploy' | 'follow-up'
+  status: 'active' | 'blocked' | 'approval' | 'review' | 'deploy' | 'follow-up' | 'done'
   owner: string
   lane: string
   updated_at: string
@@ -446,7 +446,7 @@ export interface CodexDeviceAuthPoll {
 export interface PrimeMessageResult {
   user_message: ThreadMessage
   prime_message?: ThreadMessage
-  work_item: RuntimeWorkItem
+  work_item?: RuntimeWorkItem
   delegation?: RuntimeDelegation
   selected_agent?: RegistryAgent
   route: PrimeRoute
@@ -461,4 +461,27 @@ export interface ModelCapabilityAssessment {
   tier: ModelTier
   warning: string
   isBlocked: boolean
+}
+
+export interface PrimeProfileSoul {
+  identity: string
+  voice_tone: string
+  decision_style: string
+}
+
+export interface PrimeProfileOperating {
+  default_behaviors: string
+  approval_thresholds: string
+}
+
+export type PrimeSectionKey =
+  | 'identity' | 'voice_tone' | 'decision_style'
+  | 'default_behaviors' | 'approval_thresholds'
+
+export interface PrimeProfileResponse {
+  name: string
+  soul: PrimeProfileSoul
+  operating: PrimeProfileOperating
+  defaults_match: Record<PrimeSectionKey, boolean>
+  shipped_defaults: Record<PrimeSectionKey, string>
 }

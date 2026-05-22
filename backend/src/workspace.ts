@@ -5,6 +5,11 @@ import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import { promisify } from 'node:util'
 import type pg from 'pg'
+import {
+  parseProfileSections,
+  renderProfileSections,
+  type ParsedProfile,
+} from './prime-agent/profile-sections.js'
 
 const execFile = promisify(execFileCallback)
 const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url))
@@ -54,6 +59,7 @@ const WORKSPACE_FILE_DIRS = ['agents', 'prompts', 'skills', 'policies', 'memory'
 const EDITABLE_EXTENSIONS = new Set(['.md', '.txt', '.yaml', '.yml', '.json'])
 const TEMPLATE_PATHS = {
   primeProfile: 'agents/prime.md',
+  primeSoul: 'agents/prime-soul.md',
   standingRules: 'policies/standing-rules.md',
   system: 'prompts/prime/system.md',
   request: 'prompts/prime/request.md',
@@ -230,8 +236,9 @@ export async function writeWorkspaceFile(
 
 export async function loadPrimeWorkspaceTemplates(pool: pg.Pool): Promise<WorkspaceTemplateBundle> {
   const status = await ensureWorkspaceScaffold(pool)
-  const [primeProfile, standingRules, system, request, llamacpp, defaultAgentInstructions, defaultAgentSoul, delegationTask] = await Promise.all([
+  const [primeProfile, primeSoul, standingRules, system, request, llamacpp, defaultAgentInstructions, defaultAgentSoul, delegationTask] = await Promise.all([
     readWorkspaceOrFallback(status.effective_root, TEMPLATE_PATHS.primeProfile, 'agents/prime.md'),
+    readWorkspaceOrFallback(status.effective_root, TEMPLATE_PATHS.primeSoul, 'agents/prime-soul.md'),
     readWorkspaceOrFallback(status.effective_root, TEMPLATE_PATHS.standingRules, 'policies/standing-rules.md'),
     readWorkspaceOrFallback(status.effective_root, TEMPLATE_PATHS.system, 'prime/system.md'),
     readWorkspaceOrFallback(status.effective_root, TEMPLATE_PATHS.request, 'prime/request.md'),
@@ -246,6 +253,7 @@ export async function loadPrimeWorkspaceTemplates(pool: pg.Pool): Promise<Worksp
     revision: gitMeta.lastCommit,
     templates: {
       primeProfile,
+      primeSoul,
       standingRules,
       system,
       request,
@@ -321,6 +329,8 @@ function keyToFallbackPath(key: keyof typeof TEMPLATE_PATHS): string {
   switch (key) {
     case 'primeProfile':
       return 'agents/prime.md'
+    case 'primeSoul':
+      return 'agents/prime-soul.md'
     case 'standingRules':
       return 'policies/standing-rules.md'
     case 'system':
@@ -410,6 +420,35 @@ export class WorkspaceVersionConflictError extends Error {
     super(`workspace file has changed since it was opened: ${relativePath}`)
     this.name = 'WorkspaceVersionConflictError'
   }
+}
+
+export interface ProfileBundle {
+  soul: ParsedProfile
+  operating: ParsedProfile
+}
+
+export async function readProfileFiles(pool: pg.Pool): Promise<ProfileBundle> {
+  const bundle = await loadPrimeWorkspaceTemplates(pool)
+  return {
+    soul:      parseProfileSections(bundle.templates.primeSoul,    'soul'),
+    operating: parseProfileSections(bundle.templates.primeProfile, 'operating'),
+  }
+}
+
+export async function writeProfileFiles(pool: pg.Pool, bundle: ProfileBundle): Promise<void> {
+  const status = await ensureWorkspaceScaffold(pool)
+  const soulMd      = renderProfileSections('soul',      bundle.soul)
+  const operatingMd = renderProfileSections('operating', bundle.operating)
+
+  await fs.mkdir(path.join(status.effective_root, 'agents'), { recursive: true })
+  await fs.writeFile(path.join(status.effective_root, 'agents', 'prime-soul.md'), soulMd, 'utf8')
+  await fs.writeFile(path.join(status.effective_root, 'agents', 'prime.md'),      operatingMd, 'utf8')
+
+  const personaConcat = [soulMd.trim(), operatingMd.trim()].filter(Boolean).join('\n\n')
+  await pool.query(
+    `UPDATE chief_profiles SET persona = $1, updated_at = now() WHERE id = 'default'`,
+    [personaConcat],
+  )
 }
 
 async function readGitMetadata(root: string): Promise<{ dirty: boolean; lastCommit?: string; files: string[] }> {

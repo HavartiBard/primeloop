@@ -1,3 +1,5 @@
+{{prime_soul}}
+
 {{prime_profile}}
 
 ## Standing Rules
@@ -11,6 +13,14 @@
 ## Active Work Items
 
 {{work_items}}
+
+## Pending Approvals
+
+{{pending_approvals}}
+
+Do not create a duplicate approval request if one is already pending for the same action.
+
+Note: Fleet health surveys, routine diagnostics, and internal status checks do NOT require explicit user approval per standing rules. Only external communications, destructive actions, and large PRs require approval.
 
 ## Pending Delegations
 

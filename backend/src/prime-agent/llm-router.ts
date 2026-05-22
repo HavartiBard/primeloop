@@ -10,6 +10,7 @@ export const PRIME_ACTION_TYPES = [
   'delegate',
   'update_work_item',
   'request_approval',
+  'update_profile',
   'no_op',
 ] as const
 
@@ -51,11 +52,22 @@ export function validatePrimeDecision(value: unknown, options?: { isUserFacing?:
 
   const isUserFacing = options?.isUserFacing === true
 
-  // For user-facing events (prime.message), response must be present and meaningful
+  // Parse actions first so we can check if this is a conversational response.
+  const rawActions = Array.isArray(value.actions)
+    ? value.actions.map(validatePrimeActionOrNull).filter((a): a is PrimeAction => a !== null)
+    : []
+  const hasSubstantiveActions = rawActions.some((action) => action.type !== 'no_op')
+
+  // For user-facing events (prime.message), response must be present and meaningful.
+  // Conversational responses (no substantive actions) can be short — "Hi!", "Got it",
+  // "Thanks" are valid. Action-bearing decisions need longer responses to explain what's happening.
   if (isUserFacing) {
     const responseText = normalized.response ?? ''
-    if (responseText.length < 10) {
-      throw new Error(`Prime decision response must be at least 10 characters for user-facing messages (got ${responseText.length})`)
+    const minLen = hasSubstantiveActions ? 10 : 1
+    if (responseText.length < minLen) {
+      throw new Error(
+        `Prime decision response must be at least ${minLen} character${minLen === 1 ? '' : 's'} for user-facing messages (got ${responseText.length})`
+      )
     }
     // Reject responses that contain internal schema labels
     if (/\b(?:reasoning|response|actions):/.test(responseText)) {
@@ -63,9 +75,7 @@ export function validatePrimeDecision(value: unknown, options?: { isUserFacing?:
     }
   }
 
-  const actions = value.actions
-    .map(validatePrimeActionOrNull)
-    .filter((action): action is PrimeAction => action !== null)
+  const actions = rawActions
   const decision: PrimeDecision = {
     reasoning: normalized.reasoning,
     actions,
@@ -165,8 +175,11 @@ function normalizePrimeDecisionTextFields(value: Record<string, unknown>): {
     return labeled
   }
 
+  // No response field provided — use reasoning as the fallback for user-facing events.
+  // This covers cases where the LLM returns only { reasoning, actions } without a response.
   return {
     reasoning: explicitReasoning,
+    response: explicitReasoning || undefined,
   }
 }
 
@@ -204,17 +217,31 @@ export async function buildPrimeSystemPrompt(context: PrimeContext, pool: pg.Poo
   const profile = rows[0]
   const templates = await loadPrimeWorkspaceTemplates(pool)
 
+  const { rows: pendingApprovals } = await pool.query(
+    `SELECT approval_id, action, created_at::text
+     FROM approvals
+     WHERE status = 'pending'
+     ORDER BY created_at DESC
+     LIMIT 20`
+  )
+
   return renderTemplate(templates.templates.system, {
+    prime_soul: templates.templates.primeSoul.trim(),
     prime_profile: templates.templates.primeProfile.trim() || profile?.persona || 'You are Prime.',
     standing_rules: templates.templates.standingRules.trim() || profile?.operating_policy || '',
     agents: formatLines(context.fleet.agents.map(
       (a) => `- ${a.name} [${(a.capabilities as string[]).join(', ')}]${a.enabled ? '' : ' (disabled)'}`,
     )),
     work_items: formatLines(context.fleet.workItems.map(
-      (w) => `- [${w.id.slice(0, 8)}] ${w.title} (${w.status}/${w.lane})`,
+      (w) => `- id=${w.id} ${w.title} (${w.status}/${w.lane})`,
     )),
+    pending_approvals: pendingApprovals.length > 0
+      ? formatLines(pendingApprovals.map((a: { approval_id: string; action: string; created_at: string }) =>
+        `- [${a.approval_id}] ${a.action} (since ${a.created_at})`,
+      ))
+      : '(none)',
     delegations: formatLines(context.fleet.delegations.map(
-      (d) => `- [${d.id.slice(0, 8)}] ${d.capability} -> ${d.to_agent_id ?? 'unassigned'} (${d.status})`,
+      (d) => `- id=${d.id} ${d.capability} -> ${d.to_agent_id ?? 'unassigned'} (${d.status})`,
     )),
     recent_events: formatLines(context.recentEvents.slice(0, 20).map(
       (e) => `- ${e.event_type} by ${e.actor}`,
@@ -359,7 +386,7 @@ async function callLlamaCpp(
             items: {
               type: 'object',
               properties: {
-                type: { type: 'string', enum: ['delegate', 'update_work_item', 'request_approval', 'no_op'] },
+                type: { type: 'string', enum: ['delegate', 'update_work_item', 'request_approval', 'update_profile', 'no_op'] },
                 payload: { type: 'object' },
                 reason: { type: 'string' },
               },
@@ -367,7 +394,7 @@ async function callLlamaCpp(
             },
           },
         },
-        required: ['reasoning', 'actions'],
+        required: ['reasoning', 'response', 'actions'],
       },
     }),
   }, timeoutMs)
@@ -492,7 +519,32 @@ async function callOpenAI(
   const client = new OpenAI({ apiKey, baseURL: baseURL || undefined, timeout: timeoutMs })
   const response = await withProviderTimeout(client.chat.completions.create({
     model,
-    response_format: { type: 'json_object' },
+    response_format: {
+      type: 'json_schema',
+      json_schema: {
+        name: 'prime_decision',
+        schema: {
+          type: 'object',
+          properties: {
+            reasoning: { type: 'string' },
+            response: { type: 'string' },
+            actions: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  type: { type: 'string', enum: ['delegate', 'update_work_item', 'request_approval', 'update_profile', 'no_op'] },
+                  payload: { type: 'object' },
+                  reason: { type: 'string' },
+                },
+                required: ['type', 'payload', 'reason'],
+              },
+            },
+          },
+          required: ['reasoning', 'response', 'actions'],
+        },
+      },
+    },
     messages: [
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userMessage },

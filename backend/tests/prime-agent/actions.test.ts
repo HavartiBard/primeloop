@@ -7,6 +7,7 @@ const runtimeMocks = vi.hoisted(() => ({
   updateWorkItem: vi.fn(),
   insertRuntimeEvent: vi.fn(),
   getPrimeProfile: vi.fn(),
+  appendThreadMessage: vi.fn(),
 }))
 
 const approvalMocks = vi.hoisted(() => ({
@@ -19,17 +20,28 @@ vi.mock('../../src/runtime.js', () => ({
   updateWorkItem: runtimeMocks.updateWorkItem,
   insertRuntimeEvent: runtimeMocks.insertRuntimeEvent,
   getPrimeProfile: runtimeMocks.getPrimeProfile,
+  appendThreadMessage: runtimeMocks.appendThreadMessage,
 }))
 
 vi.mock('../../src/approvals.js', () => ({
   ensurePendingApproval: approvalMocks.ensurePendingApproval,
 }))
 
+const workspaceMocks = vi.hoisted(() => ({
+  readProfileFiles:  vi.fn(),
+  writeProfileFiles: vi.fn(),
+}))
+
+vi.mock('../../src/workspace.js', () => ({
+  readProfileFiles:  workspaceMocks.readProfileFiles,
+  writeProfileFiles: workspaceMocks.writeProfileFiles,
+}))
+
 import { dispatchPrimeActions } from '../../src/prime-agent/actions.js'
 import type { PrimeContext } from '../../src/prime-agent/context.js'
 import type { PrimeDecision } from '../../src/prime-agent/llm-router.js'
 
-const pool = {} as pg.Pool
+const pool = { query: vi.fn().mockResolvedValue({ rows: [] }) } as unknown as pg.Pool
 
 const context: PrimeContext = {
   trigger: {
@@ -251,5 +263,80 @@ describe('prime-agent actions', () => {
         ],
       })
     ).rejects.toThrow('Unsupported Prime action type: publish_pattern')
+  })
+
+  describe('dispatchPrimeActions — update_profile', () => {
+    beforeEach(() => {
+      runtimeMocks.appendThreadMessage.mockReset()
+      runtimeMocks.insertRuntimeEvent.mockReset()
+      runtimeMocks.getPrimeProfile.mockResolvedValue({ name: 'Prime' })
+      workspaceMocks.readProfileFiles.mockReset()
+      workspaceMocks.writeProfileFiles.mockReset()
+      workspaceMocks.readProfileFiles.mockResolvedValue({
+        soul:      { sections: { identity: 'old', voice_tone: '', decision_style: '' }, unknown: [] },
+        operating: { sections: { default_behaviors: '', approval_thresholds: '' },     unknown: [] },
+      })
+      workspaceMocks.writeProfileFiles.mockResolvedValue(undefined)
+    })
+
+    it('updates a soul section and writes back', async () => {
+      await dispatchPrimeActions(pool, context, {
+        reasoning: 'tweak identity',
+        response: 'updated identity',
+        actions: [{
+          type: 'update_profile',
+          payload: { file: 'soul', section_key: 'identity', new_text: 'new identity text', reason: 'user asked' },
+          reason: 'user asked',
+        }],
+      })
+
+      expect(workspaceMocks.writeProfileFiles).toHaveBeenCalled()
+      const writtenBundle = workspaceMocks.writeProfileFiles.mock.calls[0][1]
+      expect(writtenBundle.soul.sections.identity).toBe('new identity text')
+    })
+
+    it('appends a chat message containing the diff', async () => {
+      await dispatchPrimeActions(pool, context, {
+        reasoning: 'r',
+        response: 'r',
+        actions: [{
+          type: 'update_profile',
+          payload: { file: 'soul', section_key: 'identity', new_text: 'new', reason: 'user asked' },
+          reason: 'user asked',
+        }],
+      })
+      expect(runtimeMocks.appendThreadMessage).toHaveBeenCalled()
+      const [, , msg] = runtimeMocks.appendThreadMessage.mock.calls[0]
+      expect(msg.content).toContain('-old')
+      expect(msg.content).toContain('+new')
+    })
+
+    it('emits prime.action.update_profile event', async () => {
+      await dispatchPrimeActions(pool, context, {
+        reasoning: 'r',
+        response: 'r',
+        actions: [{
+          type: 'update_profile',
+          payload: { file: 'soul', section_key: 'identity', new_text: 'new', reason: 'user asked' },
+          reason: 'user asked',
+        }],
+      })
+      expect(runtimeMocks.insertRuntimeEvent).toHaveBeenCalledWith(
+        pool,
+        expect.objectContaining({ event_type: 'prime.action.update_profile' }),
+      )
+    })
+
+    it('rejects unknown section keys', async () => {
+      await expect(dispatchPrimeActions(pool, context, {
+        reasoning: 'r',
+        response: 'r',
+        actions: [{
+          type: 'update_profile',
+          payload: { file: 'soul', section_key: 'bogus', new_text: 'x', reason: 'why' },
+          reason: 'why',
+        }],
+      })).rejects.toThrow(/unknown section/i)
+    })
   })
 })

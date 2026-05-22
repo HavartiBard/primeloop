@@ -223,6 +223,8 @@ export function CollaborationRoomsView({
   const [unreadMessages, setUnreadMessages] = useState(0)
   const [followBottom, setFollowBottom] = useState(true)
   const chatScrollRef = useRef<HTMLDivElement | null>(null)
+  const chatInputRef = useRef<HTMLInputElement | null>(null)
+  const displayStartRef = useRef<{ ts: number; roomId: string | null }>({ ts: 0, roomId: null })
   const lastMessageCountRef = useRef(0)
 
   const rooms = useMemo<RoomView[]>(() => {
@@ -434,10 +436,16 @@ export function CollaborationRoomsView({
   }, [displayMessages.length, followBottom, activeRoomId, visiblePrimeSessions.length])
 
   useEffect(() => {
-    if (visiblePrimeSessions.length === 0) return
+    if (visiblePrimeSessions.length === 0 || !activeRoomId) {
+      displayStartRef.current = { ts: 0, roomId: null }
+      return
+    }
+    if (displayStartRef.current.roomId !== activeRoomId) {
+      displayStartRef.current = { ts: Date.now(), roomId: activeRoomId }
+    }
     const timer = window.setInterval(() => setClockNow(Date.now()), 1000)
     return () => window.clearInterval(timer)
-  }, [visiblePrimeSessions.length])
+  }, [visiblePrimeSessions.length, activeRoomId])
 
   const primaryRunningSession = visiblePrimeSessions[0]
   const runningPrimeWork = visiblePrimeSessions
@@ -455,10 +463,8 @@ export function CollaborationRoomsView({
   const processingSummary = runningPrimeWork.length > 0
     ? runningPrimeWork.slice(0, 2).map((item) => item.title).join(' · ')
     : 'thinking through the latest request'
-  const processingStartedAt = primaryRunningSession ? new Date(primaryRunningSession.started_at).getTime() : clockNow
-  const processingStartupBufferMs = 5000
-  const processingElapsed = primaryRunningSession
-    ? formatElapsed(Math.max(0, clockNow - processingStartedAt + processingStartupBufferMs))
+  const processingElapsed = displayStartRef.current
+    ? formatElapsed(Math.max(0, clockNow - displayStartRef.current.ts))
     : '0s'
   const processingTimeLabel = formatShortTime(primaryRunningSession?.started_at)
   const processingVerb = primePhaseLabel(primaryRunningSession?.last_step, primaryRunningSession?.status)
@@ -494,6 +500,8 @@ export function CollaborationRoomsView({
         queryClient.invalidateQueries({ queryKey: ['runtime-overview'] }),
         queryClient.invalidateQueries({ queryKey: ['prime-agent-sessions', activeRoomId] }),
       ])
+      // Restore focus to the chat input after re-renders complete
+      requestAnimationFrame(() => chatInputRef.current?.focus())
     },
   })
   const canSendMessage = !!activeRoomId && draftMessage.trim().length > 0 && !sendMessage.isPending
@@ -721,6 +729,7 @@ export function CollaborationRoomsView({
               {/* Chat input */}
               <div className="flex shrink-0 items-center gap-2 border-t border-[var(--border-soft)] bg-[var(--panel)] px-4 py-3">
                 <input
+                  ref={chatInputRef}
                   className="flex-1 rounded border border-[var(--border-soft)] bg-[var(--panel-subtle)] px-3 py-2 font-mono text-sm text-[var(--text)] outline-none placeholder:text-[var(--muted)] focus:border-[var(--sel-bd)]"
                   placeholder="$ message room or @agent…"
                   value={draftMessage}
