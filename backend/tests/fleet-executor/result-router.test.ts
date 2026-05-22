@@ -11,10 +11,6 @@ import { createInMemoryPrimeQueue } from '../../src/prime-agent/queue.js'
 import type { Delegation } from '../../src/runtime.js'
 import type { TaskResult } from '../../src/fleet-executor/harness.js'
 
-const pool = {
-  query: vi.fn().mockResolvedValue({ rows: [], rowCount: 1 }),
-} as unknown as pg.Pool
-
 const delegation: Delegation = {
   id: 'del-1',
   work_item_id: 'wi-1',
@@ -36,10 +32,19 @@ const taskResult: TaskResult = {
 
 describe('routeResult', () => {
   let primeQueue: ReturnType<typeof createInMemoryPrimeQueue>
+  let pool: pg.Pool
 
   beforeEach(() => {
     vi.clearAllMocks()
     primeQueue = createInMemoryPrimeQueue()
+    pool = {
+      query: vi.fn(async (sql: string) => {
+        if (sql.includes('SELECT tier FROM agents')) {
+          return { rows: [{ tier: 'durable' }], rowCount: 1 }
+        }
+        return { rows: [], rowCount: 1 }
+      }),
+    } as unknown as pg.Pool
   })
 
   it('updates delegation to completed on success', async () => {
@@ -89,5 +94,22 @@ describe('routeResult', () => {
       routeResult({ pool, primeQueue }, noThread, { success: true, result: taskResult }),
     ).resolves.toBeUndefined()
     expect(appendThreadMessageMock).not.toHaveBeenCalled()
+  })
+
+  it('returns durable agents to idle on ordinary task failure', async () => {
+    await routeResult({ pool, primeQueue }, delegation, { success: false, error: 'timed out' })
+
+    expect((pool.query as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith(
+      expect.stringContaining('SELECT tier FROM agents'),
+      ['agent-1'],
+    )
+    expect((pool.query as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith(
+      expect.stringContaining('UPDATE agents'),
+      ['agent-1', 'idle'],
+    )
+    expect((pool.query as ReturnType<typeof vi.fn>)).not.toHaveBeenCalledWith(
+      expect.stringContaining('UPDATE agents'),
+      ['agent-1', 'error'],
+    )
   })
 })

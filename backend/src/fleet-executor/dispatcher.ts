@@ -3,6 +3,7 @@ import { promisify } from 'node:util'
 import type pg from 'pg'
 import { appendThreadMessage, type Delegation } from '../runtime.js'
 import type { PrimeQueue } from '../prime-agent/queue.js'
+import type { AgentState } from '../registry.js'
 import { loadWorkspaceTemplate, renderTemplate } from '../workspace.js'
 import type { AgentHarness, TaskPrompt } from './harness.js'
 import { routeResult } from './result-router.js'
@@ -86,6 +87,7 @@ export class FleetDispatcher {
       : undefined
 
     try {
+      await this.setAgentState(agentId, 'busy', `delegation ${delegation.id} claimed for dispatch`)
       const handle = await harness.dispatch(prompt)
 
       // Stream progress to thread
@@ -144,6 +146,21 @@ export class FleetDispatcher {
       [agentId],
     )
     return rows[0]?.worktree_path ?? null
+  }
+
+  private async setAgentState(agentId: string, state: AgentState, reason: string): Promise<void> {
+    await this.pool.query(
+      `UPDATE agents
+       SET state = $2
+       WHERE id = $1
+         AND COALESCE(is_prime, false) = false`,
+      [agentId, state],
+    )
+    await this.pool.query(
+      `INSERT INTO runtime_events (event_type, actor, payload)
+       VALUES ($1, $2, $3)`,
+      ['agent.lifecycle.transition', 'fleet-dispatcher', JSON.stringify({ agent_id: agentId, state, reason })],
+    )
   }
 }
 

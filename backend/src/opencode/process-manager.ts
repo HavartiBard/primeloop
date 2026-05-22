@@ -9,6 +9,7 @@ import { listControlPlaneTools, type McpToolDefinition } from '../mcp/service.js
 import { loadWorkspaceTemplate, renderTemplate } from '../workspace.js'
 import {
   getProviderApiKey,
+  type AgentState,
   type Provider,
   type RegistryAgent,
   updateAgent,
@@ -24,6 +25,7 @@ const DEFAULT_CONTROL_PLANE_URL = 'http://localhost:3100'
 const START_RETRIES = 3
 const HEALTH_TIMEOUT_MS = 10_000
 const HEALTH_INTERVAL_MS = 500
+const RECOVERY_ERROR = 'interrupted during harness restart recovery'
 
 type ChildProcessLike = {
   kill(signal?: NodeJS.Signals | number): boolean
@@ -177,8 +179,10 @@ export class OpenCodeProcessManager {
   }
 
   async initialize(): Promise<void> {
+    await this.recoverLifecycleState()
     const { rows } = await this.pool.query<RegistryAgent>('SELECT * FROM agents ORDER BY created_at')
     for (const agent of rows) {
+      if (agent.tier === 'ephemeral') continue
       await this.syncAgent(agent)
     }
   }
@@ -189,17 +193,26 @@ export class OpenCodeProcessManager {
       return agent
     }
 
-    const preparedAgent = await this.prepareAgent(agent)
-    await this.ensureWorktree(preparedAgent)
-    await this.writeConfigFiles(preparedAgent)
+    await this.setAgentState(agent.id, 'provisioning', 'preparing managed local runtime')
 
-    const existing = this.processes.get(preparedAgent.id)
-    if (existing) {
-      return preparedAgent
+    try {
+      const preparedAgent = await this.prepareAgent(agent)
+      await this.ensureWorktree(preparedAgent)
+      await this.writeConfigFiles(preparedAgent)
+
+      const existing = this.processes.get(preparedAgent.id)
+      if (!existing) {
+        await this.startAgent(preparedAgent)
+      }
+
+      const readyState = preparedAgent.tier === 'ephemeral' ? 'ready' : 'idle'
+      await this.setAgentState(preparedAgent.id, readyState, 'managed local runtime ready')
+      return await this.refreshAgent(preparedAgent.id) ?? preparedAgent
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      await this.setAgentState(agent.id, 'error', `provisioning failed: ${message}`)
+      throw error
     }
-
-    await this.startAgent(preparedAgent)
-    return preparedAgent
   }
 
   getRunningHarness(agentId: string): AgentHarness | undefined {
@@ -378,34 +391,17 @@ export class OpenCodeProcessManager {
     const providerEnv = providerEnvName(provider)
     const controlPlaneToken = await getOrCreateAgentToken(this.pool, agent.id)
 
-    const child = this.spawnFn('opencode', ['serve', '--port', String(localPort)], {
-      cwd: worktreePath,
-      env: {
-        ...process.env,
-        ...(providerEnv && providerKey ? { [providerEnv]: providerKey } : {}),
-        ...(provider?.type === 'llm' && provider.base_url ? { OPENAI_BASE_URL: provider.base_url } : {}),
-        CONTROL_PLANE_URL: this.controlPlaneUrl,
-        CONTROL_PLANE_AGENT_TOKEN: controlPlaneToken,
-        POSTGRES_URL: process.env.DATABASE_URL ?? '',
-        SOULLAYER_AGENT_ID: agent.id,
-      },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    })
+    const env = {
+      ...process.env,
+      ...(providerEnv && providerKey ? { [providerEnv]: providerKey } : {}),
+      ...(provider?.type === 'llm' && provider.base_url ? { OPENAI_BASE_URL: provider.base_url } : {}),
+      CONTROL_PLANE_URL: this.controlPlaneUrl,
+      CONTROL_PLANE_AGENT_TOKEN: controlPlaneToken,
+      POSTGRES_URL: process.env.DATABASE_URL ?? '',
+      SOULLAYER_AGENT_ID: agent.id,
+    }
 
-    const state: ProcessState = { child, restartAttempts: 0, stopped: false }
-    this.processes.set(agent.id, state)
-
-    child.on('close', () => {
-      const current = this.processes.get(agent.id)
-      if (!current || current.child !== child) return
-      this.processes.delete(agent.id)
-      if (current.stopped) return
-      if (current.restartAttempts >= START_RETRIES - 1) return
-      current.restartAttempts += 1
-      void this.retryStart(agent, current.restartAttempts)
-    })
-
-    await this.waitForHealth(localPort)
+    await this.launchManagedProcess(agent, localPort, worktreePath, env, 0)
   }
 
   private async startPiAgent(agent: RegistryAgent): Promise<void> {
@@ -426,22 +422,28 @@ export class OpenCodeProcessManager {
   private async retryStart(agent: RegistryAgent, restartAttempts: number): Promise<void> {
     const refreshed = await this.refreshAgent(agent.id) ?? agent
     if (!isManagedLocalAgent(refreshed)) return
-    const child = this.spawnFn('opencode', ['serve', '--port', String(refreshed.local_port)], {
-      cwd: refreshed.worktree_path,
-      env: {
-        ...process.env,
-        CONTROL_PLANE_URL: this.controlPlaneUrl,
-        SOULLAYER_AGENT_ID: refreshed.id,
-      },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    })
-    const state: ProcessState = { child, restartAttempts, stopped: false }
-    this.processes.set(refreshed.id, state)
-    child.on('close', () => {
-      const current = this.processes.get(refreshed.id)
-      if (!current || current.child !== child) return
-      this.processes.delete(refreshed.id)
-    })
+    if (!refreshed.local_port || !refreshed.worktree_path) {
+      throw new Error(`local agent ${refreshed.name} is missing local_port or worktree_path`)
+    }
+
+    await this.setAgentState(refreshed.id, 'provisioning', `retrying managed local runtime (attempt ${restartAttempts + 1})`)
+
+    const provider = await this.resolveProvider(refreshed)
+    const providerKey = provider ? await getProviderApiKey(this.pool, provider.id) : null
+    const providerEnv = providerEnvName(provider)
+    const controlPlaneToken = await getOrCreateAgentToken(this.pool, refreshed.id)
+    const env = {
+      ...process.env,
+      ...(providerEnv && providerKey ? { [providerEnv]: providerKey } : {}),
+      ...(provider?.type === 'llm' && provider.base_url ? { OPENAI_BASE_URL: provider.base_url } : {}),
+      CONTROL_PLANE_URL: this.controlPlaneUrl,
+      CONTROL_PLANE_AGENT_TOKEN: controlPlaneToken,
+      POSTGRES_URL: process.env.DATABASE_URL ?? '',
+      SOULLAYER_AGENT_ID: refreshed.id,
+    }
+
+    await this.launchManagedProcess(refreshed, refreshed.local_port, refreshed.worktree_path, env, restartAttempts)
+    await this.setAgentState(refreshed.id, refreshed.tier === 'ephemeral' ? 'ready' : 'idle', `managed local runtime recovered after restart ${restartAttempts + 1}`)
   }
 
   private async refreshAgent(agentId: string): Promise<RegistryAgent | null> {
@@ -461,5 +463,120 @@ export class OpenCodeProcessManager {
       await this.sleepFn(HEALTH_INTERVAL_MS)
     }
     throw new Error(`opencode serve on port ${port} did not become healthy within ${HEALTH_TIMEOUT_MS}ms`)
+  }
+
+  private async recoverLifecycleState(): Promise<void> {
+    const recoveryMessage = 'failed during harness restart recovery'
+    const { rows: interrupted } = await this.pool.query<{ id: string; to_agent_id: string | null }>(
+      `UPDATE delegations
+       SET status = 'failed',
+           result = jsonb_build_object('error', $1),
+           completed_at = now(),
+           updated_at = now()
+       WHERE status = 'in_progress'
+       RETURNING id, to_agent_id`,
+      [recoveryMessage],
+    )
+
+    for (const delegation of interrupted) {
+      await this.recordRuntimeEvent('delegation.recovered_failed', {
+        actor: 'process-manager',
+        delegation_id: delegation.id,
+        payload: { error: recoveryMessage },
+      })
+    }
+
+    const interruptedAgentIds = interrupted
+      .map((delegation) => delegation.to_agent_id)
+      .filter((agentId): agentId is string => typeof agentId === 'string')
+
+    const { rows: unstableAgents } = await this.pool.query<{ id: string }>(
+      `SELECT id
+       FROM agents
+       WHERE COALESCE(is_prime, false) = false
+         AND state IN ('provisioning', 'busy', 'retiring')`,
+    )
+
+    const recoverableAgentIds = Array.from(new Set([...interruptedAgentIds, ...unstableAgents.map((agent) => agent.id)]))
+    for (const agentId of recoverableAgentIds) {
+      await this.setAgentState(agentId, 'error', RECOVERY_ERROR)
+    }
+  }
+
+  private async launchManagedProcess(
+    agent: RegistryAgent,
+    localPort: number,
+    worktreePath: string,
+    env: NodeJS.ProcessEnv,
+    restartAttempts: number,
+  ): Promise<void> {
+    const child = this.spawnFn('opencode', ['serve', '--port', String(localPort)], {
+      cwd: worktreePath,
+      env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+
+    const state: ProcessState = { child, restartAttempts, stopped: false }
+    this.processes.set(agent.id, state)
+
+    child.on('close', () => {
+      const current = this.processes.get(agent.id)
+      if (!current || current.child !== child) return
+      this.processes.delete(agent.id)
+      if (current.stopped) return
+      void this.handleUnexpectedExit(agent, current.restartAttempts)
+    })
+
+    try {
+      await this.waitForHealth(localPort)
+    } catch (error) {
+      const current = this.processes.get(agent.id)
+      if (current?.child === child) {
+        current.stopped = true
+        current.child.kill()
+        this.processes.delete(agent.id)
+      }
+      throw error
+    }
+  }
+
+  private async handleUnexpectedExit(agent: RegistryAgent, restartAttempts: number): Promise<void> {
+    const nextAttempt = restartAttempts + 1
+    const message = `managed local runtime exited unexpectedly (attempt ${nextAttempt} of ${START_RETRIES})`
+    await this.setAgentState(agent.id, 'error', message)
+
+    if (nextAttempt >= START_RETRIES) return
+
+    try {
+      await this.retryStart(agent, restartAttempts + 1)
+    } catch (error) {
+      const failure = error instanceof Error ? error.message : String(error)
+      await this.setAgentState(agent.id, 'error', `restart failed: ${failure}`)
+    }
+  }
+
+  private async setAgentState(agentId: string, state: AgentState, reason: string): Promise<void> {
+    await this.pool.query(
+      `UPDATE agents
+       SET state = $2
+       WHERE id = $1
+         AND COALESCE(is_prime, false) = false`,
+      [agentId, state],
+    )
+    await this.recordRuntimeEvent('agent.lifecycle.transition', {
+      actor: 'process-manager',
+      payload: { agent_id: agentId, state, reason },
+    })
+  }
+
+  private async recordRuntimeEvent(
+    eventType: string,
+    event: { actor: string; delegation_id?: string; payload: Record<string, unknown> },
+  ): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO runtime_events (event_type, actor, delegation_id, payload)
+       VALUES ($1, $2, $3, $4)`,
+      [eventType, event.actor, event.delegation_id ?? null, JSON.stringify(event.payload)],
+    )
   }
 }

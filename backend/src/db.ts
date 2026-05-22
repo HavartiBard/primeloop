@@ -48,6 +48,10 @@ export async function runMigrations(pool: pg.Pool): Promise<void> {
       name           TEXT NOT NULL UNIQUE,
       type           TEXT NOT NULL,
       provider_id    UUID REFERENCES providers(id) ON DELETE SET NULL,
+      tier           TEXT NOT NULL DEFAULT 'durable',
+      role           TEXT NOT NULL DEFAULT 'general',
+      state          TEXT NOT NULL DEFAULT 'ready',
+      persona_file   TEXT NOT NULL DEFAULT 'AGENTS.md',
       runtime_family TEXT NOT NULL DEFAULT 'custom',
       execution_mode TEXT NOT NULL DEFAULT 'external',
       endpoint       TEXT,
@@ -283,12 +287,34 @@ export async function runMigrations(pool: pg.Pool): Promise<void> {
     ALTER TABLE agents ADD COLUMN IF NOT EXISTS role TEXT;
     ALTER TABLE agents ADD COLUMN IF NOT EXISTS state TEXT;
     ALTER TABLE agents ADD COLUMN IF NOT EXISTS persona_file TEXT;
-
     ALTER TABLE agent_runtime_configs
       ADD COLUMN IF NOT EXISTS capability_profile_id UUID REFERENCES capability_profiles(id) ON DELETE SET NULL;
 
     ALTER TABLE agent_runtime_configs
       ADD COLUMN IF NOT EXISTS tool_grant_defaults JSONB NOT NULL DEFAULT '{}';
+
+    UPDATE agents SET tier = 'durable' WHERE tier IS NULL;
+    UPDATE agents SET role = COALESCE(NULLIF(type, ''), 'general') WHERE role IS NULL;
+    UPDATE agents SET state = 'ready' WHERE state IS NULL;
+    UPDATE agents SET persona_file = 'AGENTS.md' WHERE persona_file IS NULL;
+
+    ALTER TABLE agents ALTER COLUMN tier SET DEFAULT 'durable';
+    ALTER TABLE agents ALTER COLUMN tier SET NOT NULL;
+    ALTER TABLE agents DROP CONSTRAINT IF EXISTS agents_tier_check;
+    ALTER TABLE agents ADD CONSTRAINT agents_tier_check CHECK (tier IN ('durable', 'ephemeral'));
+
+    ALTER TABLE agents ALTER COLUMN role SET DEFAULT 'general';
+    ALTER TABLE agents ALTER COLUMN role SET NOT NULL;
+
+    ALTER TABLE agents ALTER COLUMN state SET DEFAULT 'ready';
+    ALTER TABLE agents ALTER COLUMN state SET NOT NULL;
+    ALTER TABLE agents DROP CONSTRAINT IF EXISTS agents_state_check;
+    ALTER TABLE agents ADD CONSTRAINT agents_state_check CHECK (
+      state IN ('provisioning', 'ready', 'busy', 'idle', 'retiring', 'terminated', 'error')
+    );
+
+    ALTER TABLE agents ALTER COLUMN persona_file SET DEFAULT 'AGENTS.md';
+    ALTER TABLE agents ALTER COLUMN persona_file SET NOT NULL;
 
     CREATE TABLE IF NOT EXISTS agent_tokens (
       agent_id UUID PRIMARY KEY REFERENCES agents(id) ON DELETE CASCADE,
