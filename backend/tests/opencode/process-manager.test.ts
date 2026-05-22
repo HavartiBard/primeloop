@@ -12,6 +12,10 @@ function createAgent(overrides: Partial<RegistryAgent> = {}): RegistryAgent {
     name: 'Builder One',
     type: 'codex-thread',
     provider_id: 'provider-1',
+    tier: 'durable',
+    role: 'implementation',
+    state: 'ready',
+    persona_file: 'AGENTS.md',
     runtime_family: 'codex-app-server',
     execution_mode: 'local',
     endpoint: 'http://127.0.0.1:4200',
@@ -25,6 +29,14 @@ function createAgent(overrides: Partial<RegistryAgent> = {}): RegistryAgent {
     soul: 'Calm builder',
     ...overrides,
   }
+}
+
+function isLifecycleUpdate(sql: string): boolean {
+  return sql.includes('UPDATE agents') && sql.includes('SET state = $2')
+}
+
+function isRuntimeEventInsert(sql: string): boolean {
+  return sql.includes('INSERT INTO runtime_events')
 }
 
 describe('OpenCodeProcessManager', () => {
@@ -45,6 +57,15 @@ describe('OpenCodeProcessManager', () => {
     const fetchFn = vi.fn().mockResolvedValue(new Response(JSON.stringify({ status: 'ok' }), { status: 200 }))
     const execFileFn = vi.fn().mockResolvedValue({ stdout: '', stderr: '' })
     const query = vi.fn(async (sql: string) => {
+      if (isLifecycleUpdate(sql)) {
+        return { rows: [], rowCount: 1 }
+      }
+      if (isRuntimeEventInsert(sql)) {
+        return { rows: [], rowCount: 1 }
+      }
+      if (sql.startsWith('SELECT * FROM agents WHERE id = $1')) {
+        return { rows: [createAgent({ worktree_path: worktreePath, state: 'idle' })] }
+      }
       if (sql.startsWith('SELECT * FROM providers')) {
         return { rows: [{ id: 'provider-1', type: 'llm', model: 'anthropic/claude-sonnet-4-5', base_url: 'https://proxy.example.com', api_key: 'encrypted' }] }
       }
@@ -122,6 +143,15 @@ describe('OpenCodeProcessManager', () => {
     const fetchFn = vi.fn().mockResolvedValue(new Response(JSON.stringify({ status: 'ok' }), { status: 200 }))
     const execFileFn = vi.fn().mockResolvedValue({ stdout: '', stderr: '' })
     const query = vi.fn(async (sql: string) => {
+      if (isLifecycleUpdate(sql)) {
+        return { rows: [], rowCount: 1 }
+      }
+      if (isRuntimeEventInsert(sql)) {
+        return { rows: [], rowCount: 1 }
+      }
+      if (sql.startsWith('SELECT * FROM agents WHERE id = $1')) {
+        return { rows: [updatedAgent] }
+      }
       if (sql.includes('MAX(local_port)')) {
         return { rows: [{ next_port: 4201 }] }
       }
@@ -166,6 +196,15 @@ describe('OpenCodeProcessManager', () => {
     const fetchFn = vi.fn().mockResolvedValue(new Response(JSON.stringify({ status: 'ok' }), { status: 200 }))
     const execFileFn = vi.fn().mockResolvedValue({ stdout: '', stderr: '' })
     const query = vi.fn(async (sql: string) => {
+      if (isLifecycleUpdate(sql)) {
+        return { rows: [], rowCount: 1 }
+      }
+      if (isRuntimeEventInsert(sql)) {
+        return { rows: [], rowCount: 1 }
+      }
+      if (sql.startsWith('SELECT * FROM agents WHERE id = $1')) {
+        return { rows: [{ ...createAgent({ worktree_path: path.join(rootDir, 'agents', 'builder-one') }), state: 'idle' }] }
+      }
       if (sql.startsWith('SELECT * FROM providers')) return { rows: [] }
       if (sql.startsWith('SELECT token FROM agent_tokens')) return { rows: [{ token: 'agent-token-3' }] }
       if (sql.includes('FROM mcp_servers ms')) return { rows: [] }
@@ -192,5 +231,78 @@ describe('OpenCodeProcessManager', () => {
     const manager = new OpenCodeProcessManager({} as unknown as pg.Pool)
     const result = manager.getRunningHarness('unknown-agent-id')
     expect(result).toBeUndefined()
+  })
+
+  it('initialize recovers interrupted delegations and restarts only durable agents', async () => {
+    const durable = createAgent({ id: 'agent-durable', name: 'Durable Agent' })
+    const ephemeral = createAgent({
+      id: 'agent-ephemeral',
+      name: 'Ephemeral Agent',
+      tier: 'ephemeral',
+      state: 'busy',
+    })
+    const child = { kill: vi.fn().mockReturnValue(true), on: vi.fn(), stdout: null, stderr: null }
+    const spawnFn = vi.fn().mockReturnValue(child)
+    const fetchFn = vi.fn().mockResolvedValue(new Response(JSON.stringify({ status: 'ok' }), { status: 200 }))
+    const execFileFn = vi.fn().mockResolvedValue({ stdout: '', stderr: '' })
+    const query = vi.fn(async (sql: string) => {
+      if (sql.includes(`UPDATE delegations
+       SET status = 'failed'`)) {
+        return { rows: [{ id: 'del-1', to_agent_id: durable.id }] }
+      }
+      if (sql.includes(`SELECT id
+       FROM agents`)) {
+        return { rows: [{ id: durable.id }, { id: ephemeral.id }] }
+      }
+      if (isLifecycleUpdate(sql)) {
+        return { rows: [], rowCount: 1 }
+      }
+      if (isRuntimeEventInsert(sql)) {
+        return { rows: [], rowCount: 1 }
+      }
+      if (sql.startsWith('SELECT * FROM agents WHERE id = $1')) {
+        return { rows: [{ ...durable, state: 'idle' }] }
+      }
+      if (sql === 'SELECT * FROM agents ORDER BY created_at') {
+        return { rows: [durable, ephemeral] }
+      }
+      if (sql.startsWith('SELECT * FROM providers')) {
+        return { rows: [] }
+      }
+      if (sql.startsWith('SELECT token FROM agent_tokens')) {
+        return { rows: [{ token: 'agent-token-4' }] }
+      }
+      if (sql.includes('FROM mcp_servers ms')) {
+        return { rows: [] }
+      }
+      throw new Error(`unexpected query: ${sql}`)
+    })
+    const pool = { query } as unknown as pg.Pool
+    const manager = new OpenCodeProcessManager(pool, {
+      repoRoot: path.join(rootDir, 'repo'),
+      agentsRoot: path.join(rootDir, 'agents'),
+      spawnFn: spawnFn as any,
+      fetchFn: fetchFn as any,
+      execFileFn: execFileFn as any,
+      sleepFn: async () => {},
+    })
+
+    await manager.initialize()
+
+    expect(spawnFn).toHaveBeenCalledTimes(1)
+    expect(spawnFn).toHaveBeenCalledWith('opencode', ['serve', '--port', '4200'], expect.any(Object))
+    expect(query).toHaveBeenCalledWith(
+      expect.stringContaining(`UPDATE delegations
+       SET status = 'failed'`),
+      ['failed during harness restart recovery'],
+    )
+    expect(query).toHaveBeenCalledWith(
+      expect.stringContaining('UPDATE agents'),
+      [durable.id, 'error'],
+    )
+    expect(query).toHaveBeenCalledWith(
+      expect.stringContaining('UPDATE agents'),
+      [ephemeral.id, 'error'],
+    )
   })
 })

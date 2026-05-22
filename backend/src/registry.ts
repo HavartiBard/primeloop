@@ -12,11 +12,25 @@ export interface Provider {
   created_at: string
 }
 
+export type AgentTier = 'durable' | 'ephemeral'
+export type AgentState =
+  | 'provisioning'
+  | 'ready'
+  | 'busy'
+  | 'idle'
+  | 'retiring'
+  | 'terminated'
+  | 'error'
+
 export interface RegistryAgent {
   id: string
   name: string
   type: string
   provider_id?: string
+  tier?: AgentTier
+  role?: string
+  state?: AgentState
+  persona_file?: string
   runtime_family: string
   execution_mode: string
   endpoint?: string
@@ -32,10 +46,6 @@ export interface RegistryAgent {
   workspace_root?: string
   system_prompt?: string
   soul?: string
-  tier?: string
-  role?: string
-  state?: string
-  persona_file?: string
 }
 
 export interface CapabilityProfile {
@@ -186,10 +196,10 @@ export async function insertAgent(
       data.workspace_root ?? null,
       data.system_prompt ?? null,
       data.soul ?? null,
-      data.tier ?? null,
-      data.role ?? null,
-      data.state ?? null,
-      data.persona_file ?? null,
+      data.tier ?? 'durable',
+      data.role ?? data.type ?? 'general',
+      data.state ?? 'ready',
+      data.persona_file ?? 'AGENTS.md',
     ]
   )
   return rows[0]
@@ -207,6 +217,10 @@ export async function updateAgent(
     ['name', 'name'],
     ['type', 'type'],
     ['provider_id', 'provider_id'],
+    ['tier', 'tier'],
+    ['role', 'role'],
+    ['state', 'state'],
+    ['persona_file', 'persona_file'],
     ['runtime_family', 'runtime_family'],
     ['execution_mode', 'execution_mode'],
     ['endpoint', 'endpoint'],

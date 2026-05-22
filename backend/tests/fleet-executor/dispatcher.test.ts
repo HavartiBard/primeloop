@@ -69,12 +69,7 @@ describe('FleetDispatcher', () => {
     workspaceMocks.loadWorkspaceTemplate.mockResolvedValue('Task {{title}} {{description}}')
     workspaceMocks.renderTemplate.mockImplementation((template: string) => template)
     primeQueue = createInMemoryPrimeQueue()
-    pool = {
-      query: vi.fn()
-        .mockResolvedValueOnce({ rows: [pendingDelegation] }) // select queued
-        .mockResolvedValueOnce({ rows: [pendingDelegation] }) // claim update
-        .mockResolvedValue({ rows: [], rowCount: 1 }),
-    } as unknown as pg.Pool
+    pool = createPoolMock()
 
     dispatcher = new FleetDispatcher({
       pool,
@@ -101,10 +96,15 @@ describe('FleetDispatcher', () => {
 
   it('does not double-claim if claim UPDATE returns no rows', async () => {
     pool = {
-      query: vi.fn()
-        .mockResolvedValueOnce({ rows: [pendingDelegation] })
-        .mockResolvedValueOnce({ rows: [] }) // claim returns nothing (race)
-        .mockResolvedValue({ rows: [] }),
+      query: vi.fn(async (sql: string) => {
+        if (sql.includes(`SELECT * FROM delegations WHERE status = 'queued'`)) {
+          return { rows: [pendingDelegation] }
+        }
+        if (sql.includes(`UPDATE delegations SET status='in_progress'`)) {
+          return { rows: [] }
+        }
+        return { rows: [], rowCount: 0 }
+      }),
     } as unknown as pg.Pool
     dispatcher = new FleetDispatcher({ pool, primeQueue, getHarness: vi.fn().mockReturnValue(makeHarness()), pollIntervalMs: 50 })
     dispatcher.start()
@@ -146,11 +146,20 @@ describe('FleetDispatcher', () => {
     routeResultMock.mockResolvedValue(undefined)
     const harnessWithChanges = makeHarness({ ...taskResult, changed_files: ['src/foo.ts', 'src/secret.ts'] })
     pool = {
-      query: vi.fn()
-        .mockResolvedValueOnce({ rows: [pendingDelegation] }) // select queued
-        .mockResolvedValueOnce({ rows: [pendingDelegation] }) // claim update
-        .mockResolvedValueOnce({ rows: [{ worktree_path: '/workspace/agent-1' }] }) // agents query
-        .mockResolvedValue({ rows: [], rowCount: 1 }),
+      query: vi.fn(async (sql: string) => {
+        if (sql.includes(`SELECT * FROM delegations WHERE status = 'queued'`)) {
+          return { rows: [pendingDelegation] }
+        }
+        if (sql.includes(`UPDATE delegations SET status='in_progress'`)) {
+          return { rows: [pendingDelegation] }
+        }
+        if (sql.includes('UPDATE agents')) return { rows: [], rowCount: 1 }
+        if (sql.includes('INSERT INTO runtime_events')) return { rows: [], rowCount: 1 }
+        if (sql.includes('SELECT worktree_path FROM agents')) {
+          return { rows: [{ worktree_path: '/workspace/agent-1' }] }
+        }
+        return { rows: [], rowCount: 1 }
+      }),
     } as unknown as pg.Pool
     dispatcher = new FleetDispatcher({ pool, primeQueue, getHarness: vi.fn().mockReturnValue(harnessWithChanges), pollIntervalMs: 50 })
     dispatcher.start()
@@ -161,4 +170,30 @@ describe('FleetDispatcher', () => {
       expect.objectContaining({ success: false, error: expect.stringContaining('scope violation') }),
     )
   })
+
+  it('marks the target agent busy before dispatching the task', async () => {
+    routeResultMock.mockResolvedValue(undefined)
+    dispatcher.start()
+    await new Promise((r) => setTimeout(r, 100))
+    expect((pool.query as ReturnType<typeof vi.fn>)).toHaveBeenCalledWith(
+      expect.stringContaining('UPDATE agents'),
+      ['agent-1', 'busy'],
+    )
+  })
 })
+
+function createPoolMock(): pg.Pool {
+  return {
+    query: vi.fn(async (sql: string) => {
+      if (sql.includes(`SELECT * FROM delegations WHERE status = 'queued'`)) {
+        return { rows: [pendingDelegation] }
+      }
+      if (sql.includes(`UPDATE delegations SET status='in_progress'`)) {
+        return { rows: [pendingDelegation] }
+      }
+      if (sql.includes('UPDATE agents')) return { rows: [], rowCount: 1 }
+      if (sql.includes('INSERT INTO runtime_events')) return { rows: [], rowCount: 1 }
+      return { rows: [], rowCount: 1 }
+    }),
+  } as unknown as pg.Pool
+}
