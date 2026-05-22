@@ -1,4 +1,7 @@
 import type pg from 'pg'
+import { promises as fs } from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 export interface PrimeProfile {
   id: string
@@ -182,6 +185,7 @@ async function ensureOnboardingThread(pool: pg.Pool): Promise<void> {
     `SELECT name FROM chief_profiles WHERE id = 'default'`
   )
   const primeName = primeRows[0]?.name?.trim() || 'Prime'
+  const synopsis = buildProfileSynopsis(await computeSynopsisInput(pool))
 
   const onboardingThread = await createThread(pool, {
     title: `Getting started with ${primeName}`,
@@ -194,11 +198,46 @@ async function ensureOnboardingThread(pool: pg.Pool): Promise<void> {
   await appendThreadMessage(pool, onboardingThread.id, {
     role: 'assistant',
     sender: primeName,
-    content: `I'm ${primeName}. Your control plane is live and ready. Start by telling me the first task, repo, incident, or workflow you want me to handle, and I'll turn this room into the active coordination thread for it.`,
+    content: `I'm ${primeName}. ${synopsis}`,
     metadata: {
       kind: 'greeting',
     },
   })
+}
+
+import { readProfileFiles } from './workspace.js'
+import { buildProfileSynopsis } from './prime-agent/profile-synopsis.js'
+
+export async function computeSynopsisInput(pool: pg.Pool): Promise<{ allDefault: boolean; divergingSectionTitles: string[] }> {
+  const here = path.dirname(fileURLToPath(import.meta.url))
+  const promptsDir = path.resolve(here, '../prompts/agents')
+  const [soulDefault, operatingDefault] = await Promise.all([
+    fs.readFile(path.join(promptsDir, 'prime-soul.md'), 'utf8'),
+    fs.readFile(path.join(promptsDir, 'prime.md'),      'utf8'),
+  ])
+  const { parseProfileSections, SECTION_DEFS, SOUL_SECTION_KEYS, OPERATING_SECTION_KEYS } =
+    await import('./prime-agent/profile-sections.js')
+
+  const defaults = {
+    soul:      parseProfileSections(soulDefault,      'soul').sections,
+    operating: parseProfileSections(operatingDefault, 'operating').sections,
+  }
+
+  const actual = await readProfileFiles(pool)
+
+  const diverging: string[] = []
+  for (const key of SOUL_SECTION_KEYS) {
+    if ((actual.soul.sections[key] ?? '').trim() !== (defaults.soul[key] ?? '').trim()) {
+      diverging.push(SECTION_DEFS[key].heading)
+    }
+  }
+  for (const key of OPERATING_SECTION_KEYS) {
+    if ((actual.operating.sections[key] ?? '').trim() !== (defaults.operating[key] ?? '').trim()) {
+      diverging.push(SECTION_DEFS[key].heading)
+    }
+  }
+
+  return { allDefault: diverging.length === 0, divergingSectionTitles: diverging }
 }
 
 export async function listThreads(pool: pg.Pool): Promise<RuntimeThread[]> {

@@ -1,13 +1,14 @@
 import { Router } from 'express'
 import type pg from 'pg'
 import { encrypt } from '../crypto.js'
-import { appendThreadMessage, createThread } from '../runtime.js'
+import { appendThreadMessage, computeSynopsisInput, createThread } from '../runtime.js'
 import {
   ensureWorkspaceScaffold,
   readProfileFiles,
   writeProfileFiles,
   updateWorkspaceConfig,
 } from '../workspace.js'
+import { buildProfileSynopsis } from '../prime-agent/profile-synopsis.js'
 import type { SoulSectionKey, OperatingSectionKey } from '../prime-agent/profile-sections.js'
 
 export function createSetupRouter({
@@ -273,6 +274,7 @@ export function createSetupRouter({
 
         if (threadRows[0]?.count === 0) {
           const primeName = name
+          const synopsis = buildProfileSynopsis(await computeSynopsisInput(pool))
           const onboardingThread = await createThread(pool, {
             title: `Getting started with ${primeName}`,
             metadata: {
@@ -284,7 +286,7 @@ export function createSetupRouter({
           await appendThreadMessage(pool, onboardingThread.id, {
             role: 'assistant',
             sender: primeName,
-            content: `I'm ${primeName}. Your control plane is live and ready. Start by telling me the first task, repo, incident, or workflow you want me to handle, and I'll turn this room into the active coordination thread for it.`,
+            content: `I'm ${primeName}. ${synopsis}`,
             metadata: {
               kind: 'greeting',
             },

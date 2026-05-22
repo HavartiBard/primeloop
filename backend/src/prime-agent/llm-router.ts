@@ -10,6 +10,7 @@ export const PRIME_ACTION_TYPES = [
   'delegate',
   'update_work_item',
   'request_approval',
+  'update_profile',
   'no_op',
 ] as const
 
