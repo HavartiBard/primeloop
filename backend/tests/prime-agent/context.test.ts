@@ -108,20 +108,28 @@ describe('prime-agent context', () => {
         }
       }
 
+      // Runtime checker queries (buildRuntimeTruth)
+      if (sql.includes('FROM agent_heartbeat')) {
+        return { rows: [] }
+      }
+
       throw new Error(`Unexpected query: ${sql}`)
     })
 
     const pool = { query } as unknown as pg.Pool
 
-    const context = await assemblePrimeContext(pool, {
-      type: 'prime.message',
-      payload: {
-        thread_id: 'thread-1',
-        message_id: 'message-1',
-        content: 'Investigate the queue stall and watchdog behavior',
-        sender: 'james',
+    const context = await assemblePrimeContext(
+      { pool, getHarness: () => undefined },
+      {
+        type: 'prime.message',
+        payload: {
+          thread_id: 'thread-1',
+          message_id: 'message-1',
+          content: 'Investigate the queue stall and watchdog behavior',
+          sender: 'james',
+        },
       },
-    })
+    )
 
     expect(context.fleet.agents).toHaveLength(1)
     expect(context.fleet.agents[0]?.id).toBe('agent-1')
@@ -140,17 +148,21 @@ describe('prime-agent context', () => {
       if (sql.includes('SELECT * FROM delegations ORDER BY updated_at DESC LIMIT')) return { rows: [] }
       if (sql.includes('SELECT * FROM runtime_events ORDER BY created_at DESC LIMIT')) return { rows: [] }
       if (sql.includes('FROM information_schema.tables')) return { rows: [{ exists: false }] }
+      if (sql.includes('FROM agent_heartbeat')) return { rows: [] }
       throw new Error(`Unexpected query: ${sql}`)
     })
 
     const pool = { query } as unknown as pg.Pool
 
-    const context = await assemblePrimeContext(pool, {
-      type: 'cron.fast',
-      payload: {
-        triggered_at: '2026-05-09T22:15:00.000Z',
+    const context = await assemblePrimeContext(
+      { pool, getHarness: () => undefined },
+      {
+        type: 'cron.fast',
+        payload: {
+          triggered_at: '2026-05-09T22:15:00.000Z',
+        },
       },
-    })
+    )
 
     expect(context.fleet.agents).toEqual([])
     expect(context.fleet.workItems).toEqual([])

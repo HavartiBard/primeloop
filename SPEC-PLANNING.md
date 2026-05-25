@@ -25,6 +25,7 @@
 - `specs/001-prime-empty-fleet-graceful-delegation/` — existing full spec, in flight
 - `specs/002-agent-lifecycle-and-sandbox/spec.md` — full draft spec written
 - `specs/003-014/spec.md` — one-paragraph stubs each
+- `specs/015-prime-routing-runtime-truth/spec.md` — full draft spec written
 
 ## Next Step: Write Full Spec for 009
 
@@ -73,4 +74,5 @@ After the spec is written and user-approved, invoke `superpowers:writing-plans` 
 012   Knowledge artifacts               (depends: 007)
 013   Grading + self-improvement        (depends: 003, 011, 012)
 014   Cost ledger                       (depends: 002)
+015   Prime routing + runtime truth     (depends: 002, 003, 004, 005, 009)
 ```

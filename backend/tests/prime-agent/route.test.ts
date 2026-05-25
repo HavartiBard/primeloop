@@ -101,6 +101,71 @@ describe('prime-agent router', () => {
     expect(configMocks.updatePrimeConfig).not.toHaveBeenCalled()
   })
 
+  it('PATCH /config accepts model_preferences', async () => {
+    configMocks.updatePrimeConfig.mockResolvedValue({
+      id: 'default',
+      enabled: true,
+      model_preferences: {
+        planning: {
+          primary: { provider_id: 'anthropic-main', model: 'claude-sonnet-4' },
+          fallbacks: [{ provider_id: 'openai-main', model: 'gpt-4o' }],
+        },
+      },
+    })
+
+    const res = await invokeRoute('patch', '/config', {
+      model_preferences: {
+        planning: {
+          primary: { provider_id: 'anthropic-main', model: 'claude-sonnet-4' },
+          fallbacks: [{ provider_id: 'openai-main', model: 'gpt-4o' }],
+        },
+      },
+    })
+
+    expect(res.statusCode).toBe(200)
+    expect(configMocks.updatePrimeConfig).toHaveBeenCalledWith(
+      pool,
+      expect.objectContaining({
+        model_preferences: {
+          planning: {
+            primary: { provider_id: 'anthropic-main', model: 'claude-sonnet-4' },
+            fallbacks: [{ provider_id: 'openai-main', model: 'gpt-4o' }],
+          },
+        },
+      }),
+    )
+  })
+
+  it('PATCH /config rejects model_preferences with empty primary fields', async () => {
+    const res = await invokeRoute('patch', '/config', {
+      model_preferences: {
+        planning: {
+          primary: { provider_id: '', model: 'some-model' },
+          fallbacks: [],
+        },
+      },
+    })
+
+    expect(res.statusCode).toBe(400)
+    expect(res.body.error).toContain('model_preferences.planning.primary')
+    expect(configMocks.updatePrimeConfig).not.toHaveBeenCalled()
+  })
+
+  it('PATCH /config rejects model_preferences with invalid fallback entries', async () => {
+    const res = await invokeRoute('patch', '/config', {
+      model_preferences: {
+        planning: {
+          primary: { provider_id: 'p1', model: 'm1' },
+          fallbacks: [{ provider_id: 'p2' }], // missing model
+        },
+      },
+    })
+
+    expect(res.statusCode).toBe(400)
+    expect(res.body.error).toContain('model_preferences.planning.fallbacks[0]')
+    expect(configMocks.updatePrimeConfig).not.toHaveBeenCalled()
+  })
+
   it('GET /sessions returns stored sessions', async () => {
     sessionMocks.listPrimeSessions.mockResolvedValue([
       {

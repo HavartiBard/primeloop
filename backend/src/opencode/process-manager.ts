@@ -505,7 +505,7 @@ export class OpenCodeProcessManager {
     const { rows: interrupted } = await this.pool.query<{ id: string; to_agent_id: string | null }>(
       `UPDATE delegations
        SET status = 'failed',
-           result = jsonb_build_object('error', $1),
+           result = jsonb_build_object('error', $1::text),
            completed_at = now(),
            updated_at = now()
        WHERE status = 'in_progress'

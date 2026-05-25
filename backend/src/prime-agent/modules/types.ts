@@ -1,4 +1,5 @@
 import type pg from 'pg'
+import type { AgentHarness } from '../../fleet-executor/harness.js'
 import type { PrimeActionDispatchResult } from '../actions.js'
 import type { PrimeContext } from '../context.js'
 import type { PrimeEvent } from '../events.js'
@@ -57,6 +58,7 @@ export interface PrimeModuleDeps {
   sessionId: string
   executionMode: PrimeModuleRolloutMode
   moduleConfig: Record<string, unknown>
+  getHarness: (agentId: string) => AgentHarness | undefined
 }
 
 export interface PrimeModuleResult {

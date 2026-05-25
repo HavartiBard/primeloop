@@ -78,6 +78,15 @@
 - What happens when [boundary condition]?
 - How does system handle [error scenario]?
 
+## Constitution Alignment *(mandatory)*
+
+- **Code Quality Plan**: [Describe how correctness, readability, and verification will be maintained]
+- **YAGNI Check**: [List any new abstraction/dependency and why it is required now, or state "None"]
+- **Reliability & Operations**: [Describe logging, metrics, health signals, failure handling, and rollback/recovery expectations]
+- **UX Consistency**: [Describe the primary flow, terminology, and loading/empty/success/error states]
+- **Design Consistency**: [Describe reused UI patterns/tokens/components and any justified new pattern]
+- **ACP Architecture Constraints**: [If applicable, describe Prime routing, durable records, isolation, and single-tenant impact; otherwise state "No architectural change"]
+
 ## Requirements *(mandatory)*
 
 <!--
@@ -112,10 +121,10 @@
 
 ### Measurable Outcomes
 
-- **SC-001**: [Measurable metric, e.g., "Users can complete account creation in under 2 minutes"]
-- **SC-002**: [Measurable metric, e.g., "System handles 1000 concurrent users without degradation"]
-- **SC-003**: [User satisfaction metric, e.g., "90% of users successfully complete primary task on first attempt"]
-- **SC-004**: [Business metric, e.g., "Reduce support tickets related to [X] by 50%"]
+- **SC-001**: [Measurable quality metric, e.g., "Primary flow is covered by automated verification and passes before release"]
+- **SC-002**: [Reliability metric, e.g., "Operational failures emit actionable logs/metrics and can be diagnosed within 10 minutes"]
+- **SC-003**: [UX metric, e.g., "90% of users successfully complete the primary task on first attempt"]
+- **SC-004**: [Business/product metric, e.g., "Reduce support tickets related to [X] by 50%"]
 
 ## Assumptions
 
@@ -125,7 +134,7 @@
   chosen when the feature description did not specify certain details.
 -->
 
-- [Assumption about target users, e.g., "Users have stable internet connectivity"]
-- [Assumption about scope boundaries, e.g., "Mobile support is out of scope for v1"]
-- [Assumption about data/environment, e.g., "Existing authentication system will be reused"]
-- [Dependency on existing system/service, e.g., "Requires access to the existing user profile API"]
+- [Assumption about target users, e.g., "Users benefit more from a simpler workflow than from optional advanced configuration"]
+- [Assumption about scope boundaries, e.g., "Speculative extensibility and multi-user collaboration are out of scope for this feature"]
+- [Assumption about data/environment, e.g., "Existing observability, durable records, and design system patterns will be reused where possible"]
+- [Dependency on existing system/service, e.g., "Requires access to the existing provider adapter, monitoring surface, or design component library"]

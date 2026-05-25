@@ -1,9 +1,11 @@
 import Anthropic from '@anthropic-ai/sdk'
 import OpenAI from 'openai'
 import type pg from 'pg'
-import { getPrimeConfig, type PrimeConfigRoute } from './config.js'
+import { getPrimeConfig, resolveModelRoutes, type PrimeConfigRoute } from './config.js'
 import { getProviderApiKey } from '../registry.js'
 import type { PrimeContext } from './context.js'
+import type { Domain } from '../goals/types.js'
+import type { RuntimeTruth } from '../routing/index.js'
 import { loadPrimeWorkspaceTemplates, renderTemplate } from '../workspace.js'
 
 export const PRIME_ACTION_TYPES = [
@@ -15,6 +17,180 @@ export const PRIME_ACTION_TYPES = [
 ] as const
 
 export type PrimeActionType = typeof PRIME_ACTION_TYPES[number]
+
+// ─── Delegation Decision Types (FR-003, FR-004, FR-005) ──────────
+
+/** Structured delegation action produced by Prime's decision logic. */
+export interface DelegateAction {
+  type: 'delegate';
+  assignedAgentRole: string;  // e.g., 'SRE/DevOps', 'Architect'
+  domain: Domain;
+  title: string;
+  scope: string;
+  dependsOn?: string[];
+}
+
+/** LLM payload shape accepted for delegate actions. */
+export interface DelegateActionPayload {
+  assigned_agent_role?: string;
+  assignedAgentRole?: string;
+  domain?: Domain;
+  title?: string;
+  scope?: string;
+  depends_on?: string[];
+  dependsOn?: string[];
+}
+
+/** Maps each goal domain to the canonical agent role name (from agent_roles table). */
+const DOMAIN_ROLE_MAP: Record<Domain, string> = {
+  homelab: 'SRE/DevOps',
+  development: 'Architect',
+  personal_assistant: 'personal_assistant',
+  cross_domain: 'prime',
+};
+
+/** Keywords used to classify goal intent text into domains. */
+const DOMAIN_KEYWORDS: Record<Domain, string[]> = {
+  homelab: [
+    'server', 'deploy', 'infrastructure', 'network', 'docker', 'container',
+    'monitoring', 'backup', 'dns', 'ssl', 'certificate', 'firewall',
+    'nas', 'storage', 'vm', 'virtual', 'provisioning', 'homelab',
+    'hardware', 'raid', 'nfs', 'smb', 'ssh', 'cron', 'service',
+    'restart', 'update system', 'package', 'apt', 'yum', 'systemd',
+    'nginx', 'apache', 'reverse proxy', 'port', 'vlan', 'switch',
+  ],
+  development: [
+    'code', 'refactor', 'test', 'api', 'endpoint', 'database', 'schema',
+    'migration', 'library', 'package', 'frontend', 'backend', 'sdk',
+    'typescript', 'python', 'javascript', 'react', 'component', 'function',
+    'bug', 'fix', 'feature', 'implement', 'review', 'architect',
+    'design', 'pattern', 'module', 'class', 'interface', 'type',
+    'repository', 'git', 'branch', 'merge', 'ci/cd', 'pipeline',
+  ],
+  personal_assistant: [
+    'schedule', 'reminder', 'email', 'calendar', 'organize', 'summarize',
+    'research', 'search', 'write', 'draft', 'plan trip', 'recipe',
+    'translate', 'list', 'compare', 'recommend', 'personal',
+  ],
+  cross_domain: [
+    'all', 'every', 'entire', 'full', 'comprehensive', 'everything',
+  ],
+};
+
+/**
+ * Assess goal intent text and determine which domains are involved.
+ * Returns domains sorted by relevance score (highest first).
+ */
+export function assessGoalDomains(intent: string): Domain[] {
+  const lower = intent.toLowerCase()
+  const scores: Array<{ domain: Domain; score: number }> = []
+
+  for (const [domain, keywords] of Object.entries(DOMAIN_KEYWORDS)) {
+    let score = 0
+    for (const keyword of keywords) {
+      if (lower.includes(keyword)) {
+        score += 1
+      }
+    }
+    if (score > 0) {
+      scores.push({ domain: domain as Domain, score })
+    }
+  }
+
+  // cross_domain only wins if no other domain scored at all
+  const nonCrossScores = scores.filter((s) => s.domain !== 'cross_domain')
+  if (nonCrossScores.length > 0) {
+    return nonCrossScores
+      .sort((a, b) => b.score - a.score)
+      .map((s) => s.domain)
+  }
+
+  // Fall back to cross_domain if nothing else matched
+  if (scores.some((s) => s.domain === 'cross_domain')) {
+    return ['cross_domain']
+  }
+
+  // Default: treat unmatched intent as personal_assistant
+  return ['personal_assistant']
+}
+
+/** Resolve the canonical specialist role for a domain. */
+export function resolveAgentRoleForDomain(domain: Domain): string {
+  return DOMAIN_ROLE_MAP[domain]
+}
+
+/**
+ * Resolve delegation targets from goal intent and explicit domains.
+ * Produces structured DelegateAction[] for each relevant domain.
+ *
+ * @param intent - The goal's natural-language intent description
+ * @param explicitDomains - Optionally override auto-detected domains
+ * @param title - Goal title used to frame each delegate action's title
+ */
+export function resolveDelegation(
+  intent: string,
+  explicitDomains?: Domain[],
+  title?: string,
+): DelegateAction[] {
+  const domains = explicitDomains && explicitDomains.length > 0
+    ? explicitDomains
+    : assessGoalDomains(intent)
+
+  return domains.map((domain) => {
+    const role = resolveAgentRoleForDomain(domain)
+    const domainLabel = domain.replace(/_/g, ' ')
+    const goalTitle = title || intent.slice(0, 80)
+
+    return {
+      type: 'delegate' as const,
+      assignedAgentRole: role,
+      domain,
+      title: `[${domainLabel}] ${goalTitle}`,
+      scope: intent,
+    }
+  })
+}
+
+/**
+ * Validate that a delegation target role exists in the agent_roles table.
+ * Returns true if the role is found, false otherwise.
+ */
+export async function validateDelegationTarget(
+  assignedAgentRole: string,
+  pool: pg.Pool,
+): Promise<boolean> {
+  const { rows } = await pool.query(
+    'SELECT id FROM agent_roles WHERE name = $1 OR id = $1',
+    [assignedAgentRole],
+  )
+  return rows.length > 0
+}
+
+/**
+ * Parse delegate action payload from LLM output into ACP's structured action shape.
+ * Supports both snake_case and camelCase field names.
+ */
+export function parseDelegateActionPayload(
+  payload: Record<string, unknown>,
+  fallbackReason: string,
+): DelegateAction {
+  const raw = payload as DelegateActionPayload
+  const domain = (raw.domain ?? assessGoalDomains(fallbackReason)[0]) as Domain
+  const assignedAgentRole = raw.assigned_agent_role
+    ?? raw.assignedAgentRole
+    ?? resolveAgentRoleForDomain(domain)
+  const title = (raw.title ?? fallbackReason.slice(0, 96)).trim()
+  const scope = (raw.scope ?? fallbackReason).trim()
+
+  return {
+    type: 'delegate',
+    assignedAgentRole,
+    domain,
+    title,
+    scope,
+    dependsOn: raw.depends_on ?? raw.dependsOn,
+  }
+}
 
 export interface PrimeAction {
   type: PrimeActionType
@@ -231,9 +407,15 @@ export async function buildPrimeSystemPrompt(context: PrimeContext, pool: pg.Poo
     standing_rules: templates.templates.standingRules.trim() || profile?.operating_policy || '',
     agents: context.fleet.agents.length > 0
       ? formatLines(context.fleet.agents.map(
-        (a) => `- ${a.name} [${(a.capabilities as string[]).join(', ')}]${a.enabled ? '' : ' (disabled)'}`,
+        (a) => {
+          const runtime = context.runtimeTruth?.allRuntimeAvailability.find((r) => r.agentId === a.id)
+          const capacity = runtime?.capacity ?? 'registered'
+          const statusLabel = capacity === 'dispatchable' ? '' : ` [${capacity}]`
+          return `- ${a.name} [${(a.capabilities as string[]).join(', ')}]${a.enabled ? '' : ' (disabled)'}${statusLabel}`
+        },
       ))
       : '(no agents available — respond directly to the user)',
+    runtime_truth: context.runtimeTruth ? buildRuntimeTruthSummary(context.runtimeTruth) : '(runtime truth not available)',
     work_items: formatLines(context.fleet.workItems.map(
       (w) => `- id=${w.id} ${w.title} (${w.status}/${w.lane})`,
     )),
@@ -276,12 +458,14 @@ export function createConfiguredLlmRouter(pool: pg.Pool): LlmRouter {
   return {
     async decide(context: PrimeContext): Promise<PrimeDecision> {
       const config = await getPrimeConfig(pool)
-      const routes: PrimeConfigRoute[] =
-        config.provider_routing?.['planning'] ??
-        config.provider_routing?.['routing'] ??
-        []
 
-      const resolvedRoutes = routes.length > 0 ? routes : await fallbackProviderRoutes(pool)
+      // Use model_preferences (with auto-migration from legacy provider_routing)
+      let resolvedRoutes = resolveModelRoutes(config, 'planning')
+
+      // Ultimate fallback: grab first non-codex provider from DB
+      if (resolvedRoutes.length === 0) {
+        resolvedRoutes = await fallbackProviderRoutes(pool)
+      }
       if (resolvedRoutes.length === 0) {
         throw new Error('prime-agent: no provider routes configured in prime_agent_config')
       }
@@ -651,4 +835,42 @@ function extractPartialStringField(text: string, field: string): string | null {
 
   const normalized = value.replace(/\s+/g, ' ').trim()
   return normalized || null
+}
+
+/**
+ * Build a summary of runtime truth for inclusion in Prime system prompt.
+ * Shows which agents are dispatchable vs merely registered, and what can be spawned.
+ */
+function buildRuntimeTruthSummary(runtimeTruth: RuntimeTruth): string {
+  const parts: string[] = []
+
+  // Dispatchable agents
+  if (runtimeTruth.dispatchableAgents.length > 0) {
+    parts.push(
+      `Dispatchable agents (can accept work now): ${runtimeTruth.dispatchableAgents.map(({ agent }) => agent.name).join(', ')}`,
+    )
+  }
+
+  // Registered-only agents
+  if (runtimeTruth.registeredOnlyAgents.length > 0) {
+    const registeredSummary = runtimeTruth.registeredOnlyAgents
+      .map(({ agent, runtime }) => `${agent.name} (${runtime.unavailableReason ?? 'no active harness'})`)
+      .join('; ')
+    parts.push(`Registered but not dispatchable: ${registeredSummary}`)
+  }
+
+  // Spawnable templates
+  if (runtimeTruth.spawnableTemplates.length > 0) {
+    const spawnableSummary = runtimeTruth.spawnableTemplates
+      .map((t) => `${t.template.name} (role: ${t.template.role})`)
+      .join('; ')
+    parts.push(`Spawnable templates: ${spawnableSummary}`)
+  }
+
+  // Capability gaps
+  if (runtimeTruth.capabilityGaps.length > 0) {
+    parts.push(`Capability gaps (no fulfillment path): ${runtimeTruth.capabilityGaps.join(', ')}`)
+  }
+
+  return parts.length > 0 ? parts.join('. ') : 'No runtime truth available.'
 }

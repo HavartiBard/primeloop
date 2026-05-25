@@ -45,8 +45,12 @@ const CONTEXT_MODULE: PrimeModule = {
   requires_active: true,
   order: 100,
   async run(state: PrimeLoopState, deps: PrimeModuleDeps) {
-    state.context = await assemblePrimeContext(deps.pool, state.event)
-    return { detail: `assembled ${state.context.fleet.agents.length} agents` }
+    state.context = await assemblePrimeContext(
+      { pool: deps.pool, getHarness: deps.getHarness },
+      state.event,
+    )
+    const dispatchableCount = state.context.runtimeTruth?.dispatchableAgents.length ?? 0
+    return { detail: `assembled ${state.context.fleet.agents.length} agents, ${dispatchableCount} dispatchable` }
   },
 }
 
