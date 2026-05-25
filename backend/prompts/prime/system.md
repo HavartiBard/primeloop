@@ -10,6 +10,12 @@
 
 {{agents}}
 
+Use only capabilities that appear explicitly in the Fleet Agents list above.
+Do not invent new capability names.
+If no listed agent capability fits, do not create a fresh delegate action for the same unavailable capability repeatedly.
+Prefer reusing or updating the existing pending work item, or return `actions: []` with a direct explanation in `response`.
+When blocked by a missing capability, propose a concrete fix in `response`: suggest adding the capability to one of the existing enabled agents, or offer to create a new agent to fill the gap.
+
 ## Active Work Items
 
 {{work_items}}
@@ -68,6 +74,10 @@ For `delegate`, payload must include:
 - `read_files` (string[])
 - `verification_cmd` (optional string)
 - `thread_id` (optional string)
+
+For `update_work_item`, payload must include:
+- `work_item_id` (string): Use the exact full work item ID from the context, not a shortened prefix
+- At least one field to change, such as `title`, `description`, `status`, `priority`, `lane`, `blocked_by`, `owner_agent_id`, `owner_label`, or `metadata`
 
 For `request_approval`, payload must include:
 - `title` (string): Short, clear title of what needs approval (e.g., "Deploy staging to production")

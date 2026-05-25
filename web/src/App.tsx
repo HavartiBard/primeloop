@@ -10,6 +10,9 @@ import { Agents } from './pages/Agents'
 import { McpServers } from './pages/McpServers'
 import { Providers } from './pages/Providers'
 import { Governance } from './pages/Governance'
+import { GoalList, GoalDetail } from './pages/goals'
+import { ApprovalQueue } from './pages/approvals/ApprovalQueue'
+import { LearningRecords } from './pages/learning/LearningRecords'
 import { useApprovals } from './hooks/useApprovals'
 import { useSetupStatus } from './hooks/useSetupStatus.js'
 import { Setup } from './pages/Setup.js'
@@ -28,6 +31,9 @@ const ICON_CLS = 'h-5 w-5'
 const NAV: NavItem[] = [
   { label: 'Circuit',  icon: <CircuitBoard className={ICON_CLS} />, href: '/circuit' },
   { label: 'Rooms',    icon: <MessageSquare className={ICON_CLS} />, href: '/' },
+  { label: 'Goals',    icon: <Bot className={ICON_CLS} />,          href: '/goals' },
+  { label: 'Approvals',icon: <Server className={ICON_CLS} />,       href: '/approvals' },
+  { label: 'Learning', icon: <CalendarClock className={ICON_CLS} />, href: '/learning' },
   { label: 'Schedule', icon: <CalendarClock className={ICON_CLS} />, href: '/schedule' },
   { label: 'Agents',   icon: <Bot className={ICON_CLS} />,          href: '/agents' },
   { label: 'MCP',      icon: <Server className={ICON_CLS} />,       href: '/mcp-servers' },
@@ -58,8 +64,11 @@ function Layout() {
   const pendingApprovals = approvals.filter((a) => a.status === 'pending').length
 
   const Page =
-    page === '/circuit' ? CircuitView
-    : page === '/' ? OperationsPortal
+    page === '/' ? OperationsPortal
+    : page.startsWith('/goals/') ? GoalDetail
+    : page === '/goals' ? GoalList
+    : page === '/approvals' ? ApprovalQueue
+    : page === '/learning' ? LearningRecords
     : page === '/schedule' ? Schedule
     : page === '/agents' ? Agents
     : page === '/mcp-servers' ? McpServers

@@ -1,7 +1,5 @@
-import { ApprovalQueue } from '../components/ApprovalQueue'
-import { useApprovals } from '../hooks/useApprovals'
+import { ApprovalQueue } from './approvals/ApprovalQueue'
 
 export function Approvals() {
-  const { approvals, approve, deny } = useApprovals()
-  return <ApprovalQueue approvals={approvals} onApprove={approve} onDeny={deny} />
+  return <ApprovalQueue />
 }

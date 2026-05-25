@@ -56,10 +56,25 @@ if (recoveredCount > 0) {
   console.log(`Recovered ${recoveredCount} stale checkpoint item(s)`)
 }
 traceStep('checkpoint recovery complete')
-const primeAgentService = createPrimeAgentService(pool, { checkpointStore })
-traceStep('prime agent service created')
+
 const processManager = new OpenCodeProcessManager(pool)
 traceStep('process manager created')
+
+async function publishStoredEvent(type: string, payload: Record<string, unknown>): Promise<void> {
+  const event = await insertEvent(pool, {
+    agent: 'prime',
+    type,
+    payload,
+  })
+  broadcast(event)
+}
+
+const primeAgentService = createPrimeAgentService(pool, {
+  checkpointStore,
+  publishEvent: publishStoredEvent,
+  getHarness: (agentId) => processManager.getRunningHarness(agentId),
+})
+traceStep('prime agent service created')
 
 const fleetDispatcher = new FleetDispatcher({
   pool,

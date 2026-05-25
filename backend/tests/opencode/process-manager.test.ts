@@ -398,6 +398,33 @@ describe('OpenCodeProcessManager', () => {
       if (sql.includes('FROM mcp_servers ms')) {
         return { rows: [] }
       }
+      // Bootstrap queries for durable staff
+      if (sql.startsWith('SELECT * FROM capability_profiles WHERE name = $1')) {
+        return { rows: [] }
+      }
+      if (sql.startsWith('INSERT INTO capability_profiles')) {
+        return { rows: [{ id: 'profile-1', name: 'architect-default' }] }
+      }
+      if (sql.startsWith('SELECT * FROM agents WHERE role = $1')) {
+        return { rows: [] }
+      }
+      if (sql.startsWith('INSERT INTO agents')) {
+        return {
+          rows: [{
+            ...durable,
+            id: 'agent-bootstrapped',
+            role: 'architect',
+            tier: 'durable',
+            state: 'provisioning',
+          }],
+        }
+      }
+      if (sql.startsWith('INSERT INTO agent_runtime_configs')) {
+        return { rows: [{ agent_id: durable.id, capability_profile_id: 'profile-1' }] }
+      }
+      if (sql.startsWith('UPDATE capability_profiles SET')) {
+        return { rows: [], rowCount: 1 }
+      }
       throw new Error(`unexpected query: ${sql}`)
     })
     const pool = { query } as unknown as pg.Pool

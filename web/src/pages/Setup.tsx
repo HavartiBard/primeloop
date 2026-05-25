@@ -95,7 +95,7 @@ const INITIAL_STATE: WizardState = {
   providers: [
     { name: 'anthropic-main', type: 'anthropic', base_url: 'https://api.anthropic.com', model: 'claude-sonnet-4-6', active: false },
     { name: 'openai-main', type: 'openai', base_url: 'https://api.openai.com/v1', model: 'gpt-4o', active: false },
-    { name: 'local-main', type: 'ollama', base_url: 'http://localhost:11434', model: '', active: false },
+    { name: 'local-main', type: 'ollama', base_url: 'http://localhost:11434', model: '', active: true },
   ],
   routing: { planning: [], dispatching: [], discussion: [] },
   profile:   INITIAL_PROFILE_STATE,
@@ -406,15 +406,35 @@ function ProviderCard({ draft, onChange, onToggle, onConnect, onDeviceAuth }: {
             )}
             {openAiAuthMode === 'subscription' && (
               <>
-                {modelControl('gpt-4o')}
-                <button
-                  type="button"
-                  onClick={onDeviceAuth}
-                  disabled={draft.authStatus === 'starting' || draft.authStatus === 'waiting'}
-                  className="w-full px-3 py-2 text-xs rounded border border-[rgba(148,163,184,0.28)] bg-[#1f2937] text-[#f8fbff] hover:bg-[#334155] disabled:opacity-40 disabled:cursor-not-allowed"
-                >
-                  {draft.authStatus === 'waiting' ? 'Waiting for device login...' : 'Start subscription login'}
-                </button>
+                <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+                  {modelControl('gpt-4o')}
+                  <button
+                    type="button"
+                    onClick={onDeviceAuth}
+                    disabled={draft.authStatus === 'starting' || draft.authStatus === 'waiting'}
+                    className="px-3 py-2 text-xs rounded border border-[rgba(148,163,184,0.28)] bg-[#1f2937] text-[#f8fbff] hover:bg-[#334155] disabled:opacity-40 disabled:cursor-not-allowed"
+                  >
+                    {draft.authStatus === 'waiting' ? 'Waiting...' : draft.authStatus === 'complete' ? 'Re-auth' : 'Login'}
+                  </button>
+                </div>
+                {draft.authStatus === 'complete' && (
+                  <div className="flex flex-wrap items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={onConnect}
+                      disabled={draft.connectStatus === 'connecting'}
+                      className="px-3 py-2 text-xs rounded border border-[#6ee7ff] bg-[#1f6feb] text-white hover:bg-[#2b7fff] disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      {draft.connectStatus === 'connecting' ? 'Loading...' : 'Connect & load models'}
+                    </button>
+                    {draft.connectStatus === 'connected' && (
+                      <span className="text-xs text-[var(--s-ok-tx)]">{draft.modelOptions?.length ?? 0} models found</span>
+                    )}
+                    {draft.connectStatus === 'error' && (
+                      <span className="text-xs text-[var(--s-blk-tx)]">{draft.connectError}</span>
+                    )}
+                  </div>
+                )}
                 <p className="text-xs text-[var(--muted)]">
                   This flow still depends on the ACP backend routes behind `/api/providers/*/codex/auth`. On the Vite-only dev server it can stall or time out unless the backend is also running.
                 </p>
@@ -729,7 +749,10 @@ function RoutingRow({ label, entries, providers, onChange }: {
   const activeProviders = providers.filter((p) => p.active)
   const [modelAssessments, setModelAssessments] = useState<Record<number, ModelCapabilityAssessment>>({})
   const assessTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const addFallback = () => onChange([...entries, { provider_name: activeProviders[0]?.name ?? '', model: '' }])
+  const addFallback = () => {
+    const first = activeProviders[0]
+    onChange([...entries, { provider_name: first?.name ?? '', model: first?.model ?? '' }])
+  }
   const update = (i: number, patch: Partial<RoutingEntry>) => {
     onChange(entries.map((e, idx) => (idx === i ? { ...e, ...patch } : e)))
   }

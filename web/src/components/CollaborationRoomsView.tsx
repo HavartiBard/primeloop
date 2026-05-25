@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { fetchPrimeSession, fetchPrimeSessions, fetchThreadMessages, sendPrimeMessage } from '../api'
-import type { RegistryAgent, RuntimeAuditLoop, RuntimeDelegation, RuntimeThread, RuntimeWorkItem } from '../types'
+import type { AgentEvent, RegistryAgent, RuntimeAuditLoop, RuntimeDelegation, RuntimeThread, RuntimeWorkItem } from '../types'
 
 type AgentHealth = {
   agent: string
@@ -12,6 +12,7 @@ type AgentHealth = {
 type CollaborationRoomsViewProps = {
   primeName: string
   connected: boolean
+  events: AgentEvent[]
   agents: RegistryAgent[]
   healthData: AgentHealth[]
   workItems: RuntimeWorkItem[]
@@ -47,6 +48,8 @@ type WorkFocus = {
   owner: string
   kind: 'work' | 'delegation'
   messageId?: string
+  sourceSessionId?: string
+  actionType?: string
   updatedAt?: string
 }
 
@@ -137,6 +140,104 @@ function summarizeModuleRun(detail?: string): string {
   return truncate(detail, 84)
 }
 
+type TerminalLine = {
+  key: string
+  speaker: string
+  command: string
+  detail?: string
+  tone?: 'info' | 'success' | 'warning' | 'error'
+}
+
+function asText(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined
+}
+
+function asActionSummary(payload: Record<string, unknown>): string | undefined {
+  const actions = Array.isArray(payload.actions) ? payload.actions : []
+  if (actions.length === 0) return 'no actions proposed'
+  return actions.map((action) => {
+    if (!action || typeof action !== 'object') return 'action'
+    const record = action as Record<string, unknown>
+    const type = asText(record.type) ?? 'action'
+    const reason = asText(record.reason)
+    return reason ? `${type} (${reason})` : type
+  }).join(' | ')
+}
+
+function toneClass(tone?: TerminalLine['tone']): string {
+  if (tone === 'error') return 'text-[#f85149]'
+  if (tone === 'warning') return 'text-[#d29922]'
+  if (tone === 'success') return 'text-[#3fb950]'
+  return 'text-[#79c0ff]'
+}
+
+function eventToTerminalLine(event: AgentEvent): TerminalLine | null {
+  const payload = event.payload ?? {}
+  const sessionId = asText(payload.session_id)
+
+  switch (event.type) {
+    case 'prime.turn.started':
+      return {
+        key: event.id,
+        speaker: 'prime',
+        command: `turn start ${sessionId ?? ''}`.trim(),
+        detail: `trigger=${asText(payload.trigger_type) ?? 'prime.message'}`,
+        tone: 'info',
+      }
+    case 'prime.turn.step': {
+      const status = asText(payload.status) ?? 'completed'
+      const moduleId = asText(payload.module_id) ?? 'module'
+      const mode = asText(payload.mode)
+      return {
+        key: event.id,
+        speaker: 'prime',
+        command: `${status === 'started' ? 'begin' : status} ${moduleId}${mode === 'shadow' ? ' [shadow]' : ''}`,
+        detail: asText(payload.detail),
+        tone: status === 'failed' ? 'error' : status === 'started' ? 'info' : 'success',
+      }
+    }
+    case 'prime.turn.reasoning':
+      return {
+        key: event.id,
+        speaker: 'prime',
+        command: 'reasoning',
+        detail: asText(payload.reasoning) ?? 'reasoning unavailable',
+        tone: 'info',
+      }
+    case 'prime.turn.actions':
+      return {
+        key: event.id,
+        speaker: 'prime',
+        command: 'actions',
+        detail: asActionSummary(payload),
+        tone: 'warning',
+      }
+    case 'prime.turn.completed': {
+      const detail = [
+        `status=${asText(payload.status) ?? 'completed'}`,
+        asText(payload.model_used) ? `model=${asText(payload.model_used)}` : undefined,
+      ].filter(Boolean).join(' ')
+      return {
+        key: event.id,
+        speaker: 'prime',
+        command: `turn complete ${sessionId ?? ''}`.trim(),
+        detail,
+        tone: 'success',
+      }
+    }
+    case 'prime.turn.failed':
+      return {
+        key: event.id,
+        speaker: 'prime',
+        command: `turn failed ${sessionId ?? ''}`.trim(),
+        detail: asText(payload.error) ?? 'unknown error',
+        tone: 'error',
+      }
+    default:
+      return null
+  }
+}
+
 // ─── Data derivation ───────────────────────────────────────────────────────
 
 function roomStateFromThread(
@@ -205,6 +306,7 @@ const GRID_BG = {
 
 export function CollaborationRoomsView({
   primeName,
+  events,
   agents,
   healthData,
   workItems,
@@ -353,6 +455,8 @@ export function CollaborationRoomsView({
             owner: item.owner_label || primeName,
             kind: 'work',
             messageId: typeof item.metadata?.['message_id'] === 'string' ? item.metadata['message_id'] : undefined,
+            sourceSessionId: typeof item.metadata?.['source_session_id'] === 'string' ? item.metadata['source_session_id'] : undefined,
+            actionType: typeof item.metadata?.['action_type'] === 'string' ? item.metadata['action_type'] : undefined,
             updatedAt: item.updated_at ?? item.created_at,
           })),
         ...selectedRoom.delegations
@@ -368,6 +472,8 @@ export function CollaborationRoomsView({
               owner: agent?.name ?? item?.owner_label ?? 'agent',
               kind: 'delegation',
               messageId: typeof item?.metadata?.['message_id'] === 'string' ? item.metadata['message_id'] : undefined,
+              sourceSessionId: typeof item?.metadata?.['source_session_id'] === 'string' ? item.metadata['source_session_id'] : undefined,
+              actionType: typeof item?.metadata?.['action_type'] === 'string' ? item.metadata['action_type'] : undefined,
               updatedAt: delegation.updated_at ?? delegation.created_at,
             }
           }),
@@ -385,6 +491,8 @@ export function CollaborationRoomsView({
             owner: item.owner_label || primeName,
             kind: 'work',
             messageId: typeof item.metadata?.['message_id'] === 'string' ? item.metadata['message_id'] : undefined,
+            sourceSessionId: typeof item.metadata?.['source_session_id'] === 'string' ? item.metadata['source_session_id'] : undefined,
+            actionType: typeof item.metadata?.['action_type'] === 'string' ? item.metadata['action_type'] : undefined,
             updatedAt: item.updated_at ?? item.created_at,
           })),
         ...selectedRoom.delegations
@@ -400,6 +508,8 @@ export function CollaborationRoomsView({
               owner: agent?.name ?? item?.owner_label ?? 'agent',
               kind: 'delegation',
               messageId: typeof item?.metadata?.['message_id'] === 'string' ? item.metadata['message_id'] : undefined,
+              sourceSessionId: typeof item?.metadata?.['source_session_id'] === 'string' ? item.metadata['source_session_id'] : undefined,
+              actionType: typeof item?.metadata?.['action_type'] === 'string' ? item.metadata['action_type'] : undefined,
               updatedAt: delegation.updated_at ?? delegation.created_at,
             }
           }),
@@ -468,9 +578,11 @@ export function CollaborationRoomsView({
     : '0s'
   const processingTimeLabel = formatShortTime(primaryRunningSession?.started_at)
   const processingVerb = primePhaseLabel(primaryRunningSession?.last_step, primaryRunningSession?.status)
-  const selectedWorkSession = selectedFocus?.messageId
-    ? roomPrimeSessions.find((session) => session.trigger_payload?.['message_id'] === selectedFocus.messageId)
-    : undefined
+  const selectedWorkSession = selectedFocus?.sourceSessionId
+    ? roomPrimeSessions.find((session) => session.id === selectedFocus.sourceSessionId)
+    : selectedFocus?.messageId
+      ? roomPrimeSessions.find((session) => session.trigger_payload?.['message_id'] === selectedFocus.messageId)
+      : undefined
   const { data: selectedWorkSessionDetail } = useQuery({
     queryKey: ['prime-agent-session', selectedWorkSession?.id],
     queryFn: () => fetchPrimeSession(selectedWorkSession!.id),
@@ -481,6 +593,23 @@ export function CollaborationRoomsView({
   const selectedWorkResponse = selectedWorkSession
     ? rawMessages.find((message) => message.metadata?.['session_id'] === selectedWorkSession.id)
     : undefined
+  const roomTerminalLines = useMemo(() => {
+    if (!activeRoomId) return []
+    return events
+      .filter((event) => {
+        if (!event.type.startsWith('prime.turn.')) return false
+        const threadId = typeof event.payload?.['thread_id'] === 'string' ? event.payload['thread_id'] : null
+        if (threadId) return threadId === activeRoomId
+        const sessionId = typeof event.payload?.['session_id'] === 'string' ? event.payload['session_id'] : null
+        if (!sessionId) return false
+        return visiblePrimeSessions.some((session) => session.id === sessionId)
+          || inspectedPrimeSession?.id === sessionId
+      })
+      .map(eventToTerminalLine)
+      .filter((line): line is TerminalLine => Boolean(line))
+      .slice()
+      .reverse()
+  }, [activeRoomId, events, inspectedPrimeSession?.id, visiblePrimeSessions])
   const sendMessage = useMutation({
     mutationFn: async () => {
       if (!activeRoomId) throw new Error('No active room')
@@ -784,6 +913,9 @@ export function CollaborationRoomsView({
                         <div className="flex gap-2.5"><span className="text-[#58a6ff]">{selectedFocus.owner} $</span><span className="text-[#79c0ff]">inspect selected work</span></div>
                         <div className="pl-4 text-[#c9d1d9]">{selectedFocus.title}</div>
                         <div className="pl-4 text-[#8b949e]">status={selectedFocus.status} lane={selectedFocus.lane} kind={selectedFocus.kind}</div>
+                        {selectedFocus.actionType === 'hard_failure_investigation' && (
+                          <div className="pl-4 text-[#d29922]">historical failure investigation linked to the source Prime session below</div>
+                        )}
                         {inspectedPrimeSession && (
                           <>
                             <div className="mt-2 flex gap-2.5"><span className="text-[#58a6ff]">prime $</span><span className="text-[#79c0ff]">session {inspectedPrimeSession.status}</span></div>
@@ -830,7 +962,30 @@ export function CollaborationRoomsView({
                             )}
                           </>
                         )}
+                        {roomTerminalLines.length > 0 && (
+                          <>
+                            <div className="mt-2 flex gap-2.5"><span className="text-[#58a6ff]">prime $</span><span className="text-[#79c0ff]">live turn log</span></div>
+                            {roomTerminalLines.map((line) => (
+                              <div key={line.key} className="pl-4">
+                                <span className="text-[#58a6ff]">prime $ </span>
+                                <span className={toneClass(line.tone)}>{line.command}</span>
+                                {line.detail && <span className="text-[#c9d1d9]">  {line.detail}</span>}
+                              </div>
+                            ))}
+                          </>
+                        )}
                         <div className="mt-1.5 flex gap-2.5"><span className="text-[#58a6ff]">{selectedFocus.owner} $</span><span className="text-[#d29922]">▌</span></div>
+                      </>
+                    ) : roomTerminalLines.length > 0 ? (
+                      <>
+                        {roomTerminalLines.map((line) => (
+                          <div key={line.key} className="flex gap-2.5">
+                            <span className="text-[#58a6ff]">{line.speaker} $</span>
+                            <span className={toneClass(line.tone)}>{line.command}</span>
+                            {line.detail && <span className="text-[#c9d1d9]">{line.detail}</span>}
+                          </div>
+                        ))}
+                        <div className="mt-1.5 flex gap-2.5"><span className="text-[#58a6ff]">prime $</span><span className="text-[#d29922]">▌</span></div>
                       </>
                     ) : hasLiveActivity ? (
                       <>

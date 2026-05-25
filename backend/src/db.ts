@@ -570,6 +570,9 @@ ALTER TABLE prime_agent_module_runs
     ALTER TABLE prime_agent_config
       ADD COLUMN IF NOT EXISTS setup_complete BOOLEAN NOT NULL DEFAULT false;
 
+ALTER TABLE prime_agent_config
+  ADD COLUMN IF NOT EXISTS model_preferences JSONB NOT NULL DEFAULT '{}';
+
 CREATE TABLE IF NOT EXISTS agent_workspace_config (
   id TEXT PRIMARY KEY DEFAULT 'default',
   mode TEXT NOT NULL DEFAULT 'local' CHECK (mode IN ('local', 'git')),
@@ -596,6 +599,222 @@ VALUES (
 ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO prime_agent_config (id, enabled) VALUES ('default', false) ON CONFLICT (id) DO NOTHING;
+
+-- =============================================================
+-- ACP (Agentic Control Plane) tables — Spec 016
+-- Idempotent: safe to re-run. Uses CREATE TABLE IF NOT EXISTS.
+-- =============================================================
+
+-- =============================================================
+-- ACP tables — migrate legacy tables to match ACP schema
+-- Legacy work_items and approvals tables already exist above (UUID PK / approval_id TEXT PK).
+-- We convert them idempotently BEFORE creating ACP tables that FK into them.
+-- =============================================================
+
+-- goals: brand new ACP table (no conflict with legacy)
+CREATE TABLE IF NOT EXISTS goals (
+  id                 TEXT PRIMARY KEY,
+  title              TEXT NOT NULL,
+  intent             TEXT NOT NULL,
+  domain_summary     TEXT,
+  status             TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'queued', 'in_progress', 'awaiting_approval', 'blocked', 'completed', 'failed', 'cancelled')),
+  priority           TEXT DEFAULT 'normal' CHECK (priority IN ('low', 'normal', 'high')),
+  requested_by       TEXT,
+  owned_by_agent_role TEXT NOT NULL DEFAULT 'prime',
+  current_summary    TEXT,
+  result_summary     TEXT,
+  risk_summary       TEXT,
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+  started_at         TIMESTAMPTZ,
+  completed_at       TIMESTAMPTZ,
+  cancelled_at       TIMESTAMPTZ
+);
+
+-- agent_roles: brand new ACP table (no conflict with legacy)
+CREATE TABLE IF NOT EXISTS agent_roles (
+  id                 TEXT PRIMARY KEY,
+  name               TEXT NOT NULL UNIQUE,
+  tier               TEXT NOT NULL CHECK (tier IN ('prime', 'durable', 'ephemeral')),
+  domain_capabilities TEXT[],
+  status             TEXT NOT NULL DEFAULT 'active',
+  description        TEXT,
+  can_request_approval BOOLEAN NOT NULL DEFAULT false,
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at         TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- ---------------------------------------------------------------
+-- Migrate legacy work_items (UUID PK) to TEXT PK
+-- Must happen BEFORE recovery_events / learning_records creation.
+-- Postgres blocks type changes on PK columns with FK dependents,
+-- so we must: drop ALL FKs → convert types → re-add FKs.
+-- Uses dynamic SQL to handle any referencing table.
+-- ---------------------------------------------------------------
+
+DO $$
+DECLARE
+  rec record;
+BEGIN
+  -- 1. Drop every FK constraint that references work_items(id)
+  FOR rec IN
+    SELECT conname, conrelid::regclass AS tbl
+    FROM pg_constraint
+    WHERE contype = 'f'
+      AND confrelid = 'work_items'::regclass
+  LOOP
+    EXECUTE format('ALTER TABLE %I DROP CONSTRAINT IF EXISTS %I', rec.tbl, rec.conname);
+  END LOOP;
+
+  -- 2. Convert work_items.id from UUID → TEXT
+  IF EXISTS (SELECT 1 FROM information_schema.columns
+    WHERE table_name='work_items' AND column_name='id' AND data_type='uuid') THEN
+    ALTER TABLE work_items ALTER COLUMN id TYPE TEXT USING id::text;
+  END IF;
+
+  -- 3. Convert every referencing column from UUID → TEXT
+  FOR rec IN
+    SELECT conrelid::regclass AS tbl, a.attname AS col
+    FROM pg_constraint c
+    JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey)
+    WHERE c.contype = 'f'
+      AND c.confrelid = 'work_items'::regclass
+  LOOP
+    EXECUTE format('ALTER TABLE %I ALTER COLUMN %I TYPE TEXT USING %I::text', rec.tbl, rec.col, rec.col);
+  END LOOP;
+END
+$$;
+
+-- Add missing ACP columns to work_items
+ALTER TABLE work_items ADD COLUMN IF NOT EXISTS goal_id TEXT REFERENCES goals(id);
+ALTER TABLE work_items ADD COLUMN IF NOT EXISTS parent_work_item_id TEXT;
+ALTER TABLE work_items ADD COLUMN IF NOT EXISTS assigned_agent_role TEXT NOT NULL DEFAULT 'prime';
+ALTER TABLE work_items ADD COLUMN IF NOT EXISTS domain TEXT;
+ALTER TABLE work_items ADD COLUMN IF NOT EXISTS scope TEXT;
+ALTER TABLE work_items ADD COLUMN IF NOT EXISTS depends_on TEXT[];
+ALTER TABLE work_items ADD COLUMN IF NOT EXISTS decision_summary TEXT;
+ALTER TABLE work_items ADD COLUMN IF NOT EXISTS outcome_summary TEXT;
+ALTER TABLE work_items ADD COLUMN IF NOT EXISTS failure_reason TEXT;
+ALTER TABLE work_items ADD COLUMN IF NOT EXISTS started_at TIMESTAMPTZ;
+ALTER TABLE work_items ADD COLUMN IF NOT EXISTS completed_at TIMESTAMPTZ;
+
+-- Self-referencing FK for parent_work_item_id (idempotent)
+DO $$
+BEGIN
+  ALTER TABLE work_items DROP CONSTRAINT IF EXISTS work_items_parent_work_item_id_fkey;
+  ALTER TABLE work_items ADD CONSTRAINT work_items_parent_work_item_id_fkey
+    FOREIGN KEY (parent_work_item_id) REFERENCES work_items(id);
+EXCEPTION WHEN undefined_object THEN NULL;
+END
+$$;
+
+-- ---------------------------------------------------------------
+-- Migrate legacy approvals (approval_id TEXT PK) to id TEXT PK
+-- Legacy table has: approval_id, run_id, action, status, created_at, decided_at
+-- ACP table needs: id, goal_id, work_item_id, requested_by_agent_role,
+--   action_summary, risk_summary, status, decision_notes, expires_at,
+--   resolved_at, created_at
+-- Wrapped in DO block for idempotency.
+-- ---------------------------------------------------------------
+
+DO $$
+BEGIN
+  -- Only run if legacy column 'approval_id' still exists (not yet migrated)
+  IF EXISTS (SELECT 1 FROM information_schema.columns
+    WHERE table_name='approvals' AND column_name='approval_id') THEN
+
+    -- Convert tool_invocations.approval_id from UUID → TEXT (if needed)
+    IF EXISTS (SELECT 1 FROM information_schema.columns
+      WHERE table_name='tool_invocations' AND column_name='approval_id' AND data_type='uuid') THEN
+      ALTER TABLE tool_invocations ALTER COLUMN approval_id TYPE TEXT USING approval_id::text;
+    END IF;
+
+    -- Add id_text column and populate from approval_id
+    ALTER TABLE approvals ADD COLUMN id_text TEXT;
+    UPDATE approvals SET id_text = approval_id WHERE id_text IS NULL;
+    ALTER TABLE approvals ALTER COLUMN id_text SET NOT NULL;
+
+    -- Drop old FK/pk constraints
+    ALTER TABLE tool_invocations DROP CONSTRAINT IF EXISTS tool_invocations_approval_id_fkey;
+    ALTER TABLE approvals DROP CONSTRAINT approvals_pkey;
+
+    -- Swap PK: approval_id → id
+    ALTER TABLE approvals DROP COLUMN approval_id;
+    ALTER TABLE approvals RENAME COLUMN id_text TO id;
+    ALTER TABLE approvals ADD CONSTRAINT approvals_pkey PRIMARY KEY (id);
+
+    -- Re-add FK: tool_invocations.approval_id → approvals(id)
+    ALTER TABLE tool_invocations ADD CONSTRAINT tool_invocations_approval_id_fkey
+      FOREIGN KEY (approval_id) REFERENCES approvals(id) ON DELETE SET NULL;
+  END IF;
+END
+$$;
+
+-- Add missing ACP columns to approvals (always safe with IF NOT EXISTS)
+ALTER TABLE approvals ADD COLUMN IF NOT EXISTS goal_id TEXT REFERENCES goals(id);
+ALTER TABLE approvals ADD COLUMN IF NOT EXISTS work_item_id TEXT;
+ALTER TABLE approvals ADD COLUMN IF NOT EXISTS requested_by_agent_role TEXT NOT NULL DEFAULT 'prime';
+ALTER TABLE approvals ADD COLUMN IF NOT EXISTS action_summary TEXT NOT NULL DEFAULT '';
+ALTER TABLE approvals ADD COLUMN IF NOT EXISTS risk_summary TEXT;
+ALTER TABLE approvals ADD COLUMN IF NOT EXISTS decision_notes TEXT;
+ALTER TABLE approvals ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
+ALTER TABLE approvals ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMPTZ;
+
+-- Add FK: approvals.work_item_id → work_items(id) (idempotent)
+DO $$
+BEGIN
+  ALTER TABLE approvals ADD CONSTRAINT approvals_work_item_id_fkey
+    FOREIGN KEY (work_item_id) REFERENCES work_items(id);
+EXCEPTION WHEN undefined_column THEN NULL;
+END
+$$;
+
+-- ---------------------------------------------------------------
+-- ACP tables that FK into work_items / goals (now all TEXT)
+-- ---------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS recovery_events (
+  id                  TEXT PRIMARY KEY,
+  goal_id             TEXT NOT NULL REFERENCES goals(id),
+  work_item_id        TEXT REFERENCES work_items(id),
+  detected_condition  TEXT NOT NULL,
+  detected_at         TIMESTAMPTZ NOT NULL,
+  severity            TEXT CHECK (severity IN ('low', 'medium', 'high', 'critical')),
+  selected_action     TEXT NOT NULL CHECK (selected_action IN ('retry', 'reroute', 'escalate', 'request_approval', 'stop')),
+  action_reason       TEXT,
+  result_status       TEXT NOT NULL CHECK (result_status IN ('succeeded', 'ongoing', 'failed', 'escalated')),
+  result_summary      TEXT,
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS learning_records (
+  id                TEXT PRIMARY KEY,
+  goal_id           TEXT NOT NULL REFERENCES goals(id),
+  work_item_id      TEXT REFERENCES work_items(id),
+  category          TEXT NOT NULL CHECK (category IN ('planning', 'delegation', 'recovery', 'approval', 'ux', 'domain_specific')),
+  signal_type       TEXT NOT NULL CHECK (signal_type IN ('success', 'failure', 'inefficiency', 'operator_correction', 'missed_risk')),
+  observation       TEXT NOT NULL,
+  recommendation    TEXT,
+  confidence        TEXT CHECK (confidence IN ('low', 'medium', 'high')),
+  applies_to_domains TEXT[],
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Seed initial agent roles (idempotent)
+INSERT INTO agent_roles (id, name, tier, domain_capabilities, status, description, can_request_approval)
+VALUES ('role_prime', 'Prime', 'prime', ARRAY['homelab','development','personal_assistant','cross_domain'], 'active',
+  'Singleton orchestrator — user-facing goal intake, decomposition, approvals, narration', true)
+ON CONFLICT (name) DO NOTHING;
+
+INSERT INTO agent_roles (id, name, tier, domain_capabilities, status, description, can_request_approval)
+VALUES ('role_sre_devops', 'SRE/DevOps', 'durable', ARRAY['homelab','cross_domain'], 'active',
+  'Combined maintenance role — runtime health, incidents, deploys, queue recovery, environment integrity', false)
+ON CONFLICT (name) DO NOTHING;
+
+INSERT INTO agent_roles (id, name, tier, domain_capabilities, status, description, can_request_approval)
+VALUES ('role_architect', 'Architect', 'durable', ARRAY['development','cross_domain'], 'active',
+  'Durable quality role — grading review, playbooks, template updates, cross-cutting consistency', false)
+ON CONFLICT (name) DO NOTHING;
 
   `)
 }

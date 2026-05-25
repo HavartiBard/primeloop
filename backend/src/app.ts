@@ -120,7 +120,7 @@ export function createApp(deps: AppDeps): express.Express {
 
   app.use('/api/portal', createPortalRouter({ pool: deps.pool }))
   app.use('/api/approvals', createApprovalsRouter({ pool: deps.pool }))
-  app.use('/api/control-plane', createControlPlaneRouter({ pool: deps.pool }))
+  app.use('/api/control-plane', createControlPlaneRouter({ pool: deps.pool, primeQueue: deps.primeQueue }))
   app.use('/api/prime-agent', createPrimeAgentRouter({
     pool: deps.pool,
     queue: deps.primeQueue,

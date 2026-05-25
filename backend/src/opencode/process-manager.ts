@@ -15,6 +15,7 @@ import {
   updateAgent,
 } from '../registry.js'
 import { resolveToolGrant } from '../tool-grants.js'
+import { bootstrapDurableStaff } from '../durable-staff.js'
 import { PiHarness } from '../fleet-executor/pi-harness.js'
 import type { AgentHarness } from '../fleet-executor/harness.js'
 
@@ -181,6 +182,15 @@ export class OpenCodeProcessManager {
 
   async initialize(): Promise<void> {
     await this.recoverLifecycleState()
+
+    // Bootstrap durable staff before syncing agents
+    const bootstrapResult = await bootstrapDurableStaff(this.pool)
+    if (bootstrapResult.created.length > 0 || bootstrapResult.updated.length > 0) {
+      console.log(
+        `[durable-staff] Bootstrapped: ${bootstrapResult.created.length} created, ${bootstrapResult.updated.length} updated, ${bootstrapResult.unchanged.length} unchanged`,
+      )
+    }
+
     const { rows } = await this.pool.query<RegistryAgent>('SELECT * FROM agents ORDER BY created_at')
     for (const agent of rows) {
       if (agent.tier === 'ephemeral') continue
@@ -495,7 +505,7 @@ export class OpenCodeProcessManager {
     const { rows: interrupted } = await this.pool.query<{ id: string; to_agent_id: string | null }>(
       `UPDATE delegations
        SET status = 'failed',
-           result = jsonb_build_object('error', $1),
+           result = jsonb_build_object('error', $1::text),
            completed_at = now(),
            updated_at = now()
        WHERE status = 'in_progress'

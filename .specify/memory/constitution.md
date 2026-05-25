@@ -1,84 +1,133 @@
-# Agent Control Plane — Constitution
+<!--
+Sync Impact Report
+- Version change: 0.2.0 -> 1.0.0
+- Modified principles:
+  - I. Three-Tier Agent Model -> I. Code Quality Is Non-Negotiable
+  - II. Prime Is the Sole Steering Interface -> II. YAGNI Over Premature Complexity
+  - III. Durable Artifacts of Record -> III. Reliability Is a Feature
+  - IV. Per-Agent Isolation Is Mandatory -> IV. User Experience Must Be Easy and Consistent
+  - V. Layered Tooling Contracts -> V. Visual Design Must Feel Slick and Intentional
+- Added sections:
+  - Architecture Constraints
+  - Delivery & Review Standards
+- Removed sections:
+  - System Primitives
+- Templates requiring updates:
+  - ✅ updated: .specify/templates/plan-template.md
+  - ✅ updated: .specify/templates/spec-template.md
+  - ✅ updated: .specify/templates/tasks-template.md
+  - ✅ reviewed, no file present: .specify/templates/commands/
+- Follow-up TODOs:
+  - None
+-->
+# Agent Control Plane Constitution
 
-## Identity & Mission
-
-ACP is a self-hosted Personal Chief of Staff for one human, running on their own server. The goal is async-first agentic work: goals are set in conversation ("staff meetings"), and results are delivered without minute-by-minute supervision.
-
-ACP differentiates from local desktop agent products (e.g. OpenSwarm) by being always-on and multi-device, and from multi-tenant SaaS by being fully single-tenant — your data, your sandbox, your prompts, your server.
+ACP is a self-hosted Personal Chief of Staff for one human, running on that
+operator's own server. ACP exists to turn conversational intent into async-first,
+durable execution without requiring minute-by-minute supervision.
 
 ## Core Principles
 
-### I. Three-Tier Agent Model
+### I. Code Quality Is Non-Negotiable
+Production code MUST be clear, reviewable, and maintainable. Changes MUST keep
+modules cohesive, names explicit, failure paths handled, and behavior covered by
+verification appropriate to the risk and surface area touched. Duplication MUST be
+removed when it creates maintenance risk, but abstraction MUST not be introduced
+without a concrete present need. Rationale: ACP is long-lived infrastructure and
+product code; unclear code slows delivery and silently raises operational risk.
 
-- **Prime** — single persistent CoS, user-facing. Orchestrates, decides, communicates. The only entry point for user intent.
-- **Durable operational staff** — always-on, SDLC-shaped roles: **Architect** (design, ADRs, cross-cutting consistency), **SRE** (monitoring, incidents, health, reliability), **DevOps** (deploys, CI/CD, infrastructure). They keep ACP itself running and serve the same functions on user projects Prime delegates.
-- **Ephemeral specialists** — single-purpose contractors spawned per task, reaped on completion. v1 templates: Researcher, Tech Writer, QA, Security. Prime can define one-off ephemerals when no template fits.
+### II. YAGNI Over Premature Complexity
+The codebase MUST prefer the simplest design that satisfies today's accepted
+requirements. New abstractions, dependencies, services, flags, configuration
+surfaces, and extension points MUST be justified by an active use case rather than
+speculation. Plans and reviews MUST reject "maybe later" architecture unless it
+reduces current complexity more than it adds. Rationale: unnecessary flexibility
+creates drag, hides bugs, and makes the product harder to operate and evolve.
 
-Note: SRE and DevOps overlap significantly in a single-tenant system; if their distinct charters don't justify the split after v1, they may be collapsed into one role.
+### III. Reliability Is a Feature
+SRE principles MUST shape delivery from the start. Systems and features MUST be
+observable, fail predictably, degrade safely, and support diagnosis without heroics.
+Operationally relevant changes MUST define logging, metrics, health signals,
+alertable failure modes, and rollback or recovery expectations proportionate to the
+risk. Rationale: for an always-on control plane, reliability is part of the user
+experience, not a backend afterthought.
 
-### II. CoS as the Interface, Not the Canvas
+### IV. User Experience Must Be Easy and Consistent
+Primary workflows MUST be easy to discover, easy to understand, and consistent
+across surfaces. Features MUST minimize operator effort, preserve predictable
+terminology, and handle loading, empty, success, and error states intentionally.
+If a user needs special knowledge to complete a routine task, the design is not yet
+good enough. Rationale: ACP is a control product; friction, ambiguity, and mixed
+interaction patterns directly reduce trust and usefulness.
 
-The user always directs through Prime. All other UI surfaces (room workspace, circuit view, approval queue) support awareness and execution, but they are not the steering wheel. In v1, the room workspace is the primary operating surface and the circuit view is observational. Promoted actions route through Prime under the hood.
+### V. Visual Design Must Feel Slick and Intentional
+The interface MUST feel polished without becoming ornamental. Layout, typography,
+spacing, motion, color, and component behavior MUST reinforce clarity, hierarchy,
+and calm operator control. New UI work MUST reuse established patterns before
+introducing new ones, and any new pattern MUST raise the overall bar for coherence.
+Rationale: slick design is not decoration; it is the visible expression of product
+quality, trustworthiness, and ease.
 
-### III. Durable Artifacts of Record
+## Architecture Constraints
 
-Work is coordinated in ACP's database and mirrored to external systems-of-record (gitea, jira, knowledge base) where appropriate — not left in agent memory, session logs, or canvas state. Sessions are ephemeral; the durable record persists. Agents derive state from durable records, not the reverse.
+The following constraints remain mandatory for ACP-specific implementation:
 
-### IV. Isolation Is a Property of the Agent, Not the Deployment
+- User intent MUST enter through Prime; secondary surfaces MAY expose promoted
+  actions, but they MUST route through Prime rather than creating parallel control
+  paths.
+- Durable records in ACP's database MUST remain the source of truth for work,
+  decisions, approvals, and artifacts; session state and transient UI state are
+  never authoritative.
+- Per-agent isolation remains mandatory through dedicated worktrees, working
+  directories, scoped environments, short-lived credentials, and enforced runtime
+  boundaries.
+- ACP remains single-tenant and self-hosted by design; one instance serves one
+  human operator unless this Constitution is amended.
 
-Every agent gets a per-agent git worktree, dedicated working directory (`/workspace/agents/<id>/`), per-process rlimits + cgroup, scoped environment variables, and broker-issued short-lived credentials. The deployment stays simple (two containers: `db` + `harness`), but per-agent boundaries are non-negotiable.
+## Delivery & Review Standards
 
-Harness crash = all agents die; the harness supervisor rebuilds in-flight state from the DB on restart. If this blast-radius tradeoff becomes unacceptable, migrate to per-agent containers behind the same agent-runtime interface.
+Every spec, plan, task list, implementation, and review MUST prove alignment with
+these principles.
 
-### V. Tooling Is Layered, Not Flat
+- Specs MUST define the user-facing outcome, the simplest viable scope, the
+  operational impact, and the intended UX behavior for normal and failure states.
+- Plans MUST document why the proposed design is the simplest viable approach and
+  MUST call out any new abstraction, dependency, or subsystem that cannot be
+  avoided.
+- Tasks MUST include work for verification, observability, UX states, and design
+  consistency whenever those concerns are affected.
+- Reviews MUST reject changes that add speculative architecture, weaken
+  operability, lower UX consistency, or introduce visually inconsistent UI.
+- Definition of done MUST include appropriate verification, updated operational
+  signals where needed, and a user flow that is both understandable and polished.
 
-ACP exposes tools through layered contracts, not a flat bag of MCP endpoints. The layers are:
+## Governance
 
-- **Platform primitives** — stable ACP actions such as delegation, approvals, artifact publishing, and work-item updates
-- **Capability bundles** — policy-level groupings such as repo read/write, CI inspection, deploy staging, or knowledge search
-- **Provider adapters** — concrete MCP servers, HTTP APIs, CLIs, or SDK-backed implementations behind a capability
-- **Tool grants** — per-agent, per-run resolved access derived from role, task, approval state, and environment
+This Constitution supersedes conflicting guidance in specs, plans, tasks, and
+runtime documentation. Any exception requires this document to be amended first.
 
-Agents reason primarily about platform primitives and capabilities. Provider adapters stay swappable behind those contracts. Default policy is deny-by-default with least-privilege per-run grants.
+Amendments MUST include:
 
-### VI. Human-in-the-Loop at Decision Points, Not as a Fallback
+1. explicit motivation describing what changed and why;
+2. conflict callouts identifying affected specs, templates, or workflows; and
+3. a migration plan for any in-flight or previously approved work made inconsistent
+   by the amendment.
 
-Approvals are first-class objects. Reversible work auto-runs; irreversible or high-impact work pauses for the operator. This is a foundational design choice, not a safety net.
+Versioning policy is Semantic Versioning for governance:
 
-### VII. Observe, Don't Pilot
+- **MAJOR**: removes or materially redefines a principle, or changes a mandatory
+  governance contract in a backward-incompatible way;
+- **MINOR**: adds a new principle, section, or materially expanded requirement; and
+- **PATCH**: clarifies wording, improves examples, fixes typos, or makes other
+  non-semantic refinements.
 
-The circuit view (canvas) shows relationships across work, agents, approvals, and artifacts; the operator still steers via Prime. In v1, the canvas is an observational relationship view with promoted actions (approve, branch, ask Prime) that route through Prime. Rich live chat/tool interaction inside the canvas is a later phase and does not replace Prime-led orchestration.
+Compliance review expectations:
 
-### VIII. Single-Tenant, Self-Hosted by Design
+- Every plan MUST include a constitution check before research and after design.
+- Reviewers MUST verify code quality, YAGNI discipline, SRE readiness, UX
+  consistency, and visual coherence for the scope being changed.
+- Template updates MUST stay aligned with this Constitution.
+- Repository-specific Prime Agent constraints in `AGENTS.md` remain binding for
+  Prime implementation work.
 
-One ACP instance = one human operator. No multi-user inside an instance. No multi-tenant infrastructure. Every architectural decision optimizes for one operator and their staff. Auth is a single operator token.
-
-## System Primitives
-
-- **Agent** — an actor with an identity, role, tier (prime / durable / ephemeral), lifecycle state, persona file, tool set, and isolated workspace. May be long-lived (Prime, durable staff) or task-scoped (ephemerals).
-- **Work Item** — a tracked unit of work with lane, status machine, source, and metadata. Lives in the DB; mirrored to the system-of-record (gitea issue, jira ticket) where appropriate.
-- **Sandbox** — the per-agent isolation contract: worktree + workdir + rlimits/cgroup + scoped env + broker credentials. Enforced by the harness at spawn time.
-- **Approval** — a first-class object representing a paused action pending operator decision. Has a target action, context, expiry, decision, and audit trail.
-- **Capability Profile** — a policy object mapping a role or task type to allowed platform primitives, capability bundles, escalation rules, and default denial behavior.
-- **Tool Grant** — the resolved per-run tool exposure given to a specific agent execution, derived from its capability profile, task scope, approval state, and environment.
-- **Provider Adapter** — a concrete implementation of a capability using MCP, HTTP, stdio, CLI, or SDK integration.
-- **Knowledge Artifact** — a durable document (ADR, runbook, research note, decision log) that survives sessions, maintained by durable staff.
-
-## Non-Goals (12-month horizon)
-
-- Multi-user inside one instance
-- Multi-tenant SaaS hosting
-- Agent federation or cross-instance marketplaces
-- Autonomous self-rewriting ACP code (agents propose; operator approves)
-- Per-agent VM isolation (Firecracker, etc.) — revisit only if threat model changes
-- Native desktop or mobile applications (web is the surface)
-
-## Governance & Amendment
-
-The Constitution constrains every feature spec under `specs/`. Before a feature spec may contradict a principle, the principle must be amended here first. Amendments require:
-
-1. Explicit motivation (what changed and why)
-2. Conflict callouts (which existing specs are affected)
-3. Migration plan for affected backlog items
-
-**Version**: 0.1 | **Ratified**: 2026-05-21 | **Last Amended**: 2026-05-21
+**Version**: 1.0.0 | **Ratified**: 2026-05-21 | **Last Amended**: 2026-05-23

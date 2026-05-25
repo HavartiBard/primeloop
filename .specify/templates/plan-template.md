@@ -40,7 +40,21 @@
 
 *GATE: Must pass before Phase 0 research. Re-check after Phase 1 design.*
 
-[Gates determined based on constitution file]
+- **Code quality**: Define how the change preserves clear boundaries, readable
+  code, explicit failure handling, and verification proportional to risk.
+- **YAGNI**: Justify every new abstraction, dependency, config surface, or service;
+  reject speculative flexibility without an active use case.
+- **SRE readiness**: Identify logging, metrics, health signals, alertable failure
+  modes, and rollback or recovery expectations for operationally relevant changes.
+- **UX consistency**: Confirm the primary flow is easy to understand, uses existing
+  terminology and patterns, and covers loading, empty, success, and error states.
+- **Visual polish**: Confirm the design reuses established components, spacing,
+  hierarchy, and motion patterns or explicitly justifies a new pattern.
+- **ACP architecture constraints**: Preserve Prime as the sole steering interface,
+  ACP durable records as source of truth, per-agent isolation, and single-tenant
+  scope where the feature touches those areas.
+- **Complexity tracking**: Record any constitutional tension in the table below
+  before proceeding.
 
 ## Project Structure
 
@@ -109,5 +123,5 @@ directories captured above]
 
 | Violation | Why Needed | Simpler Alternative Rejected Because |
 |-----------|------------|-------------------------------------|
-| [e.g., 4th project] | [current need] | [why 3 projects insufficient] |
-| [e.g., Repository pattern] | [specific problem] | [why direct DB access insufficient] |
+| [e.g., new abstraction or dependency] | [current need] | [why a simpler design cannot satisfy the accepted scope] |
+| [e.g., reduced observability or UX deviation] | [specific problem] | [why the standard pattern is insufficient in this case] |

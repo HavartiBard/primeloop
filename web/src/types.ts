@@ -218,6 +218,51 @@ export interface PrimeSessionModuleRun {
   completed_at: string
 }
 
+// ─── Prime Config & Model Preferences ─────────────────────────────────────
+
+export interface ModelRouteEntry {
+  provider_id: string
+  model: string
+}
+
+export interface FunctionModelPreference {
+  primary: ModelRouteEntry
+  fallbacks: ModelRouteEntry[]
+}
+
+export type ModelPreferences = Record<string, FunctionModelPreference>
+
+export const PRIME_MODEL_FUNCTION_TYPES = ['planning', 'routing', 'context', 'policy'] as const
+export type PrimeModelFunctionType = typeof PRIME_MODEL_FUNCTION_TYPES[number]
+
+export interface PrimeConfig {
+  id: string
+  enabled: boolean
+  cron_fast_interval_seconds: number
+  cron_slow_interval_seconds: number
+  debounce_window_ms: number
+  provider_routing: Record<string, ModelRouteEntry[]>
+  cost_controls: Record<string, unknown>
+  git_store: Record<string, unknown>
+  model_preferences: ModelPreferences
+  status: string
+  last_started_at?: string
+  last_error?: string
+  created_at: string
+  updated_at: string
+}
+
+export interface PrimeConfigPatch {
+  enabled?: boolean
+  cron_fast_interval_seconds?: number
+  cron_slow_interval_seconds?: number
+  debounce_window_ms?: number
+  model_preferences?: ModelPreferences
+  status?: string
+  last_started_at?: string | null
+  last_error?: string | null
+}
+
 export interface PrimeModuleConfig {
   module_id: string
   stage: string

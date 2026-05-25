@@ -231,6 +231,7 @@ function validatePrimeConfigPatch(value: unknown) {
     provider_routing?: Record<string, { provider_id: string; model: string }[]>
     cost_controls?: Record<string, unknown>
     git_store?: Record<string, unknown>
+    model_preferences?: Record<string, { primary: { provider_id: string; model: string }; fallbacks: Array<{ provider_id: string; model: string }> }>
     status?: string
     last_started_at?: string | null
     last_error?: string | null
@@ -305,6 +306,11 @@ function validatePrimeConfigPatch(value: unknown) {
     patch.git_store = value.git_store
   }
 
+  if ('model_preferences' in value) {
+    const mp = validateModelPreferencesValue(value.model_preferences)
+    patch.model_preferences = mp
+  }
+
   if ('status' in value) {
     if (typeof value.status !== 'string') {
       throw new Error('invalid prime config patch: status must be a string')
@@ -370,6 +376,46 @@ function validatePrimeModulePatch(value: unknown) {
   }
 
   return patch
+}
+
+function validateModelPreferencesValue(value: unknown) {
+  if (!isRecord(value)) {
+    throw new Error('invalid prime config patch: model_preferences must be an object')
+  }
+
+  const preferences: Record<string, { primary: { provider_id: string; model: string }; fallbacks: Array<{ provider_id: string; model: string }> }> = {}
+
+  for (const [funcType, pref] of Object.entries(value)) {
+    if (!isRecord(pref)) {
+      throw new Error(`invalid prime config patch: model_preferences.${funcType} must be an object with primary and fallbacks`)
+    }
+
+    // Validate primary
+    const primary = pref.primary
+    if (!isRecord(primary) || typeof primary.provider_id !== 'string' || !primary.provider_id.trim() || typeof primary.model !== 'string' || !primary.model.trim()) {
+      throw new Error(`invalid prime config patch: model_preferences.${funcType}.primary must include non-empty string provider_id and model`)
+    }
+
+    // Validate fallbacks
+    const fallbacks = pref.fallbacks ?? []
+    if (!Array.isArray(fallbacks)) {
+      throw new Error(`invalid prime config patch: model_preferences.${funcType}.fallbacks must be an array`)
+    }
+
+    const validatedFallbacks = fallbacks.map((fb, index) => {
+      if (!isRecord(fb) || typeof fb.provider_id !== 'string' || !fb.provider_id.trim() || typeof fb.model !== 'string' || !fb.model.trim()) {
+        throw new Error(`invalid prime config patch: model_preferences.${funcType}.fallbacks[${index}] must include non-empty string provider_id and model`)
+      }
+      return { provider_id: fb.provider_id, model: fb.model }
+    })
+
+    preferences[funcType] = {
+      primary: { provider_id: primary.provider_id.trim(), model: primary.model.trim() },
+      fallbacks: validatedFallbacks,
+    }
+  }
+
+  return preferences
 }
 
 function validatePrimeEvent(value: unknown): PrimeEvent {

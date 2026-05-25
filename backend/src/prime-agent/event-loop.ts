@@ -1,5 +1,8 @@
 import type pg from 'pg'
-import { appendThreadMessage, getPrimeProfile } from '../runtime.js'
+import { appendThreadMessage, createDelegation, createWorkItem, getPrimeProfile, insertRuntimeEvent, updateWorkItem, type WorkItem } from '../runtime.js'
+import { getAgentByRole } from '../registry.js'
+import { routeInvestigation, recordRoutingOutcome } from '../routing/index.js'
+import type { AgentHarness } from '../fleet-executor/harness.js'
 import type { PrimeActionDispatchResult } from './actions.js'
 import type { PrimeContext } from './context.js'
 import type { PrimeEvent } from './events.js'
@@ -21,6 +24,8 @@ import { loadPrimeWorkspaceTemplates } from '../workspace.js'
 
 export interface PrimeEventLoopDeps {
   router: LlmRouter
+  publishEvent?: (type: string, payload: Record<string, unknown>) => Promise<void>
+  getHarness: (agentId: string) => AgentHarness | undefined
 }
 
 export interface PrimeEventHandleResult {
@@ -36,6 +41,15 @@ async function updateLastStep(pool: pg.Pool, sessionId: string, step: string): P
     `UPDATE prime_agent_sessions SET last_step = $2 WHERE id = $1`,
     [sessionId, step]
   )
+}
+
+async function emitPrimeEvent(
+  deps: PrimeEventLoopDeps,
+  type: string,
+  payload: Record<string, unknown>
+): Promise<void> {
+  if (!deps.publishEvent) return
+  await deps.publishEvent(type, payload)
 }
 
 export async function handlePrimeEvent(
@@ -92,6 +106,12 @@ export async function handlePrimeEvent(
       actionsDispatched: 0,
     },
   }
+  const triggerMetadata = getTriggerMetadata(event)
+  await emitPrimeEvent(deps, 'prime.turn.started', {
+    session_id: session.id,
+    trigger_type: event.type,
+    ...triggerMetadata,
+  })
 
   try {
     for (const stage of PRIME_MODULE_STAGES) {
@@ -99,29 +119,11 @@ export async function handlePrimeEvent(
       const stageShadowModules = shadowModules.filter((entry) => entry.module.stage === stage)
 
       for (const configured of stageActiveModules) {
-        await updateLastStep(pool, session.id, `module:${configured.module.id}`)
-        await runPrimeModules(state, {
-          pool,
-          router: deps.router,
-          sessionId: session.id,
-          executionMode: 'active',
-          moduleConfig: configured.config,
-        }, [configured.module])
+        await runConfiguredModule(pool, deps, state, configured, 'active')
       }
 
       for (const configured of stageShadowModules) {
-        await updateLastStep(pool, session.id, `shadow:${configured.module.id}`)
-        await runShadowPrimeModules(
-          state,
-          {
-            pool,
-            router: deps.router,
-            sessionId: session.id,
-            executionMode: 'shadow',
-            moduleConfig: configured.config,
-          },
-          [configured.module]
-        )
+        await runConfiguredModule(pool, deps, state, configured, 'shadow')
       }
     }
 
@@ -129,17 +131,50 @@ export async function handlePrimeEvent(
     const decision = requireDecision(state)
     const actions = state.actions
 
+    await emitPrimeEvent(deps, 'prime.turn.reasoning', {
+      session_id: session.id,
+      trigger_type: event.type,
+      reasoning: decision.reasoning,
+      response: decision.response ?? null,
+      provider_used: decision.provider_used ?? null,
+      model_used: decision.model_used ?? null,
+      action_count: decision.actions.length,
+      ...triggerMetadata,
+    })
+
+    await emitPrimeEvent(deps, 'prime.turn.actions', {
+      session_id: session.id,
+      trigger_type: event.type,
+      actions: decision.actions.map((action) => ({
+        type: action.type,
+        reason: action.reason ?? null,
+      })),
+      dispatched_count: actions.length,
+      ...triggerMetadata,
+    })
+
     await savePrimeSessionModuleRuns(pool, session.id, state.moduleRuns)
 
     if (event.type === 'prime.message') {
       const primeProfile = await getPrimeProfile(pool)
+      const blockerEscalation = shouldEscalateBlockedTurn(actions)
+        ? await createSreInvestigationForPrimeBlocker(
+            pool,
+            event,
+            session.id,
+            collectBlockerReasons(actions),
+            deps.getHarness,
+          )
+        : null
       await appendThreadMessage(pool, event.payload.thread_id, {
         role: 'assistant',
         sender: primeProfile.name.trim() || 'Prime',
-        content: presentPrimeResponse(decision, actions),
+        content: presentPrimeResponse(decision, actions, blockerEscalation?.userMessage),
         metadata: {
           source: 'prime-agent',
           session_id: session.id,
+          ...(blockerEscalation?.workItemId ? { investigation_work_item_id: blockerEscalation.workItemId } : {}),
+          ...(blockerEscalation?.delegationId ? { investigation_delegation_id: blockerEscalation.delegationId } : {}),
         },
       })
     }
@@ -165,6 +200,17 @@ export async function handlePrimeEvent(
       )
     }
 
+    await emitPrimeEvent(deps, 'prime.turn.completed', {
+      session_id: session.id,
+      trigger_type: event.type,
+      status: completed.status,
+      action_count: actions.length,
+      reasoning_summary: decision.reasoning,
+      provider_used: decision.provider_used ?? null,
+      model_used: decision.model_used ?? null,
+      ...triggerMetadata,
+    })
+
     return {
       session: completed,
       decision,
@@ -177,18 +223,403 @@ export async function handlePrimeEvent(
     const failed = await failPrimeSession(pool, session.id, message)
     if (event.type === 'prime.message') {
       const primeProfile = await getPrimeProfile(pool)
+      const escalation = await createSreInvestigationForPrimeFailure(pool, event, session.id, message, deps.getHarness)
       await appendThreadMessage(pool, event.payload.thread_id, {
         role: 'assistant',
         sender: primeProfile.name.trim() || 'Prime',
-        content: `I could not process that yet: ${message}`,
+        content: `I could not process that yet: ${message} ${escalation.userMessage}`,
         metadata: {
           source: 'prime-agent',
           session_id: session.id,
           error: true,
+          ...(escalation.workItemId ? { investigation_work_item_id: escalation.workItemId } : {}),
+          ...(escalation.delegationId ? { investigation_delegation_id: escalation.delegationId } : {}),
         },
       })
     }
+    await emitPrimeEvent(deps, 'prime.turn.failed', {
+      session_id: session.id,
+      trigger_type: event.type,
+      error: message,
+      last_step: null,
+      ...triggerMetadata,
+    })
     throw new PrimeEventLoopError(message, failed ?? session)
+  }
+}
+
+async function createSreInvestigationForPrimeFailure(
+  pool: pg.Pool,
+  event: Extract<PrimeEvent, { type: 'prime.message' }>,
+  sessionId: string,
+  errorMessage: string,
+  getHarness: (agentId: string) => AgentHarness | undefined,
+): Promise<{ userMessage: string; workItemId?: string; delegationId?: string }> {
+  const title = `Investigate Prime failure: ${truncateForTitle(errorMessage)}`
+  const failureSignature = errorSignature(errorMessage)
+  const description = [
+    `Prime session ${sessionId} failed while processing a room message.`,
+    `User message: ${event.payload.content}`,
+    `Failure: ${errorMessage}`,
+    `Thread: ${event.payload.thread_id}`,
+    `Message: ${event.payload.message_id}`,
+  ].join('\n')
+  const existing = await findExistingPrimeFailureInvestigation(
+    pool,
+    event.payload.thread_id,
+    failureSignature
+  )
+  const workItem = existing
+    ? await updateWorkItem(pool, existing.id, {
+        description,
+        metadata: {
+          ...(existing.metadata ?? {}),
+          source: 'prime-agent',
+          action_type: 'hard_failure_investigation',
+          source_session_id: existing.metadata?.['source_session_id'] ?? sessionId,
+          latest_session_id: sessionId,
+          failure_signature: failureSignature,
+          error: errorMessage,
+          investigation_status: 'open',
+        },
+      }) ?? existing
+    : await createWorkItem(pool, {
+        title,
+        description,
+        status: 'active',
+        lane: 'operations',
+        owner_label: 'Prime',
+        thread_id: event.payload.thread_id,
+        metadata: {
+          source: 'prime-agent',
+          action_type: 'hard_failure_investigation',
+          source_session_id: sessionId,
+          latest_session_id: sessionId,
+          failure_signature: failureSignature,
+          error: errorMessage,
+          investigation_status: 'open',
+        },
+      })
+
+  // Route investigation through the routing layer (FR-009)
+  const outcome = await routeInvestigation(
+    { pool, getHarness },
+    { workClass: 'incident_response' },
+  )
+
+  if (outcome.type === 'investigate' && outcome.targetAgent) {
+    const delegation = await createDelegation(pool, {
+      work_item_id: workItem.id,
+      to_agent_id: outcome.targetAgent.id,
+      capability: 'sre',
+      request: {
+        title,
+        description: workItem.description,
+        content: `Investigate Prime failure and propose a fix: ${errorMessage}`,
+        thread_id: event.payload.thread_id,
+        session_id: sessionId,
+        source: 'prime-agent',
+        allowed_files: [],
+        read_files: [],
+      },
+    })
+
+    await insertRuntimeEvent(pool, {
+      event_type: 'prime.failure.escalated',
+      actor: 'Prime',
+      thread_id: event.payload.thread_id,
+      work_item_id: workItem.id,
+      delegation_id: delegation.id,
+      payload: {
+        session_id: sessionId,
+        to_agent_id: outcome.targetAgent.id,
+        error: errorMessage,
+      },
+    })
+
+    return {
+      userMessage: existing
+        ? `I reused investigation work item ${workItem.id} and routed it to ${outcome.targetAgent.name}.`
+        : `I opened investigation work item ${workItem.id} and routed it to ${outcome.targetAgent.name}.`,
+      workItemId: workItem.id,
+      delegationId: delegation.id,
+    }
+  }
+
+  // No executable route — record the blocker and inform user (FR-009, FR-011)
+  await insertRuntimeEvent(pool, {
+    event_type: 'prime.failure.investigation_needed',
+    actor: 'Prime',
+    thread_id: event.payload.thread_id,
+    work_item_id: workItem.id,
+    payload: {
+      session_id: sessionId,
+      reason: outcome.type === 'blocked_runtime_unavailable' ? 'runtime-unavailable' : 'no-investigation-route',
+      error: errorMessage,
+      routing_outcome: outcome.type,
+    },
+  })
+
+  const remediation = 'suggestedRemediations' in outcome
+    ? (outcome as { suggestedRemediations?: Array<{ action: string; description: string }> }).suggestedRemediations?.[0]?.description
+    : undefined
+
+  return {
+    userMessage: existing
+      ? `I reused investigation work item ${workItem.id}, but no executable investigation route is available.${remediation ? ` Suggested fix: ${remediation}.` : ''}`
+      : `I opened investigation work item ${workItem.id}, but no executable investigation route is available.${remediation ? ` Suggested fix: ${remediation}.` : ''}`,
+    workItemId: workItem.id,
+  }
+}
+
+async function createSreInvestigationForPrimeBlocker(
+  pool: pg.Pool,
+  event: Extract<PrimeEvent, { type: 'prime.message' }>,
+  sessionId: string,
+  blockerReasons: string[],
+  getHarness: (agentId: string) => AgentHarness | undefined,
+): Promise<{ userMessage: string; workItemId?: string; delegationId?: string }> {
+  const summary = blockerReasons.join(' ').trim() || 'Prime is blocked and needs investigation.'
+  const title = `Investigate Prime blocker: ${truncateForTitle(summary)}`
+  const signature = errorSignature(`blocker:${summary}`)
+  const description = [
+    `Prime session ${sessionId} completed in a blocked state while processing a room message.`,
+    `User message: ${event.payload.content}`,
+    'Blockers:',
+    ...blockerReasons.map((reason) => `- ${reason}`),
+    `Thread: ${event.payload.thread_id}`,
+    `Message: ${event.payload.message_id}`,
+  ].join('\n')
+  const existing = await findExistingPrimeInvestigation(
+    pool,
+    event.payload.thread_id,
+    'prime_blocker_investigation',
+    signature
+  )
+  const workItem = existing
+    ? await updateWorkItem(pool, existing.id, {
+        description,
+        metadata: {
+          ...(existing.metadata ?? {}),
+          source: 'prime-agent',
+          action_type: 'prime_blocker_investigation',
+          source_session_id: existing.metadata?.['source_session_id'] ?? sessionId,
+          latest_session_id: sessionId,
+          failure_signature: signature,
+          blocker_reasons: blockerReasons,
+          investigation_status: 'open',
+        },
+      }) ?? existing
+    : await createWorkItem(pool, {
+        title,
+        description,
+        status: 'active',
+        lane: 'operations',
+        owner_label: 'Prime',
+        thread_id: event.payload.thread_id,
+        metadata: {
+          source: 'prime-agent',
+          action_type: 'prime_blocker_investigation',
+          source_session_id: sessionId,
+          latest_session_id: sessionId,
+          failure_signature: signature,
+          blocker_reasons: blockerReasons,
+          investigation_status: 'open',
+        },
+      })
+
+  // Route investigation through the routing layer (FR-009)
+  const outcome = await routeInvestigation(
+    { pool, getHarness },
+    { workClass: 'incident_response' },
+  )
+
+  if (outcome.type === 'investigate' && outcome.targetAgent) {
+    const delegation = await createDelegation(pool, {
+      work_item_id: workItem.id,
+      to_agent_id: outcome.targetAgent.id,
+      capability: 'sre',
+      request: {
+        title,
+        description: workItem.description,
+        content: `Investigate Prime blocker and propose a fix: ${summary}`,
+        thread_id: event.payload.thread_id,
+        session_id: sessionId,
+        source: 'prime-agent',
+        allowed_files: [],
+        read_files: [],
+      },
+    })
+
+    await insertRuntimeEvent(pool, {
+      event_type: 'prime.blocker.escalated',
+      actor: 'Prime',
+      thread_id: event.payload.thread_id,
+      work_item_id: workItem.id,
+      delegation_id: delegation.id,
+      payload: {
+        session_id: sessionId,
+        to_agent_id: outcome.targetAgent.id,
+        blockers: blockerReasons,
+      },
+    })
+
+    return {
+      userMessage: existing
+        ? `I reused investigation work item ${workItem.id} and routed it to ${outcome.targetAgent.name}.`
+        : `I opened investigation work item ${workItem.id} and routed it to ${outcome.targetAgent.name}.`,
+      workItemId: workItem.id,
+      delegationId: delegation.id,
+    }
+  }
+
+  // No executable route — record the blocker and inform user (FR-009, FR-011)
+  await insertRuntimeEvent(pool, {
+    event_type: 'prime.blocker.investigation_needed',
+    actor: 'Prime',
+    thread_id: event.payload.thread_id,
+    work_item_id: workItem.id,
+    payload: {
+      session_id: sessionId,
+      reason: outcome.type === 'blocked_runtime_unavailable' ? 'runtime-unavailable' : 'no-investigation-route',
+      blockers: blockerReasons,
+      routing_outcome: outcome.type,
+    },
+  })
+
+  const remediation = 'suggestedRemediations' in outcome
+    ? (outcome as { suggestedRemediations?: Array<{ action: string; description: string }> }).suggestedRemediations?.[0]?.description
+    : undefined
+
+  return {
+    userMessage: existing
+      ? `I reused investigation work item ${workItem.id}, but no executable investigation route is available.${remediation ? ` Suggested fix: ${remediation}.` : ''}`
+      : `I opened investigation work item ${workItem.id}, but no executable investigation route is available.${remediation ? ` Suggested fix: ${remediation}.` : ''}`,
+    workItemId: workItem.id,
+  }
+}
+
+async function findExistingPrimeFailureInvestigation(
+  pool: pg.Pool,
+  threadId: string,
+  failureSignature: string
+): Promise<WorkItem | null> {
+  return findExistingPrimeInvestigation(pool, threadId, 'hard_failure_investigation', failureSignature)
+}
+
+async function findExistingPrimeInvestigation(
+  pool: pg.Pool,
+  threadId: string,
+  actionType: string,
+  failureSignature: string
+): Promise<WorkItem | null> {
+  const { rows } = await pool.query<WorkItem>(
+    `SELECT *
+     FROM work_items
+     WHERE thread_id = $1
+       AND status IN ('active', 'pending')
+       AND metadata->>'action_type' = $2
+       AND metadata->>'investigation_status' = 'open'
+       AND metadata->>'failure_signature' = $3
+     ORDER BY updated_at DESC
+     LIMIT 1`,
+    [threadId, actionType, failureSignature]
+  )
+  return rows[0] ?? null
+}
+
+function shouldEscalateBlockedTurn(actions: PrimeActionDispatchResult[]): boolean {
+  const reasons = collectBlockerReasons(actions)
+  return reasons.some((reason) => /\b(cannot|blocked|missing|unavailable|did not|requires|error|prevents|failed|no agent|no enabled|suggested fix|routing blocked)\b/i.test(reason))
+}
+
+function collectBlockerReasons(actions: PrimeActionDispatchResult[]): string[] {
+  return actions
+    .filter((result) => result.action.type === 'no_op')
+    .map((result) => result.action.reason?.trim())
+    .filter((reason): reason is string => Boolean(reason))
+}
+
+async function runConfiguredModule(
+  pool: pg.Pool,
+  deps: PrimeEventLoopDeps,
+  state: PrimeLoopState,
+  configured: PrimeConfiguredModule,
+  mode: 'active' | 'shadow'
+): Promise<void> {
+  const step = mode === 'shadow'
+    ? `shadow:${configured.module.id}`
+    : `module:${configured.module.id}`
+  await updateLastStep(pool, state.session.id, step)
+  await emitPrimeEvent(deps, 'prime.turn.step', {
+    session_id: state.session.id,
+    trigger_type: state.event.type,
+    step,
+    stage: configured.module.stage,
+    module_id: configured.module.id,
+    version: configured.module.version,
+    mode,
+    status: 'started',
+    ...getTriggerMetadata(state.event),
+  })
+
+  try {
+    if (mode === 'shadow') {
+      await runShadowPrimeModules(
+        state,
+        {
+          pool,
+          router: deps.router,
+          sessionId: state.session.id,
+          executionMode: 'shadow',
+          moduleConfig: configured.config,
+          getHarness: deps.getHarness,
+        },
+        [configured.module]
+      )
+    } else {
+      await runPrimeModules(
+        state,
+        {
+          pool,
+          router: deps.router,
+          sessionId: state.session.id,
+          executionMode: 'active',
+          moduleConfig: configured.config,
+          getHarness: deps.getHarness,
+        },
+        [configured.module]
+      )
+    }
+
+    const latestRun = state.moduleRuns[state.moduleRuns.length - 1]
+    await emitPrimeEvent(deps, 'prime.turn.step', {
+      session_id: state.session.id,
+      trigger_type: state.event.type,
+      step,
+      stage: configured.module.stage,
+      module_id: configured.module.id,
+      version: configured.module.version,
+      mode,
+      status: latestRun?.status ?? 'completed',
+      detail: latestRun?.detail ?? null,
+      ...getTriggerMetadata(state.event),
+    })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    await emitPrimeEvent(deps, 'prime.turn.step', {
+      session_id: state.session.id,
+      trigger_type: state.event.type,
+      step,
+      stage: configured.module.stage,
+      module_id: configured.module.id,
+      version: configured.module.version,
+      mode,
+      status: 'failed',
+      detail: message,
+      ...getTriggerMetadata(state.event),
+    })
+    throw error
   }
 }
 
@@ -258,13 +689,63 @@ function mapTriggerType(event: PrimeEvent): PrimeSessionTriggerType {
       return 'cron_fast'
     case 'fleet.delegation.completed':
     case 'fleet.delegation.failed':
+    case 'goal.created':
       return 'event'
   }
 }
 
+function getTriggerMetadata(event: PrimeEvent): Record<string, unknown> {
+  switch (event.type) {
+    case 'prime.message':
+      return {
+        thread_id: event.payload.thread_id,
+        message_id: event.payload.message_id,
+        sender: event.payload.sender,
+      }
+    case 'cron.fast':
+      return {
+        triggered_at: event.payload.triggered_at,
+        source: event.payload.source ?? 'cron',
+      }
+    case 'fleet.delegation.completed':
+      return {
+        delegation_id: event.payload.delegation_id,
+        work_item_id: event.payload.work_item_id ?? null,
+        agent_id: event.payload.agent_id ?? null,
+      }
+    case 'fleet.delegation.failed':
+      return {
+        delegation_id: event.payload.delegation_id,
+        work_item_id: event.payload.work_item_id ?? null,
+        agent_id: event.payload.agent_id ?? null,
+      }
+    case 'goal.created':
+      return {
+        goal_id: event.payload.goal_id,
+        title: event.payload.title,
+      }
+  }
+}
+
+function truncateForTitle(value: string, max = 72): string {
+  const normalized = value.replace(/\s+/g, ' ').trim()
+  if (normalized.length <= max) return normalized
+  return `${normalized.slice(0, max - 1)}…`
+}
+
+function errorSignature(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/["'`]/g, '')
+    .replace(/[0-9a-f]{8}-[0-9a-f-]{27,}/g, '<uuid>')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
 function presentPrimeResponse(
   decision: PrimeDecision,
-  actions: PrimeActionDispatchResult[]
+  actions: PrimeActionDispatchResult[],
+  escalationMessage?: string
 ): string {
   // Always use response as the user-facing content. Never fall back to reasoning.
   const base = decision.response?.trim()
@@ -276,7 +757,13 @@ function presentPrimeResponse(
   // Build natural-language action descriptions from each action's reason field.
   const dispatched = actions.filter((result) => result.action.type !== 'no_op')
   if (dispatched.length === 0) {
-    return base
+    const blockerDescriptions = actions
+      .map((result) => result.action.reason?.trim())
+      .filter((reason): reason is string => Boolean(reason))
+    const explanation = blockerDescriptions.length > 0
+      ? `${base} ${blockerDescriptions.join(' ')}`
+      : base
+    return escalationMessage ? `${explanation} ${escalationMessage}` : explanation
   }
 
   // If base ends with terminal punctuation, capitalize the first action description.
@@ -294,7 +781,8 @@ function presentPrimeResponse(
       : reason[0].toLowerCase() + reason.slice(1)
   })
 
-  return `${base} ${actionDescriptions.join(' ')}`
+  const response = `${base} ${actionDescriptions.join(' ')}`
+  return escalationMessage ? `${response} ${escalationMessage}` : response
 }
 
 export class PrimeEventLoopError extends Error {
