@@ -1,1163 +1,377 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   fetchAgentWorkspace,
   fetchAgentWorkspaceFile,
-  fetchLoopWarningDrilldown,
-  fetchFleetLoopWarnings,
-  fetchFleetLearnings,
-  fetchFleetPatterns,
-  fetchPrimeModuleAudit,
+  fetchPrimeConfig,
   fetchPrimeModules,
-  fetchFleetSnapshots,
-  fetchRuntimeAuditLoops,
-  fetchRuntimeMemory,
-  fetchRuntimeOverview,
-  publishFleetPattern,
-  resolveApprovalAsPrime,
+  fetchPrimeModuleAudit,
+  fetchPrimeProfile,
+  fetchProviders,
+  fetchSetupProviderModels,
   saveAgentWorkspaceFile,
-  updatePrimeModule,
   updateAgentWorkspace,
   initAgentWorkspace,
+  updatePrimeConfig,
+  updatePrimeModule,
+  savePrimeProfile,
+  patchPrimeProfileSection,
 } from '../api'
-import { useAgentRegistry } from '../hooks/useAgentRegistry'
-import { useApprovals } from '../hooks/useApprovals'
-import type { PermissionRule, PrimeModuleConfig, PrimeModuleConfigAudit, PrimeProfile } from '../types'
+import type {
+  ModelRouteEntry,
+  FunctionModelPreference,
+  ModelPreferences,
+  PrimeModuleConfig,
+  PrimeModuleConfigAudit,
+  PrimeProfileResponse,
+  Provider,
+} from '../types'
 
-const DEFAULT_PROFILE: PrimeProfile = {
-  name: 'Prime',
-  persona: 'Pragmatic executive operations agent for homelab planning, delegation, and approvals.',
-  policy: 'Keep work moving with bounded delegation, durable memory, scoped escalation, and concise status reporting.',
-  preferences: [
-    'Prefer direct execution over excessive planning.',
-    'Route risky actions through explicit approval lanes.',
-    'Surface blockers and stale work before opening new threads.',
-  ],
-  recurringDuties: [
-    'Review open work hourly.',
-    'Audit stale approvals and blocked tasks.',
-    'Track PRs, reviews, deployments, and follow-ups through completion.',
-  ],
-  priorDecisions: [
-    'Use a single persistent coordinator rather than stateless chat.',
-    'Keep subagents specialist and bounded by scope.',
-    'Preserve concise human-readable status updates in the portal.',
-  ],
-}
-
-const DEFAULT_RULES: PermissionRule[] = [
-  { scope: 'Filesystem writes', mode: 'Scoped', note: 'Allow within approved workspace roots only.' },
-  { scope: 'Shell escalation', mode: 'Approval', note: 'Require explicit approval before unrestricted execution.' },
-  { scope: 'GitHub/Gitea', mode: 'Delegated', note: 'Permit PR, review, and issue actions through tracked work items.' },
-  { scope: 'Browser/docs/slides/sheets', mode: 'Open', note: 'Read-first unless a task requires edits or publication.' },
-]
-
-function cardClass(extra = '') {
-  return `rounded-[1.2rem] border border-[var(--border-soft)] bg-[var(--panel)] shadow-[0_18px_48px_rgba(2,6,23,0.18)] backdrop-blur ${extra}`.trim()
-}
-
-function formatTime(value?: string) {
-  return value ? new Date(value).toLocaleString() : 'Waiting'
-}
-
-function SectionHeader({
-  eyebrow,
-  title,
-  detail,
-}: {
-  eyebrow: string
-  title: string
-  detail?: string
-}) {
-  return (
-    <div className="mb-4 flex items-start justify-between gap-3">
-      <div>
-        <div className="text-[10px] font-medium uppercase tracking-[0.28em] text-[var(--muted)]">{eyebrow}</div>
-        <h2 className="mt-1 text-lg font-semibold text-[var(--text)]">{title}</h2>
-      </div>
-      {detail ? (
-        <div className="rounded-full border border-[var(--border-soft)] bg-[var(--panel-subtle)] px-3 py-1 text-[11px] text-[var(--muted)]">
-          {detail}
-        </div>
-      ) : null}
-    </div>
-  )
-}
-
-function topLevelFolder(file: string): WorkspaceCategory {
-  const [folder] = file.split('/', 1)
-  switch (folder) {
-    case 'prompts':
-    case 'agents':
-    case 'skills':
-    case 'policies':
-    case 'memory':
-    case 'config':
-      return folder
-    default:
-      return 'all'
-  }
-}
-
-function inferWorkspaceScope(file: string): WorkspaceScope {
-  if (file === 'agents/prime.md' || file.startsWith('prompts/prime/')) {
-    return 'prime'
-  }
-  if (file.startsWith('agents/') || file.startsWith('prompts/agents/')) {
-    return 'agents'
-  }
-  return 'shared'
-}
-
-type SettingsTab =
-  | 'modules'
-  | 'workspace'
-  | 'governance'
-  | 'approvals'
-  | 'patterns'
-  | 'memory'
-  | 'audits'
-  | 'loops'
-  | 'learnings'
-  | 'snapshots'
-
+type SettingsTab = 'system' | 'models' | 'modules' | 'profile' | 'workspace'
 const SETTINGS_TABS: Array<{ id: SettingsTab; label: string }> = [
+  { id: 'system', label: 'System' },
+  { id: 'models', label: 'Models' },
   { id: 'modules', label: 'Modules' },
+  { id: 'profile', label: 'Profile' },
   { id: 'workspace', label: 'Workspace' },
-  { id: 'governance', label: 'Governance' },
-  { id: 'approvals', label: 'Approvals' },
-  { id: 'patterns', label: 'Patterns' },
-  { id: 'memory', label: 'Memory' },
-  { id: 'audits', label: 'Audits' },
-  { id: 'loops', label: 'Loop Monitor' },
-  { id: 'learnings', label: 'Learnings' },
-  { id: 'snapshots', label: 'Snapshots' },
 ]
+const FUNC_LABELS: Record<string, string> = { planning: 'Planning', routing: 'Routing', context: 'Context Assembly', policy: 'Policy Evaluation' }
 
-type WorkspaceScope = 'all' | 'prime' | 'agents' | 'shared'
-type WorkspaceCategory = 'all' | 'prompts' | 'agents' | 'skills' | 'policies' | 'memory' | 'config'
+type WS_Scope = 'all' | 'prime' | 'agents' | 'shared'
+type WS_Cat = 'all' | 'prompts' | 'agents' | 'skills' | 'policies' | 'memory' | 'config'
 
-const WORKSPACE_SCOPE_OPTIONS: Array<{ value: WorkspaceScope; label: string }> = [
-  { value: 'all', label: 'All scopes' },
-  { value: 'prime', label: 'Prime' },
-  { value: 'agents', label: 'Agents' },
-  { value: 'shared', label: 'Shared' },
-]
-
-const WORKSPACE_CATEGORY_OPTIONS: Array<{ value: WorkspaceCategory; label: string }> = [
-  { value: 'all', label: 'All folders' },
-  { value: 'prompts', label: 'Prompts' },
-  { value: 'agents', label: 'Agents' },
-  { value: 'skills', label: 'Skills' },
-  { value: 'policies', label: 'Policies' },
-  { value: 'memory', label: 'Memory' },
-  { value: 'config', label: 'Config' },
-]
+function card(e = '') { return `rounded-[1.2rem] border border-[var(--border-soft)] bg-[var(--panel)] shadow-[0_18px_48px_rgba(2,6,23,0.18)] backdrop-blur ${e}`.trim() }
+function fmt(v?: string) { return v ? new Date(v).toLocaleString() : 'N/A' }
+function Header({ eyebrow, title, detail }: { eyebrow: string; title: string; detail?: string }) {
+  return (<div className="mb-4 flex items-start justify-between gap-3"><div><div className="text-[10px] font-medium uppercase tracking-[0.28em] text-[var(--muted)]">{eyebrow}</div><h2 className="mt-1 text-lg font-semibold text-[var(--text)]">{title}</h2></div>{detail ? <div className="rounded-full border border-[var(--border-soft)] bg-[var(--panel-subtle)] px-3 py-1 text-[11px] text-[var(--muted)]">{detail}</div> : null}</div>)
+}
 
 export function Governance() {
-  const queryClient = useQueryClient()
-  const { approvals } = useApprovals()
-  const { agents } = useAgentRegistry()
-  const [activeTab, setActiveTab] = useState<SettingsTab>('workspace')
-  const [selectedLoopWarning, setSelectedLoopWarning] = useState<{ agentId: string; warningId: string } | null>(null)
-  const [selectedWorkspaceFile, setSelectedWorkspaceFile] = useState('prompts/prime/system.md')
-  const [workspaceDraft, setWorkspaceDraft] = useState('')
-  const [workspaceVersion, setWorkspaceVersion] = useState('')
-  const [workspaceSaveError, setWorkspaceSaveError] = useState('')
-  const [workspaceScope, setWorkspaceScope] = useState<WorkspaceScope>('all')
-  const [workspaceCategory, setWorkspaceCategory] = useState<WorkspaceCategory>('all')
-  const [workspaceSearch, setWorkspaceSearch] = useState('')
-  const [workspaceSettings, setWorkspaceSettings] = useState({
-    mode: 'local' as 'local' | 'git',
-    root_path: '/var/lib/agent-cp/workspace',
-    remote_url: '',
-    branch: 'main',
-  })
-  const [patternDraft, setPatternDraft] = useState({
-    type: 'best_practice',
-    severity: 'info',
-    content: '',
-    source_agent_id: '',
-  })
-  const [modulePinnedVersions, setModulePinnedVersions] = useState<Record<string, string>>({})
-  const [moduleConfigDrafts, setModuleConfigDrafts] = useState<Record<string, string>>({})
-  const [moduleSaveErrors, setModuleSaveErrors] = useState<Record<string, string>>({})
-  const [selectedModuleAuditId, setSelectedModuleAuditId] = useState<string | null>(null)
-  const { data: runtimeOverview } = useQuery({
-    queryKey: ['runtime-overview'],
-    queryFn: fetchRuntimeOverview,
-    refetchInterval: 15_000,
-  })
-  const { data: memories = [] } = useQuery({
-    queryKey: ['runtime-memory'],
-    queryFn: () => fetchRuntimeMemory(),
-    refetchInterval: 30_000,
-  })
-  const { data: auditLoops = [] } = useQuery({
-    queryKey: ['runtime-audit-loops'],
-    queryFn: fetchRuntimeAuditLoops,
-    refetchInterval: 30_000,
-  })
-  const { data: patterns = [] } = useQuery({
-    queryKey: ['fleet-patterns'],
-    queryFn: () => fetchFleetPatterns(),
-    refetchInterval: 30_000,
-  })
-  const { data: learnings = [] } = useQuery({
-    queryKey: ['fleet-learnings'],
-    queryFn: () => fetchFleetLearnings({ limit: 12 }),
-    refetchInterval: 30_000,
-  })
-  const { data: loopWarnings = [] } = useQuery({
-    queryKey: ['fleet-loop-warnings'],
-    queryFn: () => fetchFleetLoopWarnings({ limit: 12 }),
-    refetchInterval: 30_000,
-  })
-  const { data: snapshots = [] } = useQuery({
-    queryKey: ['fleet-snapshots'],
-    queryFn: () => fetchFleetSnapshots({ limit: 8 }),
-    refetchInterval: 30_000,
-  })
-  const { data: loopWarningDrilldown } = useQuery({
-    queryKey: ['loop-warning-drilldown', selectedLoopWarning?.agentId, selectedLoopWarning?.warningId],
-    queryFn: () => fetchLoopWarningDrilldown(selectedLoopWarning!.agentId, selectedLoopWarning!.warningId),
-    enabled: Boolean(selectedLoopWarning),
-    refetchInterval: 30_000,
-  })
-  const { data: workspace } = useQuery({
-    queryKey: ['agent-workspace'],
-    queryFn: fetchAgentWorkspace,
-    refetchInterval: 30_000,
-  })
-  const { data: primeModules = [] } = useQuery({
-    queryKey: ['prime-modules'],
-    queryFn: fetchPrimeModules,
-    refetchInterval: 30_000,
-  })
-  const { data: selectedModuleAudits = [] } = useQuery({
-    queryKey: ['prime-module-audit', selectedModuleAuditId],
-    queryFn: () => fetchPrimeModuleAudit(selectedModuleAuditId!, 12),
-    enabled: Boolean(selectedModuleAuditId),
-    refetchInterval: 30_000,
-  })
-  const { data: workspaceFile } = useQuery({
-    queryKey: ['agent-workspace-file', selectedWorkspaceFile],
-    queryFn: () => fetchAgentWorkspaceFile(selectedWorkspaceFile),
-    enabled: Boolean(selectedWorkspaceFile),
-  })
-  const publishPatternMutation = useMutation({
-    mutationFn: publishFleetPattern,
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['fleet-patterns'] })
-      setPatternDraft((current) => ({ ...current, content: '' }))
-    },
-  })
-  const resolveApprovalMutation = useMutation({
-    mutationFn: ({ approvalId, decision }: { approvalId: string; decision: 'approved' | 'denied' }) =>
-      resolveApprovalAsPrime(approvalId, decision),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['approvals'] })
-      void queryClient.invalidateQueries({ queryKey: ['runtime-overview'] })
-    },
-  })
-  const saveWorkspaceMutation = useMutation({
-    mutationFn: ({ filePath, content, expectedVersion }: { filePath: string; content: string; expectedVersion?: string }) =>
-      saveAgentWorkspaceFile(filePath, content, expectedVersion),
-    onSuccess: async (savedFile) => {
-      setWorkspaceVersion(savedFile.version)
-      setWorkspaceSaveError('')
-      await queryClient.invalidateQueries({ queryKey: ['agent-workspace'] })
-      await queryClient.invalidateQueries({ queryKey: ['agent-workspace-file', selectedWorkspaceFile] })
-    },
-    onError: (error) => {
-      setWorkspaceSaveError(error instanceof Error ? error.message : 'Failed to save workspace file')
-    },
-  })
-  const initWorkspaceMutation = useMutation({
-    mutationFn: initAgentWorkspace,
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['agent-workspace'] })
-      await queryClient.invalidateQueries({ queryKey: ['agent-workspace-file', selectedWorkspaceFile] })
-    },
-  })
-  const updateWorkspaceMutation = useMutation({
-    mutationFn: (data: { mode: 'local' | 'git'; root_path: string; remote_url?: string | null; branch: string }) =>
-      updateAgentWorkspace(data),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['agent-workspace'] })
-    },
-  })
-  const updatePrimeModuleMutation = useMutation({
-    mutationFn: ({
-      moduleId,
-      patch,
-    }: {
-      moduleId: string
-      patch: Partial<Pick<PrimeModuleConfig, 'enabled' | 'rollout_mode' | 'config'>> & {
-        pinned_version?: string | null
-      }
-    }) => updatePrimeModule(moduleId, patch),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['prime-modules'] })
-    },
-  })
+  const qc = useQueryClient()
+  const [tab, setTab] = useState<SettingsTab>('system')
 
-  useEffect(() => {
-    if (workspaceFile) {
-      setWorkspaceDraft(workspaceFile.content)
-      setWorkspaceVersion(workspaceFile.version)
-      setWorkspaceSaveError('')
-    }
-  }, [workspaceFile])
-  useEffect(() => {
-    if (workspace) {
-      setWorkspaceSettings({
-        mode: workspace.mode,
-        root_path: workspace.root_path,
-        remote_url: workspace.remote_url ?? '',
-        branch: workspace.branch,
-      })
-    }
-  }, [workspace])
+  // State (must be before queries that reference them)
+  const [sys, setSys] = useState({ enabled: false, cron_fast_interval_seconds: 300, cron_slow_interval_seconds: 3600, debounce_window_ms: 10000 })
+  const [mpDraft, setMpDraft] = useState<ModelPreferences>({})
+  const [selFunc, setSelFunc] = useState('planning')
+  const [mPinned, setMPinned] = useState<Record<string, string>>({})
+  const [mConfDrafts, setMConfDrafts] = useState<Record<string, string>>({})
+  const [mSaveErrs, setMSaveErrs] = useState<Record<string, string>>({})
+  const [selMAudit, setSelMAudit] = useState<string | null>(null)
+  const [pDraft, setPDraft] = useState<Record<string, string>>({})
+  const [wsFile, setWsFile] = useState('prompts/prime/system.md')
+  const [wsDraft, setWsDraft] = useState('')
+  const [wsVer, setWsVer] = useState('')
+  const [wsErr, setWsErr] = useState('')
+  const [wsScope, setWsScope] = useState<WS_Scope>('all')
+  const [wsCat, setWsCat] = useState<WS_Cat>('all')
+  const [wsSearch, setWsSearch] = useState('')
+  const [wsSettings, setWsSettings] = useState({ mode: 'local' as 'local' | 'git', root_path: '/var/lib/agent-cp/workspace', remote_url: '', branch: 'main' })
 
-  const profile: PrimeProfile = useMemo(() => {
-    const current = runtimeOverview?.prime
-      ? {
-          name: runtimeOverview.prime.name,
-          persona: runtimeOverview.prime.persona,
-          policy: runtimeOverview.prime.operating_policy,
-          preferences: memories.filter((m) => m.category === 'preference').map((m) => m.content),
-          recurringDuties: memories.filter((m) => m.category === 'recurring-duty').map((m) => m.content),
-          priorDecisions: memories.filter((m) => m.category === 'prior-decision').map((m) => m.content),
-        }
-      : { ...DEFAULT_PROFILE, preferences: [], recurringDuties: [], priorDecisions: [] }
+  // Queries
+  const { data: config } = useQuery({ queryKey: ['prime-config'], queryFn: fetchPrimeConfig, refetchInterval: 30_000 })
+  const { data: providers = [] } = useQuery({ queryKey: ['providers'], queryFn: fetchProviders, refetchInterval: 30_000 })
+  const { data: modules = [] } = useQuery({ queryKey: ['prime-modules'], queryFn: fetchPrimeModules, refetchInterval: 30_000 })
+  const { data: profile } = useQuery({ queryKey: ['prime-profile'], queryFn: fetchPrimeProfile, refetchInterval: 30_000 })
+  const { data: workspace } = useQuery({ queryKey: ['agent-workspace'], queryFn: fetchAgentWorkspace, refetchInterval: 30_000 })
+  const { data: wf } = useQuery({ queryKey: ['agent-workspace-file', wsFile], queryFn: () => fetchAgentWorkspaceFile(wsFile), enabled: Boolean(wsFile) && tab === 'workspace' })
+  const { data: mAudits = [] } = useQuery({ queryKey: ['prime-module-audit', selMAudit], queryFn: () => fetchPrimeModuleAudit(selMAudit!, 12), enabled: Boolean(selMAudit) })
 
-    if (current.preferences.length === 0) current.preferences = DEFAULT_PROFILE.preferences
-    if (current.recurringDuties.length === 0) current.recurringDuties = DEFAULT_PROFILE.recurringDuties
-    if (current.priorDecisions.length === 0) current.priorDecisions = DEFAULT_PROFILE.priorDecisions
-    return current
-  }, [memories, runtimeOverview?.prime])
+  // Mutations
+  const mSys = useMutation({ mutationFn: (p: any) => updatePrimeConfig(p), onSuccess: () => qc.invalidateQueries({ queryKey: ['prime-config'] }) })
+  const mModPref = useMutation({ mutationFn: (p: ModelPreferences) => updatePrimeConfig({ model_preferences: p }), onSuccess: () => qc.invalidateQueries({ queryKey: ['prime-config'] }) })
+  const mMod = useMutation({ mutationFn: ({ moduleId, patch }: { moduleId: string; patch: any }) => updatePrimeModule(moduleId, patch), onSuccess: () => qc.invalidateQueries({ queryKey: ['prime-modules'] }) })
+  const mProf = useMutation({ mutationFn: (d: any) => updatePrimeProfile(d), onSuccess: () => qc.invalidateQueries({ queryKey: ['prime-profile'] }) })
+  const mProfSec = useMutation({ mutationFn: ({ key, new_text }: { key: string; new_text: string }) => patchPrimeProfileSection(key as any, new_text), onSuccess: () => qc.invalidateQueries({ queryKey: ['prime-profile'] }) })
+  const mWsSave = useMutation({
+    mutationFn: ({ filePath, content, expectedVersion }: { filePath: string; content: string; expectedVersion?: string }) => saveAgentWorkspaceFile(filePath, content, expectedVersion),
+    onSuccess: async (sf) => { setWsVer(sf.version); setWsErr(''); await qc.invalidateQueries({ queryKey: ['agent-workspace'] }); await qc.invalidateQueries({ queryKey: ['agent-workspace-file', wsFile] }) },
+    onError: (e) => setWsErr(e instanceof Error ? e.message : 'Failed to save'),
+  })
+  const mWsInit = useMutation({ mutationFn: initAgentWorkspace, onSuccess: () => qc.invalidateQueries({ queryKey: ['agent-workspace'] }) })
+  const mWsCfg = useMutation({ mutationFn: (d: any) => updateAgentWorkspace(d), onSuccess: () => qc.invalidateQueries({ queryKey: ['agent-workspace'] }) })
 
-  const pendingApprovals = approvals.filter((approval) => approval.status === 'pending')
-  const primeAgents = agents.filter((agent) => agent.capabilities.includes('prime'))
-  const selectedWarningKey = selectedLoopWarning ? `${selectedLoopWarning.agentId}:${selectedLoopWarning.warningId}` : null
-  const tabButtonClass = (tab: SettingsTab) =>
-    `relative -mb-px shrink-0 border-b-2 px-4 py-2.5 text-sm font-medium transition ${
-      activeTab === tab
-        ? 'border-[var(--accent)] text-[var(--text)]'
-        : 'border-transparent text-[var(--muted)] hover:border-[var(--border-soft)] hover:text-[var(--text)]'
-    }`
-  const workspaceFiles = workspace?.files ?? []
-  const filteredWorkspaceFiles = useMemo(() => {
-    return workspaceFiles.filter((file) => {
-      if (workspaceCategory !== 'all' && topLevelFolder(file) !== workspaceCategory) {
-        return false
-      }
-      if (workspaceScope !== 'all' && inferWorkspaceScope(file) !== workspaceScope) {
-        return false
-      }
-      if (workspaceSearch.trim()) {
-        const query = workspaceSearch.trim().toLowerCase()
-        if (!file.toLowerCase().includes(query)) {
-          return false
-        }
-      }
-      return true
-    })
-  }, [workspaceCategory, workspaceFiles, workspaceScope, workspaceSearch])
+  // Sync
+  useEffect(() => { if (!config) return; setSys({ enabled: config.enabled, cron_fast_interval_seconds: config.cron_fast_interval_seconds, cron_slow_interval_seconds: config.cron_slow_interval_seconds, debounce_window_ms: config.debounce_window_ms }); setMpDraft(config.model_preferences ?? {}) }, [config])
+  useEffect(() => { if (!wf) return; setWsDraft(wf.content); setWsVer(wf.version); setWsErr('') }, [wf])
+  useEffect(() => { if (!workspace) return; setWsSettings({ mode: workspace.mode, root_path: workspace.root_path, remote_url: workspace.remote_url ?? '', branch: workspace.branch }) }, [workspace])
+  useEffect(() => { if (!profile) return; setPDraft({ identity: profile.soul?.identity ?? '', voice_tone: profile.soul?.voice_tone ?? '', decision_style: profile.soul?.decision_style ?? '', default_behaviors: profile.operating?.default_behaviors ?? '', approval_thresholds: profile.operating?.approval_thresholds ?? '' }) }, [profile])
+  useEffect(() => { setMPinned(Object.fromEntries(modules.map((m) => [m.module_id, m.pinned_version ?? '']))); setMConfDrafts(Object.fromEntries(modules.map((m) => [m.module_id, JSON.stringify(m.config ?? {}, null, 2)]))); setMSaveErrs({}) }, [modules])
 
-  useEffect(() => {
-    if (!filteredWorkspaceFiles.includes(selectedWorkspaceFile) && filteredWorkspaceFiles.length > 0) {
-      setSelectedWorkspaceFile(filteredWorkspaceFiles[0])
-    }
-  }, [filteredWorkspaceFiles, selectedWorkspaceFile])
+  // Workspace helpers
+  function topFolder(f: string): WS_Cat { const [d] = f.split('/', 1); return ['prompts', 'agents', 'skills', 'policies', 'memory', 'config'].includes(d) ? d as WS_Cat : 'all' }
+  function wsScopeOf(f: string): WS_Scope { if (f === 'agents/prime.md' || f.startsWith('prompts/prime/')) return 'prime'; if (f.startsWith('agents/') || f.startsWith('prompts/agents/')) return 'agents'; return 'shared' }
+  const wFiles = workspace?.files ?? []
+  const fFiles = useMemo(() => wFiles.filter((f) => { if (wsCat !== 'all' && topFolder(f) !== wsCat) return false; if (wsScope !== 'all' && wsScopeOf(f) !== wsScope) return false; if (wsSearch.trim() && !f.toLowerCase().includes(wsSearch.trim().toLowerCase())) return false; return true }), [wsCat, wFiles, wsScope, wsSearch])
+  useEffect(() => { if (tab === 'workspace' && fFiles.length > 0 && !fFiles.includes(wsFile)) setWsFile(fFiles[0]) }, [fFiles, wsFile, tab])
+  useEffect(() => { setWsErr('') }, [wsFile])
 
-  useEffect(() => {
-    setWorkspaceSaveError('')
-  }, [selectedWorkspaceFile])
-
-  useEffect(() => {
-    setModulePinnedVersions(
-      Object.fromEntries(primeModules.map((module) => [module.module_id, module.pinned_version ?? '']))
-    )
-    setModuleConfigDrafts(
-      Object.fromEntries(
-        primeModules.map((module) => [module.module_id, JSON.stringify(module.config ?? {}, null, 2)])
-      )
-    )
-    setModuleSaveErrors({})
-  }, [primeModules])
-
-  function togglePrimeModule(module: PrimeModuleConfig) {
-    updatePrimeModuleMutation.mutate({
-      moduleId: module.module_id,
-      patch: { enabled: !module.enabled },
-    })
+  // Module helpers
+  function togMod(m: PrimeModuleConfig) { mMod.mutate({ moduleId: m.module_id, patch: { enabled: !m.enabled } }) }
+  function setModRollout(m: PrimeModuleConfig, r: PrimeModuleConfig['rollout_mode']) { mMod.mutate({ moduleId: m.module_id, patch: { rollout_mode: r } }) }
+  function saveMod(m: PrimeModuleConfig) {
+    let pc: Record<string, unknown>
+    try { const p = JSON.parse(mConfDrafts[m.module_id] ?? '{}') as unknown; if (!p || typeof p !== 'object' || Array.isArray(p)) throw new Error('Must be object'); pc = p as Record<string, unknown> }
+    catch (e) { setMSaveErrs((c) => ({ ...c, [m.module_id]: e instanceof Error ? e.message : 'Invalid JSON' })); return }
+    setMSaveErrs((c) => ({ ...c, [m.module_id]: '' }))
+    mMod.mutate({ moduleId: m.module_id, patch: { pinned_version: (mPinned[m.module_id] ?? '').trim() || null, config: pc } })
   }
 
-  function changePrimeModuleRollout(module: PrimeModuleConfig, rolloutMode: PrimeModuleConfig['rollout_mode']) {
-    updatePrimeModuleMutation.mutate({
-      moduleId: module.module_id,
-      patch: { rollout_mode: rolloutMode },
-    })
-  }
+  // Model prefs helpers
+  const curPref = mpDraft[selFunc] ?? null
+  const avlProviders = providers.filter((p) => p.type !== 'codex')
+  const [providerModels, setProviderModels] = useState<Record<string, string[]>>({})
+  const [modelsLoading, setModelsLoading] = useState(false)
+  // Track which provider was explicitly selected to avoid re-fetching on model auto-fill
+  const primaryProvRef = useRef('')
+  const fbProvRefs = useRef<Record<number, string>>({})
 
-  function savePrimeModuleDetails(module: PrimeModuleConfig) {
-    const pinnedVersion = modulePinnedVersions[module.module_id] ?? ''
-    const configDraft = moduleConfigDrafts[module.module_id] ?? '{}'
+  function setPref(ft: string, p: FunctionModelPreference | null) { setMpDraft((c) => { const n = { ...c }; if (!p) delete n[ft]; else n[ft] = p; return n }) }
+  function addFb(ft: string) { setMpDraft((c) => { const e = c[ft]; if (!e) return c; return { ...c, [ft]: { ...e, fallbacks: [...e.fallbacks, { provider_id: avlProviders[0]?.id ?? '', model: '' }] } } }) }
+  function rmFb(ft: string, i: number) { setMpDraft((c) => { const e = c[ft]; if (!e) return c; return { ...c, [ft]: { ...e, fallbacks: e.fallbacks.filter((_, j) => j !== i) } } }) }
+  function updFb(ft: string, i: number, v: ModelRouteEntry) { setMpDraft((c) => { const e = c[ft]; if (!e) return c; return { ...c, [ft]: { ...e, fallbacks: e.fallbacks.map((f, j) => j === i ? v : f) } } }) }
 
-    let parsedConfig: Record<string, unknown>
+  // Helper to safely update primary model fields in JSX onChange
+  function _cur() { return curPref ?? { primary: { provider_id: '', model: '' }, fallbacks: [] as ModelRouteEntry[] } }
+
+  async function loadModelsForProvider(providerId: string) {
+    const prov = providers.find((p) => p.id === providerId)
+    if (!prov) return
+    setModelsLoading(true)
     try {
-      const parsed = JSON.parse(configDraft) as unknown
-      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-        throw new Error('Config JSON must be an object')
+      const result = await fetchSetupProviderModels({
+        type: prov.type,
+        base_url: prov.base_url,
+        ...(prov.api_key ? { api_key: prov.api_key } : {}),
+      })
+      if (result.models && result.models.length > 0) {
+        setProviderModels((c) => ({ ...c, [providerId]: result.models }))
       }
-      parsedConfig = parsed as Record<string, unknown>
-    } catch (error) {
-      setModuleSaveErrors((current) => ({
-        ...current,
-        [module.module_id]: error instanceof Error ? error.message : 'Invalid config JSON',
-      }))
-      return
+    } catch {
+      // silently fail — falls back to text input
+    } finally {
+      setModelsLoading(false)
     }
+  }
 
-    setModuleSaveErrors((current) => ({ ...current, [module.module_id]: '' }))
-    updatePrimeModuleMutation.mutate({
-      moduleId: module.module_id,
-      patch: {
-        pinned_version: pinnedVersion.trim() || null,
-        config: parsedConfig,
-      },
+  function setPrimaryPid(v: string) {
+    const p = _cur()
+    const oldModel = p.primary.model
+    primaryProvRef.current = v
+    // Auto-select first model from discovered list, or keep existing if it matches
+    const models = v ? (providerModels[v] ?? []) : []
+    const autoModel = models.length > 0 && !models.includes(oldModel) ? models[0] : oldModel
+    setPref(selFunc, { ...p, primary: { provider_id: v, model: autoModel } })
+    // Load models if not yet cached
+    if (v && !providerModels[v]) loadModelsForProvider(v)
+  }
+  function setPrimaryModel(v: string) { const p = _cur(); setPref(selFunc, { ...p, primary: { ...p.primary, model: v } }) }
+  function setFbPid(i: number, v: string) {
+    const fb = curPref?.fallbacks[i]
+    const oldModel = fb?.model ?? ''
+    fbProvRefs.current = { ...fbProvRefs.current, [i]: v }
+    const models = v ? (providerModels[v] ?? []) : []
+    const autoModel = models.length > 0 && !models.includes(oldModel) ? models[0] : oldModel
+    updFb(selFunc, i, { provider_id: v, model: autoModel })
+    if (v && !providerModels[v]) loadModelsForProvider(v)
+  }
+  function setFbModel(i: number, v: string) { updFb(selFunc, i, { ...curPref?.fallbacks[i]!, model: v }) }
+
+  // Re-fetch models when providers list changes (in case base_url/api_key was updated)
+  useEffect(() => {
+    const toLoad = new Set<string>()
+    if (curPref?.primary?.provider_id && !providerModels[curPref.primary.provider_id]) {
+      toLoad.add(curPref.primary.provider_id)
+      primaryProvRef.current = curPref.primary.provider_id
+    }
+    curPref?.fallbacks.forEach((fb, i) => {
+      if (fb.provider_id && !providerModels[fb.provider_id]) {
+        toLoad.add(fb.provider_id)
+        fbProvRefs.current = { ...fbProvRefs.current, [i]: fb.provider_id }
+      }
     })
-  }
+    toLoad.forEach(loadModelsForProvider)
+  }, [providers])
 
-  function formatAuditConfig(value: Record<string, unknown>): string {
-    return JSON.stringify(value, null, 2)
-  }
-
-  function toggleModuleAudit(moduleId: string) {
-    setSelectedModuleAuditId((current) => (current === moduleId ? null : moduleId))
-  }
+  // UI
+  const tbCls = (t: SettingsTab) => `relative -mb-px shrink-0 border-b-2 px-4 py-2.5 text-sm font-medium transition ${tab === t ? 'border-[var(--accent)] text-[var(--text)]' : 'border-transparent text-[var(--muted)] hover:border-[var(--border-soft)] hover:text-[var(--text)]'}`
+  const SCOPE_OPT = [{ v: 'all', l: 'All scopes' }, { v: 'prime', l: 'Prime' }, { v: 'agents', l: 'Agents' }, { v: 'shared', l: 'Shared' }] as const
+  const CAT_OPT = [{ v: 'all', l: 'All folders' }, { v: 'prompts', l: 'Prompts' }, { v: 'agents', l: 'Agents' }, { v: 'skills', l: 'Skills' }, { v: 'policies', l: 'Policies' }, { v: 'memory', l: 'Memory' }, { v: 'config', l: 'Config' }] as const
 
   return (
     <div className="min-h-screen px-4 py-4 sm:px-6 lg:px-8">
       <section className="space-y-5">
-        <div className={cardClass('p-5 sm:p-6')}>
-          <SectionHeader eyebrow="Settings" title="Control Plane Settings" detail={SETTINGS_TABS.find((tab) => tab.id === activeTab)?.label} />
-          <div className="overflow-x-auto border-b border-[var(--border-soft)]">
-            <div className="flex min-w-max gap-1">
-              {SETTINGS_TABS.map((tab) => (
-                <button
-                  key={tab.id}
-                  type="button"
-                  onClick={() => setActiveTab(tab.id)}
-                  className={tabButtonClass(tab.id)}
-                >
-                  {tab.label}
-                </button>
-              ))}
-            </div>
-          </div>
+        <div className={card('p-5 sm:p-6')}>
+          <Header eyebrow="Settings" title="Control Plane Settings" detail={SETTINGS_TABS.find((t) => t.id === tab)?.label} />
+          <div className="overflow-x-auto border-b border-[var(--border-soft)]"><div className="flex min-w-max gap-1">{SETTINGS_TABS.map((t) => (<button key={t.id} type="button" onClick={() => setTab(t.id)} className={tbCls(t.id)}>{t.label}</button>))}</div></div>
         </div>
 
-        {activeTab === 'modules' && (
-          <div className={`${cardClass()} p-5 sm:p-6`}>
-            <SectionHeader eyebrow="Prime" title="Module Registry" detail={`${primeModules.length} modules`} />
-            <div className="space-y-3">
-              {primeModules.map((module) => (
-                <div key={module.module_id} className="rounded-[1rem] border border-[var(--border-soft)] bg-[var(--panel-subtle)] p-4">
-                  <div className="flex flex-wrap items-start justify-between gap-3">
-                    <div>
-                      <div className="text-sm font-semibold text-[var(--text)]">{module.module_id}</div>
-                      <div className="mt-1 text-xs text-[var(--muted)]">
-                        {module.stage} · default {module.default_version}
-                        {module.pinned_version ? ` · pinned ${module.pinned_version}` : ' · unpinned'}
-                      </div>
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      <span className={`rounded-full border px-3 py-1 text-xs ${
-                        module.enabled
-                          ? 'border-emerald-300/20 bg-emerald-300/12 text-emerald-50'
-                          : 'border-rose-300/20 bg-rose-300/12 text-rose-50'
-                      }`}>
-                        {module.enabled ? 'enabled' : 'disabled'}
-                      </span>
-                      <span className="rounded-full border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-1 text-xs text-[var(--muted)]">
-                        {module.rollout_mode}
-                      </span>
-                    </div>
-                  </div>
-                  <div className="mt-3 grid gap-3 lg:grid-cols-[auto_auto_1fr] lg:items-center">
-                    <button
-                      type="button"
-                      onClick={() => togglePrimeModule(module)}
-                      disabled={updatePrimeModuleMutation.isPending}
-                      className="rounded-full border border-[var(--sel-bd)] bg-[var(--sel-bg)] px-4 py-1.5 text-xs text-blue-300 transition hover:bg-blue-500/20 disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      {module.enabled ? 'Disable Module' : 'Enable Module'}
-                    </button>
-                    <select
-                      value={module.rollout_mode}
-                      onChange={(event) =>
-                        changePrimeModuleRollout(module, event.target.value as PrimeModuleConfig['rollout_mode'])}
-                      disabled={updatePrimeModuleMutation.isPending}
-                      className="rounded border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-2 text-sm text-[var(--text)] disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      <option value="active">active</option>
-                      <option value="shadow">shadow</option>
-                    </select>
-                    <div className="text-xs text-[var(--muted)]">
-                      Updated {formatTime(module.updated_at)}
-                    </div>
-                  </div>
-                  <div className="mt-3 flex justify-end">
-                    <button
-                      type="button"
-                      onClick={() => toggleModuleAudit(module.module_id)}
-                      className="rounded-full border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-1.5 text-xs text-[var(--text)] transition hover:bg-[var(--panel-subtle)]"
-                    >
-                      {selectedModuleAuditId === module.module_id ? 'Hide Audit' : 'Show Audit'}
-                    </button>
-                  </div>
-                  <div className="mt-3 grid gap-3 lg:grid-cols-[220px_minmax(0,1fr)_auto]">
-                    <div>
-                      <div className="text-[11px] uppercase tracking-[0.22em] text-[var(--muted)]">Pinned Version</div>
-                      <input
-                        value={modulePinnedVersions[module.module_id] ?? ''}
-                        onChange={(event) =>
-                          setModulePinnedVersions((current) => ({
-                            ...current,
-                            [module.module_id]: event.target.value,
-                          }))}
-                        placeholder="leave blank for default"
-                        className="mt-2 w-full rounded border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-2 text-sm text-[var(--text)]"
-                      />
-                    </div>
-                    <div>
-                      <div className="text-[11px] uppercase tracking-[0.22em] text-[var(--muted)]">Config JSON</div>
-                      <textarea
-                        value={moduleConfigDrafts[module.module_id] ?? '{}'}
-                        onChange={(event) =>
-                          setModuleConfigDrafts((current) => ({
-                            ...current,
-                            [module.module_id]: event.target.value,
-                          }))}
-                        rows={5}
-                        className="mt-2 w-full rounded border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-2 font-mono text-xs text-[var(--text)]"
-                      />
-                    </div>
-                    <div className="flex items-end">
-                      <button
-                        type="button"
-                        onClick={() => savePrimeModuleDetails(module)}
-                        disabled={updatePrimeModuleMutation.isPending}
-                        className="rounded-full border border-[var(--sel-bd)] bg-[var(--sel-bg)] px-4 py-1.5 text-xs text-blue-300 transition hover:bg-blue-500/20 disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        Save Details
-                      </button>
-                    </div>
-                  </div>
-                  {moduleSaveErrors[module.module_id] && (
-                    <div className="mt-3 rounded-lg border border-amber-300/20 bg-amber-300/10 px-3 py-2 text-xs text-amber-100">
-                      {moduleSaveErrors[module.module_id]}
-                    </div>
-                  )}
-                  {selectedModuleAuditId === module.module_id && (
-                    <div className="mt-3 rounded-[1rem] border border-[var(--border-soft)] bg-[var(--panel)] p-3">
-                      <div className="text-[11px] uppercase tracking-[0.22em] text-[var(--muted)]">Audit History</div>
-                      <div className="mt-3 space-y-3">
-                        {selectedModuleAudits.map((audit: PrimeModuleConfigAudit) => (
-                          <div key={audit.id} className="rounded-lg border border-[var(--border-soft)] bg-[var(--panel-subtle)] p-3">
-                            <div className="flex flex-wrap items-center justify-between gap-2">
-                              <div className="text-sm font-medium text-[var(--text)]">{audit.actor}</div>
-                              <div className="text-xs text-[var(--muted)]">{formatTime(audit.created_at)}</div>
-                            </div>
-                            <div className="mt-2 text-xs text-[var(--muted)]">
-                              Changed: {audit.changed_fields.join(', ') || 'none'}
-                            </div>
-                            <div className="mt-3 grid gap-3 lg:grid-cols-2">
-                              <div>
-                                <div className="text-[11px] uppercase tracking-[0.22em] text-[var(--muted)]">Previous</div>
-                                <pre className="mt-2 overflow-x-auto rounded border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-2 font-mono text-xs text-[var(--muted)]">
-                                  {formatAuditConfig(audit.previous_config)}
-                                </pre>
-                              </div>
-                              <div>
-                                <div className="text-[11px] uppercase tracking-[0.22em] text-[var(--muted)]">Next</div>
-                                <pre className="mt-2 overflow-x-auto rounded border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-2 font-mono text-xs text-[var(--muted)]">
-                                  {formatAuditConfig(audit.next_config)}
-                                </pre>
-                              </div>
-                            </div>
-                          </div>
-                        ))}
-                        {selectedModuleAudits.length === 0 && (
-                          <div className="text-xs text-[var(--muted)]">No audit records yet.</div>
-                        )}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              ))}
-              {primeModules.length === 0 && (
-                <div className="rounded-[1rem] border border-dashed border-[var(--border-soft)] bg-[var(--panel-subtle)] p-4 text-sm text-[var(--muted)]">
-                  No Prime modules discovered yet.
-                </div>
-              )}
+        {/* SYSTEM */}
+        {tab === 'system' && (<div className={`${card()} p-5 sm:p-6`}>
+          <Header eyebrow="System" title="Prime Agent Configuration" />
+          <div className="space-y-5">
+            <div className="flex items-center justify-between rounded-[1rem] border border-[var(--border-soft)] bg-[var(--panel-subtle)] p-4">
+              <div><div className="text-sm font-semibold text-[var(--text)]">Prime Agent Enabled</div><div className="mt-1 text-xs text-[var(--muted)]">When enabled, Prime processes events and runs the decision loop.</div></div>
+              <button type="button" onClick={() => { setSys((d) => ({ ...d, enabled: !d.enabled })); mSys.mutate({ enabled: !sys.enabled }) }} className={`relative inline-flex h-7 w-12 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition ${sys.enabled ? 'bg-emerald-500' : 'bg-gray-400'}`}>
+                <span className={`inline-block h-5 w-5 transform rounded-full bg-white shadow transition ${sys.enabled ? 'translate-x-6' : 'translate-x-0.5'}`} />
+              </button>
             </div>
-          </div>
-        )}
-
-        {activeTab === 'governance' && (
-          <div className={`${cardClass()} p-5 sm:p-6`}>
-            <SectionHeader eyebrow="Controls" title="Governance" detail={`${DEFAULT_RULES.length} active rules`} />
-            <div className="space-y-3">
-              {DEFAULT_RULES.map((rule) => (
-                <div key={rule.scope} className="rounded-[1rem] border border-[var(--border-soft)] bg-[var(--panel-subtle)] p-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="text-sm font-semibold text-[var(--text)]">{rule.scope}</div>
-                    <div className="rounded-full border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-1 text-xs text-[var(--muted)]">{rule.mode}</div>
-                  </div>
-                  <div className="mt-2 text-sm text-[var(--text)]">{rule.note}</div>
-                </div>
-              ))}
+            <div className="grid gap-4 sm:grid-cols-3">
+              <div className="rounded-[1rem] border border-[var(--border-soft)] bg-[var(--panel-subtle)] p-4"><div className="text-[11px] uppercase tracking-[0.22em] text-[var(--muted)]">Fast Cron (seconds)</div><input type="number" min={1} value={sys.cron_fast_interval_seconds} onChange={(e) => setSys((d) => ({ ...d, cron_fast_interval_seconds: parseInt(e.target.value) || 300 }))} className="mt-2 w-full rounded border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-2 text-sm text-[var(--text)]" /></div>
+              <div className="rounded-[1rem] border border-[var(--border-soft)] bg-[var(--panel-subtle)] p-4"><div className="text-[11px] uppercase tracking-[0.22em] text-[var(--muted)]">Slow Cron (seconds)</div><input type="number" min={1} value={sys.cron_slow_interval_seconds} onChange={(e) => setSys((d) => ({ ...d, cron_slow_interval_seconds: parseInt(e.target.value) || 3600 }))} className="mt-2 w-full rounded border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-2 text-sm text-[var(--text)]" /></div>
+              <div className="rounded-[1rem] border border-[var(--border-soft)] bg-[var(--panel-subtle)] p-4"><div className="text-[11px] uppercase tracking-[0.22em] text-[var(--muted)]">Debounce (ms)</div><input type="number" min={0} value={sys.debounce_window_ms} onChange={(e) => setSys((d) => ({ ...d, debounce_window_ms: parseInt(e.target.value) || 0 }))} className="mt-2 w-full rounded border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-2 text-sm text-[var(--text)]" /></div>
             </div>
+            <div className="flex items-center justify-between">
+              <div className="text-xs text-[var(--muted)]">Status: <span className="font-medium text-[var(--text)]">{config?.status ?? 'loading'}</span>{config?.last_started_at && <> · Last started: {fmt(config.last_started_at)}</>}</div>
+              <button onClick={() => mSys.mutate(sys)} disabled={mSys.isPending} className="rounded-full border border-[var(--sel-bd)] bg-[var(--sel-bg)] px-4 py-1.5 text-xs text-blue-300 transition hover:bg-blue-500/20 disabled:cursor-not-allowed disabled:opacity-60">Save System Settings</button>
+            </div>
+            {config?.last_error && (<div className="rounded-[1rem] border border-rose-300/20 bg-rose-300/10 p-4"><div className="text-xs font-medium text-rose-100">Last Error</div><div className="mt-1 text-xs text-rose-50/70">{config.last_error}</div></div>)}
           </div>
-        )}
+        </div>)}
 
-        {activeTab === 'workspace' && (
-          <div className={`${cardClass()} p-5 sm:p-6`}>
-            <SectionHeader
-              eyebrow="Workspace"
-              title="Agent Workspace"
-              detail={workspace ? `${workspace.files.length} files` : 'loading'}
-            />
-            <div className="space-y-4">
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div>
-                  <div className="text-[11px] uppercase tracking-[0.22em] text-[var(--muted)]">Mode</div>
+        {/* MODELS */}
+        {tab === 'models' && (<div className={`${card()} p-5 sm:p-6`}>
+          <Header eyebrow="Models" title="Model Preferences" detail={`${Object.keys(mpDraft).length} function(s) configured`} />
+          <div className="space-y-5">
+            <div><div className="text-[11px] uppercase tracking-[0.22em] text-[var(--muted)]">Function Type</div>
+              <div className="mt-2 flex flex-wrap gap-2">{Object.entries(FUNC_LABELS).map(([k, l]) => (<button key={k} type="button" onClick={() => setSelFunc(k)} className={`rounded-full border px-3 py-1.5 text-xs transition ${selFunc === k ? 'border-[var(--sel-bd)] bg-[var(--sel-bg)] text-blue-300' : 'border-[var(--border-soft)] bg-[var(--panel-subtle)] text-[var(--muted)] hover:text-[var(--text)]'}`}>{l}</button>))}</div>
+            </div>
+            <div className="rounded-[1rem] border border-[var(--border-soft)] bg-[var(--panel-subtle)] p-4">
+              <div className="text-sm font-semibold text-[var(--text)]">{FUNC_LABELS[selFunc]} Model Chain</div>
+              <div className="mt-1 text-xs text-[var(--muted)]">Prime tries each model in order. If the primary fails, it falls back to the next one.</div>
+              <div className="mt-4"><div className="text-[11px] uppercase tracking-[0.22em] text-[var(--muted)]">Primary Model</div>
+                <div className="mt-2 grid gap-3 sm:grid-cols-2">
+                  <select value={curPref?.primary?.provider_id ?? ''} onChange={(e) => setPrimaryPid(e.target.value)} className="rounded border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-2 text-sm text-[var(--text)]">
+                    <option value="">Select provider...</option>{avlProviders.map((p) => (<option key={p.id} value={p.id}>{p.name}</option>))}</select>
+                  {(() => {
+                    const primaryProvId = curPref?.primary?.provider_id ?? ''
+                    const models = primaryProvId ? (providerModels[primaryProvId] ?? []) : []
+                    return models.length > 0 ? (
+                      <select value={curPref?.primary?.model ?? ''} onChange={(e) => setPrimaryModel(e.target.value)} className="rounded border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-2 text-sm text-[var(--text)]">
+                        {models.length === 0 && <option value="">No models</option>}
+                        {models.map((m) => (<option key={m} value={m}>{m}</option>))}
+                      </select>
+                    ) : (
+                      <input placeholder={modelsLoading ? 'Loading models...' : 'Model name (e.g., claude-sonnet-4)'} value={curPref?.primary?.model ?? ''} onChange={(e) => setPrimaryModel(e.target.value)} className="rounded border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-2 text-sm text-[var(--text)]" />
+                    )
+                  })()}
+                </div>
+              </div>
+              <div className="mt-4">
+                <div className="flex items-center justify-between"><div className="text-[11px] uppercase tracking-[0.22em] text-[var(--muted)]">Fallbacks</div>
+                  <button type="button" onClick={() => addFb(selFunc)} disabled={avlProviders.length === 0} className="rounded-full border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-1 text-[11px] text-[var(--text)] transition hover:bg-[var(--panel-subtle)] disabled:cursor-not-allowed disabled:opacity-60">+ Add Fallback</button></div>
+                {curPref?.fallbacks && curPref.fallbacks.length > 0 ? (<div className="mt-2 space-y-2">{curPref.fallbacks.map((fb, i) => (<div key={i} className="flex items-center gap-2"><span className="shrink-0 text-xs text-[var(--muted)]">#{i + 1}</span><select value={fb.provider_id} onChange={(e) => setFbPid(i, e.target.value)} className="flex-1 rounded border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-2 text-sm text-[var(--text)]"><option value="">Select provider...</option>{avlProviders.map((p) => (<option key={p.id} value={p.id}>{p.name}</option>))}</select>{(() => {
+                            const fbModels = fb.provider_id ? (providerModels[fb.provider_id] ?? []) : []
+                            return fbModels.length > 0 ? (
+                              <select value={fb.model} onChange={(e) => setFbModel(i, e.target.value)} className="w-48 shrink-0 rounded border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-2 text-sm text-[var(--text)]">
+                                {fbModels.map((m) => (<option key={m} value={m}>{m}</option>))}
+                              </select>
+                            ) : (
+                              <input placeholder={modelsLoading ? 'Loading...' : 'Model name'} value={fb.model} onChange={(e) => setFbModel(i, e.target.value)} className="w-48 shrink-0 rounded border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-2 text-sm text-[var(--text)]" />
+                            )
+                          })()}<button type="button" onClick={() => rmFb(selFunc, i)} className="shrink-0 rounded-full border border-rose-300/20 bg-rose-300/10 px-2 py-1 text-xs text-rose-50 transition hover:bg-rose-300/20">✕</button></div>))}</div>) : (<div className="mt-2 rounded-lg border border-dashed border-[var(--border-soft)] bg-[var(--panel)] p-3 text-xs text-[var(--muted)]">No fallbacks. Prime will use only the primary model.</div>)}
+              </div>
+              {curPref && (<div className="mt-3 flex justify-end"><button type="button" onClick={() => setPref(selFunc, null)} className="rounded-full border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-1.5 text-xs text-[var(--muted)] transition hover:bg-[var(--panel-subtle)]">Clear {FUNC_LABELS[selFunc]} Preferences</button></div>)}
+            </div>
+            <div className="flex justify-end"><button onClick={() => mModPref.mutate(mpDraft)} disabled={mModPref.isPending} className="rounded-full border border-[var(--sel-bd)] bg-[var(--sel-bg)] px-4 py-1.5 text-xs text-blue-300 transition hover:bg-blue-500/20 disabled:cursor-not-allowed disabled:opacity-60">Save Model Preferences</button></div>
+            {avlProviders.length === 0 && (<div className="rounded-[1rem] border border-dashed border-[var(--border-soft)] bg-[var(--panel-subtle)] p-4 text-sm text-[var(--muted)]">No non-codex providers configured. Add providers first in the Providers page.</div>)}
+          </div>
+        </div>)}
+
+        {/* MODULES */}
+        {tab === 'modules' && (<div className={`${card()} p-5 sm:p-6`}>
+          <Header eyebrow="Prime" title="Module Registry" detail={`${modules.length} modules`} />
+          <div className="space-y-3">{modules.map((m) => (
+            <div key={m.module_id} className="rounded-[1rem] border border-[var(--border-soft)] bg-[var(--panel-subtle)] p-4">
+              <div className="flex flex-wrap items-start justify-between gap-3"><div><div className="text-sm font-semibold text-[var(--text)]">{m.module_id}</div><div className="mt-1 text-xs text-[var(--muted)]">{m.stage} · default {m.default_version}{m.pinned_version ? ` · pinned ${m.pinned_version}` : ' · unpinned'}</div></div>
+                <div className="flex flex-wrap gap-2"><span className={`rounded-full border px-3 py-1 text-xs ${m.enabled ? 'border-emerald-300/20 bg-emerald-300/12 text-emerald-50' : 'border-rose-300/20 bg-rose-300/12 text-rose-50'}`}>{m.enabled ? 'enabled' : 'disabled'}</span><span className="rounded-full border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-1 text-xs text-[var(--muted)]">{m.rollout_mode}</span></div></div>
+              <div className="mt-3 grid gap-3 lg:grid-cols-[auto_auto_1fr] lg:items-center">
+                <button type="button" onClick={() => togMod(m)} disabled={mMod.isPending} className="rounded-full border border-[var(--sel-bd)] bg-[var(--sel-bg)] px-4 py-1.5 text-xs text-blue-300 transition hover:bg-blue-500/20 disabled:cursor-not-allowed disabled:opacity-60">{m.enabled ? 'Disable' : 'Enable'}</button>
+                <select value={m.rollout_mode} onChange={(e) => setModRollout(m, e.target.value as PrimeModuleConfig['rollout_mode'])} className="rounded border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-2 text-sm text-[var(--text)]"><option value="active">active</option><option value="shadow">shadow</option></select>
+                <div className="text-xs text-[var(--muted)]">Updated {fmt(m.updated_at)}</div></div>
+              <div className="mt-3 flex justify-end"><button type="button" onClick={() => setSelMAudit((c) => c === m.module_id ? null : m.module_id)} className="rounded-full border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-1.5 text-xs text-[var(--text)] transition hover:bg-[var(--panel-subtle)]">{selMAudit === m.module_id ? 'Hide Audit' : 'Show Audit'}</button></div>
+              <div className="mt-3 grid gap-3 lg:grid-cols-3">
+                <div><div className="text-[11px] uppercase tracking-[0.22em] text-[var(--muted)]">Pinned Version</div><input value={mPinned[m.module_id] ?? ''} onChange={(e) => setMPinned((c) => ({ ...c, [m.module_id]: e.target.value }))} placeholder="leave blank for default" className="mt-2 w-full rounded border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-2 text-sm text-[var(--text)]" /></div>
+                <div><div className="text-[11px] uppercase tracking-[0.22em] text-[var(--muted)]">Config JSON</div><textarea value={mConfDrafts[m.module_id] ?? '{}'} onChange={(e) => setMConfDrafts((c) => ({ ...c, [m.module_id]: e.target.value }))} rows={3} className="mt-2 w-full rounded border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-2 font-mono text-xs text-[var(--text)]" /></div>
+                <div className="flex items-end"><button type="button" onClick={() => saveMod(m)} disabled={mMod.isPending} className="rounded-full border border-[var(--sel-bd)] bg-[var(--sel-bg)] px-4 py-1.5 text-xs text-blue-300 transition hover:bg-blue-500/20 disabled:cursor-not-allowed disabled:opacity-60">Save</button></div>
+              </div>
+              {mSaveErrs[m.module_id] && (<div className="mt-3 rounded-lg border border-amber-300/20 bg-amber-300/10 px-3 py-2 text-xs text-amber-100">{mSaveErrs[m.module_id]}</div>)}
+              {selMAudit === m.module_id && (<div className="mt-3 rounded-[1rem] border border-[var(--border-soft)] bg-[var(--panel)] p-3">
+                <div className="text-[11px] uppercase tracking-[0.22em] text-[var(--muted)]">Audit History</div>
+                <div className="mt-3 space-y-3">
+                  {mAudits.map((a: PrimeModuleConfigAudit) => (<div key={a.id} className="rounded-lg border border-[var(--border-soft)] bg-[var(--panel-subtle)] p-3">
+                    <div className="flex items-center justify-between"><div className="text-sm font-medium text-[var(--text)]">{a.actor}</div><div className="text-xs text-[var(--muted)]">{fmt(a.created_at)}</div></div>
+                    <div className="mt-1 text-xs text-[var(--muted)]">Changed: {a.changed_fields.join(', ') || 'none'}</div>
+                  </div>))}
+                  {mAudits.length === 0 && (<div className="text-xs text-[var(--muted)]">No audit records yet.</div>)}
+                </div>
+              </div>)}
+            </div>))}
+          {modules.length === 0 && (<div className="rounded-[1rem] border border-dashed border-[var(--border-soft)] bg-[var(--panel-subtle)] p-4 text-sm text-[var(--muted)]">No Prime modules discovered yet.</div>)}
+          </div>
+        </div>)}
+
+        {/* PROFILE */}
+        {tab === 'profile' && (<div className={`${card()} p-5 sm:p-6`}>
+          <Header eyebrow="Profile" title="Prime Identity & Behavior" detail={profile ? profile.name : 'loading'} />
+          <div className="space-y-4">
+            {([['identity', 'Identity'], ['voice_tone', 'Voice & Tone'], ['decision_style', 'Decision Style']] as [string, string][]).map(([key, label]) => (
+              <div key={key} className="rounded-[1rem] border border-[var(--border-soft)] bg-[var(--panel-subtle)] p-4">
+                <div className="flex items-center justify-between"><div className="text-[11px] uppercase tracking-[0.22em] text-[var(--muted)]">{label}</div>
+                  <button type="button" onClick={() => mProfSec.mutate({ key, new_text: pDraft[key] ?? '' })} disabled={mProfSec.isPending} className="rounded-full border border-[var(--sel-bd)] bg-[var(--sel-bg)] px-3 py-1 text-[11px] text-blue-300 transition hover:bg-blue-500/20 disabled:cursor-not-allowed disabled:opacity-60">Save</button></div>
+                <textarea value={pDraft[key] ?? ''} onChange={(e) => setPDraft((c) => ({ ...c, [key]: e.target.value }))} rows={3} className="mt-2 w-full rounded border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-2 text-sm text-[var(--text)]" />
+              </div>
+            ))}
+            {([['default_behaviors', 'Default Behaviors'], ['approval_thresholds', 'Approval Thresholds']] as [string, string][]).map(([key, label]) => (
+              <div key={key} className="rounded-[1rem] border border-[var(--border-soft)] bg-[var(--panel-subtle)] p-4">
+                <div className="flex items-center justify-between"><div className="text-[11px] uppercase tracking-[0.22em] text-[var(--muted)]">{label}</div>
+                  <button type="button" onClick={() => mProfSec.mutate({ key, new_text: pDraft[key] ?? '' })} disabled={mProfSec.isPending} className="rounded-full border border-[var(--sel-bd)] bg-[var(--sel-bg)] px-3 py-1 text-[11px] text-blue-300 transition hover:bg-blue-500/20 disabled:cursor-not-allowed disabled:opacity-60">Save</button></div>
+                <textarea value={pDraft[key] ?? ''} onChange={(e) => setPDraft((c) => ({ ...c, [key]: e.target.value }))} rows={3} className="mt-2 w-full rounded border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-2 text-sm text-[var(--text)]" />
+              </div>
+            ))}
+          </div>
+        </div>)}
+
+        {/* WORKSPACE */}
+        {tab === 'workspace' && (<div className={`${card()} p-5 sm:p-6`}>
+          <Header eyebrow="Workspace" title="Agent Workspace" detail={workspace ? `${workspace.files.length} files` : 'loading'} />
+          <div className="space-y-4">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div><div className="text-[11px] uppercase tracking-[0.22em] text-[var(--muted)]">Mode</div>
                   <div className="mt-2 flex gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setWorkspaceSettings((current) => ({ ...current, mode: 'local' }))}
-                      className={`rounded-full border px-3 py-1.5 text-xs transition ${
-                        workspaceSettings.mode === 'local'
-                          ? 'border-[var(--sel-bd)] bg-[var(--sel-bg)] text-blue-300'
-                          : 'border-[var(--border-soft)] bg-[var(--panel)] text-[var(--muted)]'
-                      }`}
-                    >
-                      Local
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setWorkspaceSettings((current) => ({ ...current, mode: 'git' }))}
-                      className={`rounded-full border px-3 py-1.5 text-xs transition ${
-                        workspaceSettings.mode === 'git'
-                          ? 'border-[var(--sel-bd)] bg-[var(--sel-bg)] text-blue-300'
-                          : 'border-[var(--border-soft)] bg-[var(--panel)] text-[var(--muted)]'
-                      }`}
-                    >
-                      Git
-                    </button>
-                  </div>
-                </div>
-                <div className="rounded-[1rem] border border-[var(--border-soft)] bg-[var(--panel-subtle)] px-4 py-3 text-xs text-[var(--muted)]">
-                  <div>Status: <span className="text-[var(--text)]">{workspace?.sync_status ?? 'loading'}</span></div>
-                  <div className="mt-1">Dirty: <span className="text-[var(--text)]">{workspace?.dirty ? 'yes' : 'no'}</span></div>
-                  <div className="mt-1">Revision: <span className="text-[var(--text)]">{workspace?.last_commit?.slice(0, 12) ?? 'none'}</span></div>
-                </div>
-              </div>
-              <div>
-                <div className="text-[11px] uppercase tracking-[0.22em] text-[var(--muted)]">Workspace Root</div>
-                <input
-                  value={workspaceSettings.root_path}
-                  onChange={(e) => setWorkspaceSettings((current) => ({ ...current, root_path: e.target.value }))}
-                  className="mt-2 w-full rounded border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-2 text-sm text-[var(--text)]"
-                />
-              </div>
-              {workspaceSettings.mode === 'git' && (
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <div>
-                    <div className="text-[11px] uppercase tracking-[0.22em] text-[var(--muted)]">Remote URL</div>
-                    <input
-                      value={workspaceSettings.remote_url}
-                      onChange={(e) => setWorkspaceSettings((current) => ({ ...current, remote_url: e.target.value }))}
-                      className="mt-2 w-full rounded border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-2 text-sm text-[var(--text)]"
-                    />
-                  </div>
-                  <div>
-                    <div className="text-[11px] uppercase tracking-[0.22em] text-[var(--muted)]">Branch</div>
-                    <input
-                      value={workspaceSettings.branch}
-                      onChange={(e) => setWorkspaceSettings((current) => ({ ...current, branch: e.target.value }))}
-                      className="mt-2 w-full rounded border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-2 text-sm text-[var(--text)]"
-                    />
-                  </div>
-                </div>
-              )}
-              <div className="flex flex-wrap gap-2">
-                <button
-                  onClick={() => updateWorkspaceMutation.mutate(workspaceSettings)}
-                  disabled={updateWorkspaceMutation.isPending}
-                  className="rounded-full border border-[var(--sel-bd)] bg-[var(--sel-bg)] px-4 py-1.5 text-xs text-blue-300 transition hover:bg-blue-500/20 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  Save Workspace Settings
-                </button>
-                <button
-                  onClick={() => initWorkspaceMutation.mutate()}
-                  disabled={initWorkspaceMutation.isPending}
-                  className="rounded-full border border-[var(--border-soft)] bg-[var(--panel)] px-4 py-1.5 text-xs text-[var(--text)] transition hover:bg-[var(--panel-subtle)] disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  Scaffold Files
-                </button>
-              </div>
-              <div className="grid gap-3 rounded-[1rem] border border-[var(--border-soft)] bg-[var(--panel-subtle)] p-3 lg:grid-cols-[180px_180px_minmax(0,1fr)]">
-                <select
-                  value={workspaceScope}
-                  onChange={(e) => setWorkspaceScope(e.target.value as WorkspaceScope)}
-                  className="rounded border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-2 text-sm text-[var(--text)]"
-                >
-                  {WORKSPACE_SCOPE_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>{option.label}</option>
-                  ))}
-                </select>
-                <select
-                  value={workspaceCategory}
-                  onChange={(e) => setWorkspaceCategory(e.target.value as WorkspaceCategory)}
-                  className="rounded border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-2 text-sm text-[var(--text)]"
-                >
-                  {WORKSPACE_CATEGORY_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>{option.label}</option>
-                  ))}
-                </select>
-                <input
-                  value={workspaceSearch}
-                  onChange={(e) => setWorkspaceSearch(e.target.value)}
-                  placeholder="Search files by path"
-                  className="rounded border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-2 text-sm text-[var(--text)]"
-                />
-              </div>
-              <div className="grid gap-4 xl:grid-cols-[0.42fr_0.58fr]">
-                <div className="rounded-[1rem] border border-[var(--border-soft)] bg-[var(--panel-subtle)] p-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="text-[11px] uppercase tracking-[0.22em] text-[var(--muted)]">Files</div>
-                    <div className="text-[11px] text-[var(--muted)]">{filteredWorkspaceFiles.length} shown</div>
-                  </div>
-                  <div className="mt-3 space-y-2">
-                    {filteredWorkspaceFiles.map((file) => (
-                      <button
-                        key={file}
-                        type="button"
-                        onClick={() => setSelectedWorkspaceFile(file)}
-                        className={`block w-full rounded-lg border px-3 py-2 text-left text-xs transition ${
-                          selectedWorkspaceFile === file
-                            ? 'border-[var(--sel-bd)] bg-[var(--sel-bg)] text-[var(--text)]'
-                            : 'border-[var(--border-soft)] bg-[var(--panel)] text-[var(--muted)]'
-                        }`}
-                      >
-                        {file}
-                      </button>
-                    ))}
-                    {workspaceFiles.length === 0 && (
-                      <div className="text-xs text-[var(--muted)]">No workspace files found yet.</div>
-                    )}
-                    {workspaceFiles.length > 0 && filteredWorkspaceFiles.length === 0 && (
-                      <div className="text-xs text-[var(--muted)]">No files match the current filters.</div>
-                    )}
-                  </div>
-                </div>
-                <div className="rounded-[1rem] border border-[var(--border-soft)] bg-[var(--panel-subtle)] p-3">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="text-[11px] uppercase tracking-[0.22em] text-[var(--muted)]">
-                      {selectedWorkspaceFile}
-                    </div>
-                    <button
-                      onClick={() => saveWorkspaceMutation.mutate({
-                        filePath: selectedWorkspaceFile,
-                        content: workspaceDraft,
-                        expectedVersion: workspaceVersion,
-                      })}
-                      disabled={saveWorkspaceMutation.isPending || !selectedWorkspaceFile}
-                      className="rounded-full border border-[var(--sel-bd)] bg-[var(--sel-bg)] px-3 py-1.5 text-[11px] text-blue-300 transition hover:bg-blue-500/20 disabled:cursor-not-allowed disabled:opacity-60"
-                    >
-                      Save File
-                    </button>
-                  </div>
-                  {workspaceSaveError && (
-                    <div className="mt-3 rounded-lg border border-amber-300/20 bg-amber-300/10 px-3 py-2 text-xs text-amber-100">
-                      {workspaceSaveError}
-                    </div>
-                  )}
-                  <textarea
-                    value={workspaceDraft}
-                    onChange={(e) => setWorkspaceDraft(e.target.value)}
-                    rows={18}
-                    className="mt-3 w-full rounded border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-2 font-mono text-xs text-[var(--text)]"
-                  />
-                </div>
-              </div>
+                    <button type="button" onClick={() => setWsSettings((c) => ({ ...c, mode: 'local' }))} className={`rounded-full border px-3 py-1.5 text-xs transition ${wsSettings.mode === 'local' ? 'border-[var(--sel-bd)] bg-[var(--sel-bg)] text-blue-300' : 'border-[var(--border-soft)] bg-[var(--panel)] text-[var(--muted)]'}`}>Local</button>
+                    <button type="button" onClick={() => setWsSettings((c) => ({ ...c, mode: 'git' }))} className={`rounded-full border px-3 py-1.5 text-xs transition ${wsSettings.mode === 'git' ? 'border-[var(--sel-bd)] bg-[var(--sel-bg)] text-blue-300' : 'border-[var(--border-soft)] bg-[var(--panel)] text-[var(--muted)]'}`}>Git</button>
+                  </div></div>
+              <div className="rounded-[1rem] border border-[var(--border-soft)] bg-[var(--panel-subtle)] px-4 py-3 text-xs text-[var(--muted)]">
+                <div>Status: <span className="text-[var(--text)]">{workspace?.sync_status ?? 'loading'}</span></div>
+                <div className="mt-1">Dirty: <span className="text-[var(--text)]">{workspace?.dirty ? 'yes' : 'no'}</span></div>
+              </div></div>
+            <div><div className="text-[11px] uppercase tracking-[0.22em] text-[var(--muted)]">Workspace Root</div>
+              <input value={wsSettings.root_path} onChange={(e) => setWsSettings((c) => ({ ...c, root_path: e.target.value }))} className="mt-2 w-full rounded border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-2 text-sm text-[var(--text)]" /></div>
+            {wsSettings.mode === 'git' && (<div className="grid gap-3 sm:grid-cols-2"><div><div className="text-[11px] uppercase tracking-[0.22em] text-[var(--muted)]">Remote URL</div><input value={wsSettings.remote_url} onChange={(e) => setWsSettings((c) => ({ ...c, remote_url: e.target.value }))} className="mt-2 w-full rounded border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-2 text-sm text-[var(--text)]" /></div><div><div className="text-[11px] uppercase tracking-[0.22em] text-[var(--muted)]">Branch</div><input value={wsSettings.branch} onChange={(e) => setWsSettings((c) => ({ ...c, branch: e.target.value }))} className="mt-2 w-full rounded border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-2 text-sm text-[var(--text)]" /></div></div>)}
+            <div className="flex flex-wrap gap-2">
+              <button onClick={() => mWsCfg.mutate(wsSettings)} disabled={mWsCfg.isPending} className="rounded-full border border-[var(--sel-bd)] bg-[var(--sel-bg)] px-4 py-1.5 text-xs text-blue-300 transition hover:bg-blue-500/20 disabled:cursor-not-allowed disabled:opacity-60">Save Workspace Settings</button>
+              <button onClick={() => mWsInit.mutate()} disabled={mWsInit.isPending} className="rounded-full border border-[var(--border-soft)] bg-[var(--panel)] px-4 py-1.5 text-xs text-[var(--text)] transition hover:bg-[var(--panel-subtle)] disabled:cursor-not-allowed disabled:opacity-60">Scaffold Files</button>
             </div>
+            <div className="grid gap-3 rounded-[1rem] border border-[var(--border-soft)] bg-[var(--panel-subtle)] p-3 lg:grid-cols-[180px_180px_minmax(0,1fr)]">
+              <select value={wsScope} onChange={(e) => setWsScope(e.target.value as WS_Scope)} className="rounded border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-2 text-sm text-[var(--text)]">{SCOPE_OPT.map((o) => (<option key={o.v} value={o.v}>{o.l}</option>))}</select>
+              <select value={wsCat} onChange={(e) => setWsCat(e.target.value as WS_Cat)} className="rounded border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-2 text-sm text-[var(--text)]">{CAT_OPT.map((o) => (<option key={o.v} value={o.v}>{o.l}</option>))}</select>
+              <input value={wsSearch} onChange={(e) => setWsSearch(e.target.value)} placeholder="Search files by path" className="rounded border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-2 text-sm text-[var(--text)]" />
+            </div>
+            <div className="grid gap-4 xl:grid-cols-[0.42fr_0.58fr]">
+              <div className="rounded-[1rem] border border-[var(--border-soft)] bg-[var(--panel-subtle)] p-3">
+                <div className="flex items-center justify-between"><div className="text-[11px] uppercase tracking-[0.22em] text-[var(--muted)]">Files</div><div className="text-[11px] text-[var(--muted)]">{fFiles.length} shown</div></div>
+                <div className="mt-3 space-y-2">{fFiles.map((f) => (<button key={f} type="button" onClick={() => setWsFile(f)} className={`block w-full rounded-lg border px-3 py-2 text-left text-xs transition ${wsFile === f ? 'border-[var(--sel-bd)] bg-[var(--sel-bg)] text-[var(--text)]' : 'border-[var(--border-soft)] bg-[var(--panel)] text-[var(--muted)]'}`}>{f}</button>))}
+                  {wFiles.length === 0 && (<div className="text-xs text-[var(--muted)]">No workspace files found yet.</div>)}
+                </div></div>
+              <div className="rounded-[1rem] border border-[var(--border-soft)] bg-[var(--panel-subtle)] p-3">
+                <div className="flex items-center justify-between"><div className="text-[11px] uppercase tracking-[0.22em] text-[var(--muted)]">{wsFile}</div>
+                  <button onClick={() => mWsSave.mutate({ filePath: wsFile, content: wsDraft, expectedVersion: wsVer })} disabled={mWsSave.isPending || !wsFile} className="rounded-full border border-[var(--sel-bd)] bg-[var(--sel-bg)] px-3 py-1.5 text-[11px] text-blue-300 transition hover:bg-blue-500/20 disabled:cursor-not-allowed disabled:opacity-60">Save File</button></div>
+                {wsErr && (<div className="mt-3 rounded-lg border border-amber-300/20 bg-amber-300/10 px-3 py-2 text-xs text-amber-100">{wsErr}</div>)}
+                <textarea value={wsDraft} onChange={(e) => setWsDraft(e.target.value)} rows={18} className="mt-3 w-full rounded border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-2 font-mono text-xs text-[var(--text)]" />
+              </div></div>
           </div>
-        )}
-
-        {activeTab === 'approvals' && (
-          <div className={`${cardClass()} p-5 sm:p-6`}>
-            <SectionHeader eyebrow="Approvals" title="Pending Escalations" detail={`${pendingApprovals.length} pending`} />
-            <div className="space-y-3">
-              {pendingApprovals.map((approval) => (
-                <div key={approval.approval_id} className="rounded-[1rem] border border-amber-300/20 bg-amber-300/10 p-4">
-                  <div className="text-sm font-medium text-[var(--text)]">{approval.action}</div>
-                  <div className="mt-1 text-xs text-amber-50/70">Run {approval.run_id}</div>
-                  <div className="mt-3 flex gap-2">
-                    <button
-                      onClick={() => resolveApprovalMutation.mutate({ approvalId: approval.approval_id, decision: 'approved' })}
-                      disabled={resolveApprovalMutation.isPending}
-                      className="rounded-full border border-emerald-300/20 bg-emerald-300/12 px-3 py-1.5 text-xs text-emerald-50 transition hover:bg-emerald-300/20"
-                    >
-                      Approve Via Prime
-                    </button>
-                    <button
-                      onClick={() => resolveApprovalMutation.mutate({ approvalId: approval.approval_id, decision: 'denied' })}
-                      disabled={resolveApprovalMutation.isPending}
-                      className="rounded-full border border-rose-300/20 bg-rose-300/12 px-3 py-1.5 text-xs text-rose-50 transition hover:bg-rose-300/20"
-                    >
-                      Deny Via Prime
-                    </button>
-                  </div>
-                </div>
-              ))}
-              {pendingApprovals.length === 0 && (
-                <div className="rounded-[1rem] border border-dashed border-[var(--border-soft)] bg-[var(--panel-subtle)] p-4 text-sm text-[var(--muted)]">
-                  No pending approvals. Escalation lanes are currently clear.
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {activeTab === 'patterns' && (
-          <div className={`${cardClass()} p-5 sm:p-6`}>
-            <SectionHeader eyebrow="Fleet" title="Pattern Library" detail={`${patterns.length} patterns`} />
-            <div className="mb-4 rounded-[1rem] border border-[var(--border-soft)] bg-[var(--panel-subtle)] p-4">
-              <div className="text-[11px] uppercase tracking-[0.22em] text-[var(--muted)]">Publish Pattern</div>
-              <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                <select
-                  value={patternDraft.type}
-                  onChange={(e) => setPatternDraft((current) => ({ ...current, type: e.target.value }))}
-                  className="rounded border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-2 text-sm text-[var(--text)]"
-                >
-                  <option value="best_practice">Best practice</option>
-                  <option value="antipattern">Antipattern</option>
-                </select>
-                <select
-                  value={patternDraft.severity}
-                  onChange={(e) => setPatternDraft((current) => ({ ...current, severity: e.target.value }))}
-                  className="rounded border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-2 text-sm text-[var(--text)]"
-                >
-                  <option value="info">Info</option>
-                  <option value="warn">Warn</option>
-                  <option value="error">Error</option>
-                </select>
-              </div>
-              <select
-                value={patternDraft.source_agent_id}
-                onChange={(e) => setPatternDraft((current) => ({ ...current, source_agent_id: e.target.value }))}
-                className="mt-3 w-full rounded border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-2 text-sm text-[var(--text)]"
-              >
-                <option value="">Source agent: Prime default</option>
-                {agents.map((agent) => (
-                  <option key={agent.id} value={agent.id}>{agent.name}</option>
-                ))}
-              </select>
-              <textarea
-                value={patternDraft.content}
-                onChange={(e) => setPatternDraft((current) => ({ ...current, content: e.target.value }))}
-                rows={4}
-                placeholder="Capture a reusable best practice or antipattern for the fleet."
-                className="mt-3 w-full rounded border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-2 text-sm text-[var(--text)]"
-              />
-              <div className="mt-3 flex items-center justify-between gap-3">
-                <div className="text-xs text-[var(--muted)]">
-                  {primeAgents.length > 0 ? `${primeAgents.length} prime-capable agent${primeAgents.length === 1 ? '' : 's'} available` : 'No prime-capable agent registered'}
-                </div>
-                <button
-                  onClick={() => publishPatternMutation.mutate({
-                    type: patternDraft.type as 'best_practice' | 'antipattern',
-                    severity: patternDraft.severity,
-                    content: patternDraft.content,
-                    ...(patternDraft.source_agent_id ? { source_agent_id: patternDraft.source_agent_id } : {}),
-                  })}
-                  disabled={publishPatternMutation.isPending || !patternDraft.content.trim() || primeAgents.length === 0}
-                  className="rounded-full border border-[var(--sel-bd)] bg-[var(--sel-bg)] px-4 py-1.5 text-xs text-blue-300 transition hover:bg-blue-500/20 disabled:cursor-not-allowed disabled:opacity-60"
-                >
-                  Publish Pattern
-                </button>
-              </div>
-            </div>
-            <div className="space-y-3">
-              {patterns.slice(0, 8).map((pattern) => (
-                <div key={pattern.id} className="rounded-[1rem] border border-[var(--border-soft)] bg-[var(--panel-subtle)] p-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="text-sm font-semibold text-[var(--text)]">
-                      {pattern.type === 'antipattern' ? 'Antipattern' : 'Best Practice'}
-                    </div>
-                    <div className="rounded-full border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-1 text-xs text-[var(--muted)]">
-                      {pattern.severity}
-                    </div>
-                  </div>
-                  <div className="mt-2 text-sm text-[var(--text)]">{pattern.content}</div>
-                  <div className="mt-2 text-xs text-[var(--muted)]">
-                    {pattern.source_agent_name ? `Source ${pattern.source_agent_name}` : 'Fleet pattern'}
-                  </div>
-                </div>
-              ))}
-              {patterns.length === 0 && (
-                <div className="rounded-[1rem] border border-dashed border-[var(--border-soft)] bg-[var(--panel-subtle)] p-4 text-sm text-[var(--muted)]">
-                  No published patterns yet.
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {activeTab === 'memory' && (
-          <div className={`${cardClass()} p-5 sm:p-6`}>
-            <SectionHeader eyebrow="Context" title="Persistent Memory" detail={`${profile.preferences.length + profile.recurringDuties.length + profile.priorDecisions.length} entries`} />
-            <div className="space-y-4">
-              <div className="rounded-[1rem] border border-[var(--border-soft)] bg-[var(--panel-subtle)] p-4">
-                <div className="text-[11px] uppercase tracking-[0.22em] text-[var(--muted)]">Preferences</div>
-                <div className="mt-2 space-y-2 text-sm text-[var(--text)]">
-                  {profile.preferences.map((item) => <div key={item}>{item}</div>)}
-                </div>
-              </div>
-              <div className="rounded-[1rem] border border-[var(--border-soft)] bg-[var(--panel-subtle)] p-4">
-                <div className="text-[11px] uppercase tracking-[0.22em] text-[var(--muted)]">Recurring Duties</div>
-                <div className="mt-2 space-y-2 text-sm text-[var(--text)]">
-                  {profile.recurringDuties.map((item) => <div key={item}>{item}</div>)}
-                </div>
-              </div>
-              <div className="rounded-[1rem] border border-[var(--border-soft)] bg-[var(--panel-subtle)] p-4">
-                <div className="text-[11px] uppercase tracking-[0.22em] text-[var(--muted)]">Prior Decisions</div>
-                <div className="mt-2 space-y-2 text-sm text-[var(--text)]">
-                  {profile.priorDecisions.map((item) => <div key={item}>{item}</div>)}
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {activeTab === 'audits' && (
-          <div className={`${cardClass()} p-5 sm:p-6`}>
-            <SectionHeader eyebrow="Background" title="Audit Loops" detail={`${auditLoops.length} loops`} />
-            <div className="space-y-3">
-              {auditLoops.map((loop) => (
-                <div key={loop.id} className="rounded-[1rem] border border-[var(--border-soft)] bg-[var(--panel-subtle)] p-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="text-sm font-semibold text-[var(--text)]">{loop.name}</div>
-                    <div className="rounded-full border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-1 text-xs text-[var(--muted)]">{loop.cadence_cron}</div>
-                  </div>
-                  <div className="mt-2 text-sm text-[var(--text)]">{loop.purpose}</div>
-                  <div className="mt-3 grid gap-2 text-xs text-[var(--muted)] sm:grid-cols-2">
-                    <div>Last run: {formatTime(loop.last_run_at)}</div>
-                    <div>Next run: {formatTime(loop.next_run_at)}</div>
-                  </div>
-                </div>
-              ))}
-              {auditLoops.length === 0 && (
-                <div className="rounded-[1rem] border border-dashed border-[var(--border-soft)] bg-[var(--panel-subtle)] p-4 text-sm text-[var(--muted)]">
-                  No audit loops are configured yet.
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {activeTab === 'loops' && (
-          <div className={`${cardClass()} p-5 sm:p-6`}>
-            <SectionHeader eyebrow="Fleet" title="Loop Monitor" detail={`${loopWarnings.length} warnings`} />
-            <div className="space-y-3">
-              {loopWarnings.map((warning, index) => (
-                <div key={`${warning.kind}:${warning.created_at}:${index}`} className="rounded-[1rem] border border-[var(--border-soft)] bg-[var(--panel-subtle)] p-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="text-sm font-semibold text-[var(--text)]">{warning.summary}</div>
-                    <div className="rounded-full border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-1 text-xs text-[var(--muted)]">
-                      {warning.severity}
-                    </div>
-                  </div>
-                  <div className="mt-2 text-xs text-[var(--muted)]">{warning.agent_name} · {warning.kind}</div>
-                  <div className="mt-3 flex items-center justify-between gap-3">
-                    <div className="text-xs text-[var(--muted)]">{formatTime(warning.created_at)}</div>
-                    <button
-                      onClick={() => setSelectedLoopWarning((current) =>
-                        current?.agentId === warning.agent_id && current.warningId === warning.id
-                          ? null
-                          : { agentId: warning.agent_id, warningId: warning.id })}
-                      className="rounded-full border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-1.5 text-xs text-[var(--text)] transition hover:bg-[var(--panel-subtle)]"
-                    >
-                      {selectedWarningKey === `${warning.agent_id}:${warning.id}` ? 'Hide Lineage' : 'Inspect Lineage'}
-                    </button>
-                  </div>
-                  {selectedWarningKey === `${warning.agent_id}:${warning.id}` && loopWarningDrilldown ? (
-                    <div className="mt-4 space-y-3 rounded-[1rem] border border-[var(--border-soft)] bg-[var(--panel)] p-4">
-                      <div>
-                        <div className="text-[11px] uppercase tracking-[0.22em] text-[var(--muted)]">Delegations</div>
-                        <div className="mt-2 space-y-2">
-                          {loopWarningDrilldown.delegations.map((delegation) => (
-                            <div key={delegation.id} className="rounded-[0.9rem] border border-[var(--border-soft)] bg-[var(--panel-subtle)] p-3">
-                              <div className="flex items-center justify-between gap-3">
-                                <div className="text-sm font-medium text-[var(--text)]">{delegation.capability}</div>
-                                <div className="rounded-full border border-[var(--border-soft)] px-2 py-0.5 text-[11px] text-[var(--muted)]">{delegation.status}</div>
-                              </div>
-                              <div className="mt-1 text-xs text-[var(--muted)]">
-                                {(delegation.from_agent_name ?? delegation.from_agent_id ?? 'unknown')} {'->'} {(delegation.to_agent_name ?? delegation.to_agent_id ?? 'unknown')}
-                              </div>
-                              <div className="mt-2 text-xs text-[var(--muted)]">
-                                {typeof delegation.request.content === 'string'
-                                  ? delegation.request.content
-                                  : typeof delegation.request.prompt === 'string'
-                                    ? delegation.request.prompt
-                                    : `Delegation ${delegation.id}`}
-                              </div>
-                            </div>
-                          ))}
-                          {loopWarningDrilldown.delegations.length === 0 && (
-                            <div className="text-xs text-[var(--muted)]">No delegation lineage resolved.</div>
-                          )}
-                        </div>
-                      </div>
-
-                      <div>
-                        <div className="text-[11px] uppercase tracking-[0.22em] text-[var(--muted)]">Work Items</div>
-                        <div className="mt-2 space-y-2">
-                          {loopWarningDrilldown.work_items.map((item) => (
-                            <div key={item.id} className="rounded-[0.9rem] border border-[var(--border-soft)] bg-[var(--panel-subtle)] p-3">
-                              <div className="flex items-center justify-between gap-3">
-                                <div className="text-sm font-medium text-[var(--text)]">{item.title}</div>
-                                <div className="rounded-full border border-[var(--border-soft)] px-2 py-0.5 text-[11px] text-[var(--muted)]">{item.status}</div>
-                              </div>
-                              <div className="mt-1 text-xs text-[var(--muted)]">{item.lane} · {item.priority} · owner {item.owner_label}</div>
-                              {item.blocked_by && <div className="mt-1 text-xs text-[var(--muted)]">Blocked by {item.blocked_by}</div>}
-                            </div>
-                          ))}
-                          {loopWarningDrilldown.work_items.length === 0 && (
-                            <div className="text-xs text-[var(--muted)]">No work items attached to this warning.</div>
-                          )}
-                        </div>
-                      </div>
-
-                      <div>
-                        <div className="text-[11px] uppercase tracking-[0.22em] text-[var(--muted)]">Approvals</div>
-                        <div className="mt-2 space-y-2">
-                          {loopWarningDrilldown.approvals.map((approval) => (
-                            <div key={approval.approval_id} className="rounded-[0.9rem] border border-[var(--border-soft)] bg-[var(--panel-subtle)] p-3">
-                              <div className="flex items-center justify-between gap-3">
-                                <div className="text-sm font-medium text-[var(--text)]">{approval.action}</div>
-                                <div className="rounded-full border border-[var(--border-soft)] px-2 py-0.5 text-[11px] text-[var(--muted)]">{approval.status}</div>
-                              </div>
-                              <div className="mt-1 text-xs text-[var(--muted)]">Run {approval.run_id} · {formatTime(approval.created_at)}</div>
-                            </div>
-                          ))}
-                          {loopWarningDrilldown.approvals.length === 0 && (
-                            <div className="text-xs text-[var(--muted)]">No approval churn attached to this warning.</div>
-                          )}
-                        </div>
-                      </div>
-
-                      <div>
-                        <div className="text-[11px] uppercase tracking-[0.22em] text-[var(--muted)]">Recent Runtime Events</div>
-                        <div className="mt-2 space-y-2">
-                          {loopWarningDrilldown.events.map((event) => (
-                            <div key={event.id} className="rounded-[0.9rem] border border-[var(--border-soft)] bg-[var(--panel-subtle)] p-3">
-                              <div className="flex items-center justify-between gap-3">
-                                <div className="text-sm font-medium text-[var(--text)]">{event.event_type}</div>
-                                <div className="text-[11px] text-[var(--muted)]">{formatTime(event.created_at)}</div>
-                              </div>
-                              <div className="mt-1 text-xs text-[var(--muted)]">Actor {event.actor}</div>
-                              {event.delegation_id && <div className="mt-1 text-xs text-[var(--muted)]">Delegation {event.delegation_id}</div>}
-                              {event.work_item_id && <div className="mt-1 text-xs text-[var(--muted)]">Work item {event.work_item_id}</div>}
-                            </div>
-                          ))}
-                          {loopWarningDrilldown.events.length === 0 && (
-                            <div className="text-xs text-[var(--muted)]">No runtime events captured for this warning.</div>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  ) : null}
-                </div>
-              ))}
-              {loopWarnings.length === 0 && (
-                <div className="rounded-[1rem] border border-dashed border-[var(--border-soft)] bg-[var(--panel-subtle)] p-4 text-sm text-[var(--muted)]">
-                  No loop warnings detected yet.
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {activeTab === 'learnings' && (
-          <div className={`${cardClass()} p-5 sm:p-6`}>
-            <SectionHeader eyebrow="Fleet" title="Recent Learnings" detail={`${learnings.length} entries`} />
-            <div className="space-y-3">
-              {learnings.map((entry) => (
-                <div key={`${entry.kind}:${entry.id}`} className="rounded-[1rem] border border-[var(--border-soft)] bg-[var(--panel-subtle)] p-4">
-                  <div className="flex items-center justify-between gap-3">
-                    <div className="text-sm font-semibold text-[var(--text)]">
-                      {entry.agent_name} · {entry.kind}
-                    </div>
-                    <div className="rounded-full border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-1 text-xs text-[var(--muted)]">
-                      {entry.category ?? 'general'}
-                    </div>
-                  </div>
-                  <div className="mt-2 text-sm text-[var(--text)]">{entry.content}</div>
-                  <div className="mt-2 text-xs text-[var(--muted)]">
-                    {entry.kind === 'lesson'
-                      ? (entry.context ? `Context: ${entry.context}` : entry.severity ?? 'lesson')
-                      : (entry.importance != null ? `Importance ${entry.importance}` : 'memory')}
-                  </div>
-                  <div className="mt-3">
-                    <button
-                      onClick={() => setPatternDraft({
-                        type: entry.kind === 'lesson' && entry.severity === 'error' ? 'antipattern' : 'best_practice',
-                        severity: entry.kind === 'lesson' ? (entry.severity ?? 'info') : (entry.importance != null && entry.importance >= 4 ? 'warn' : 'info'),
-                        content: entry.content,
-                        source_agent_id: entry.agent_id,
-                      })}
-                      className="rounded-full border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-1.5 text-xs text-[var(--text)] transition hover:bg-[var(--panel-subtle)]"
-                    >
-                      Seed Pattern Draft
-                    </button>
-                  </div>
-                </div>
-              ))}
-              {learnings.length === 0 && (
-                <div className="rounded-[1rem] border border-dashed border-[var(--border-soft)] bg-[var(--panel-subtle)] p-4 text-sm text-[var(--muted)]">
-                  No fleet learnings logged yet.
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-
-        {activeTab === 'snapshots' && (
-          <div className={`${cardClass()} p-5 sm:p-6`}>
-            <SectionHeader eyebrow="Recovery" title="Recent Snapshots" detail={`${snapshots.length} snapshots`} />
-            <div className="space-y-3">
-              {snapshots.map((snapshot) => (
-                <div key={snapshot.id} className="rounded-[1rem] border border-[var(--border-soft)] bg-[var(--panel-subtle)] p-4">
-                  <div className="text-sm font-semibold text-[var(--text)]">{snapshot.title}</div>
-                  {snapshot.summary && <div className="mt-2 text-sm text-[var(--text)]">{snapshot.summary}</div>}
-                  <div className="mt-2 text-xs text-[var(--muted)]">{snapshot.agent_name} · {formatTime(snapshot.created_at)}</div>
-                </div>
-              ))}
-              {snapshots.length === 0 && (
-                <div className="rounded-[1rem] border border-dashed border-[var(--border-soft)] bg-[var(--panel-subtle)] p-4 text-sm text-[var(--muted)]">
-                  No snapshots created yet.
-                </div>
-              )}
-            </div>
-          </div>
-        )}
+        </div>)}
       </section>
     </div>
   )

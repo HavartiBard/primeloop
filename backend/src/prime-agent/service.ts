@@ -1,4 +1,5 @@
 import type pg from 'pg'
+import type { AgentHarness } from '../fleet-executor/harness.js'
 import { setPrimeCoordinatorProcessor, setPrimeCoordinatorQueue } from '../coordinator.js'
 import { getPrimeConfig, updatePrimeConfig } from './config.js'
 import { handlePrimeEvent } from './event-loop.js'
@@ -15,6 +16,8 @@ export interface PrimeAgentServiceOptions {
   queue?: PrimeQueue
   router?: LlmRouter
   checkpointStore?: import('../checkpoint.js').CheckpointStore
+  publishEvent?: (type: string, payload: Record<string, unknown>) => Promise<void>
+  getHarness?: (agentId: string) => AgentHarness | undefined
 }
 
 export function createPrimeAgentService(
@@ -58,7 +61,11 @@ export function createPrimeAgentService(
 
       const processEvent = async (event: Parameters<typeof handlePrimeEvent>[1]) => {
         try {
-          await handlePrimeEvent(pool, event, { router })
+          await handlePrimeEvent(pool, event, {
+            router,
+            publishEvent: options.publishEvent,
+            getHarness: options.getHarness ?? (() => undefined),
+          })
         } catch (error) {
           await updatePrimeConfig(pool, {
             status: 'running',

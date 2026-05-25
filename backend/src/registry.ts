@@ -12,6 +12,19 @@ export interface Provider {
   created_at: string
 }
 
+export interface AgentRuntimeConfig {
+  agent_id: string
+  protocol: string
+  auth_ref?: string
+  trust_zone: string
+  workspace_root?: string
+  limits: Record<string, unknown>
+  capability_profile_id?: string
+  tool_grant_defaults: Record<string, unknown>
+  created_at: string
+  updated_at: string
+}
+
 export type AgentTier = 'durable' | 'ephemeral'
 export type AgentState =
   | 'provisioning'
@@ -167,6 +180,11 @@ export async function getAgent(pool: pg.Pool, id: string): Promise<RegistryAgent
   return rows[0] ?? null
 }
 
+export async function getAgentByRole(pool: pg.Pool, role: string): Promise<RegistryAgent | null> {
+  const { rows } = await pool.query('SELECT * FROM agents WHERE role = $1 LIMIT 1', [role])
+  return rows[0] ?? null
+}
+
 export async function insertAgent(
   pool: pg.Pool,
   data: Omit<RegistryAgent, 'id' | 'created_at'>
@@ -233,10 +251,6 @@ export async function updateAgent(
     ['workspace_root', 'workspace_root'],
     ['system_prompt', 'system_prompt'],
     ['soul', 'soul'],
-    ['tier', 'tier'],
-    ['role', 'role'],
-    ['state', 'state'],
-    ['persona_file', 'persona_file'],
   ]
 
   for (const [key, col] of scalarFields) {
@@ -265,8 +279,57 @@ export async function updateAgent(
   return rows[0]
 }
 
+export async function getAgentRuntimeConfig(pool: pg.Pool, agentId: string): Promise<AgentRuntimeConfig | null> {
+  const { rows } = await pool.query('SELECT * FROM agent_runtime_configs WHERE agent_id = $1', [agentId])
+  return rows[0] ?? null
+}
+
+export async function upsertAgentRuntimeConfig(
+  pool: pg.Pool,
+  data: Omit<AgentRuntimeConfig, 'created_at' | 'updated_at'>
+): Promise<AgentRuntimeConfig> {
+  const { rows } = await pool.query(
+    `INSERT INTO agent_runtime_configs (
+      agent_id, protocol, auth_ref, trust_zone, workspace_root, limits,
+      capability_profile_id, tool_grant_defaults
+    )
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    ON CONFLICT (agent_id) DO UPDATE SET
+      protocol = EXCLUDED.protocol,
+      auth_ref = EXCLUDED.auth_ref,
+      trust_zone = EXCLUDED.trust_zone,
+      workspace_root = EXCLUDED.workspace_root,
+      limits = EXCLUDED.limits,
+      capability_profile_id = EXCLUDED.capability_profile_id,
+      tool_grant_defaults = EXCLUDED.tool_grant_defaults,
+      updated_at = now()
+    RETURNING *`,
+    [
+      data.agent_id,
+      data.protocol ?? 'generic-http',
+      data.auth_ref ?? null,
+      data.trust_zone ?? 'local',
+      data.workspace_root ?? null,
+      JSON.stringify(data.limits ?? {}),
+      data.capability_profile_id ?? null,
+      JSON.stringify(data.tool_grant_defaults ?? {}),
+    ],
+  )
+  return rows[0]
+}
+
 export async function deleteAgent(pool: pg.Pool, id: string): Promise<void> {
   await pool.query('DELETE FROM agents WHERE id = $1', [id])
+}
+
+export async function listCapabilityProfiles(pool: pg.Pool): Promise<CapabilityProfile[]> {
+  const { rows } = await pool.query('SELECT * FROM capability_profiles ORDER BY created_at')
+  return rows
+}
+
+export async function getCapabilityProfileByName(pool: pg.Pool, name: string): Promise<CapabilityProfile | null> {
+  const { rows } = await pool.query('SELECT * FROM capability_profiles WHERE name = $1', [name])
+  return rows[0] ?? null
 }
 
 export async function insertCapabilityProfile(
@@ -368,6 +431,31 @@ export async function insertToolGrant(
 export async function getToolGrant(pool: pg.Pool, id: string): Promise<ToolGrant | null> {
   const { rows } = await pool.query('SELECT * FROM tool_grants WHERE id = $1', [id])
   return rows[0] ?? null
+}
+
+export async function listToolGrants(
+  pool: pg.Pool,
+  filters: { agent_id?: string; delegation_id?: string; work_item_id?: string } = {},
+): Promise<ToolGrant[]> {
+  const clauses: string[] = []
+  const values: unknown[] = []
+
+  if (filters.agent_id) {
+    values.push(filters.agent_id)
+    clauses.push(`agent_id = $${values.length}`)
+  }
+  if (filters.delegation_id) {
+    values.push(filters.delegation_id)
+    clauses.push(`delegation_id = $${values.length}`)
+  }
+  if (filters.work_item_id) {
+    values.push(filters.work_item_id)
+    clauses.push(`work_item_id = $${values.length}`)
+  }
+
+  const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(' AND ')}` : ''
+  const { rows } = await pool.query(`SELECT * FROM tool_grants ${whereClause} ORDER BY created_at DESC`, values)
+  return rows
 }
 
 export async function upsertLocalCodexProvider(pool: pg.Pool): Promise<void> {

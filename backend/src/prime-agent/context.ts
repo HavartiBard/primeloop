@@ -1,7 +1,13 @@
 import type pg from 'pg'
+import type { AgentHarness } from '../fleet-executor/harness.js'
 import type { PrimeEvent } from './events.js'
 import { listAgents, type RegistryAgent } from '../registry.js'
 import type { Delegation, RuntimeEvent, ThreadMessage, WorkItem } from '../runtime.js'
+import {
+  buildRuntimeTruth,
+  type RuntimeTruth,
+  type RuntimeAvailability,
+} from '../routing/index.js'
 
 export interface PrimeLesson {
   id: string
@@ -20,6 +26,8 @@ export interface PrimeContext {
     workItems: WorkItem[]
     delegations: Delegation[]
   }
+  /** Runtime truth: dispatchable vs registered vs spawnable capacity (FR-001, FR-006) */
+  runtimeTruth: RuntimeTruth
   recentEvents: RuntimeEvent[]
   recentLessons: PrimeLesson[]
   threadMessages: ThreadMessage[]
@@ -41,14 +49,24 @@ const DELEGATION_LIMIT = 20
 const EVENT_LIMIT = 50
 const LESSON_LIMIT = 10
 
-export async function assemblePrimeContext(pool: pg.Pool, event: PrimeEvent): Promise<PrimeContext> {
-  const [agents, workItems, delegations, recentEvents, recentLessons, threadMessages] = await Promise.all([
+export interface AssembleContextDeps {
+  pool: pg.Pool
+  getHarness: (agentId: string) => AgentHarness | undefined
+}
+
+export async function assemblePrimeContext(
+  deps: AssembleContextDeps,
+  event: PrimeEvent,
+): Promise<PrimeContext> {
+  const { pool } = deps
+  const [agents, workItems, delegations, recentEvents, recentLessons, threadMessages, runtimeTruth] = await Promise.all([
     listEnabledAgents(pool),
     listRecentWorkItems(pool, WORK_ITEM_LIMIT),
     listRecentDelegations(pool, DELEGATION_LIMIT),
     listRecentRuntimeEvents(pool, EVENT_LIMIT),
     listRelevantLessons(pool, event, LESSON_LIMIT),
     listThreadMessagesForEvent(pool, event, 15),
+    buildRuntimeTruth({ pool, getHarness: deps.getHarness }),
   ])
 
   return {
@@ -58,6 +76,7 @@ export async function assemblePrimeContext(pool: pg.Pool, event: PrimeEvent): Pr
       workItems,
       delegations,
     },
+    runtimeTruth,
     recentEvents,
     recentLessons,
     threadMessages,

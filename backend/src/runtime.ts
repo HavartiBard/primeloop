@@ -340,6 +340,7 @@ export async function createWorkItem(
   data: Partial<WorkItem> & { title: string }
 ): Promise<WorkItem> {
   const ownerLabel = data.owner_label ?? (await getCoordinatorName(pool))
+  const title = normalizeWorkItemTitle(data.title, data.description)
   const { rows } = await pool.query(
     `INSERT INTO work_items (
       title, description, status, priority, lane, owner_agent_id, owner_label,
@@ -348,7 +349,7 @@ export async function createWorkItem(
     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
     RETURNING *`,
     [
-      data.title,
+      title,
       data.description ?? null,
       data.status ?? 'active',
       data.priority ?? 'normal',
@@ -367,7 +368,7 @@ export async function createWorkItem(
     actor: ownerLabel,
     thread_id: data.thread_id,
     work_item_id: rows[0].id,
-    payload: { title: data.title, status: rows[0].status },
+    payload: { title, status: rows[0].status },
   })
   return rows[0]
 }
@@ -375,6 +376,20 @@ export async function createWorkItem(
 async function getCoordinatorName(pool: pg.Pool): Promise<string> {
   const { rows } = await pool.query(`SELECT name FROM chief_profiles WHERE id = 'default'`)
   return rows[0]?.name?.trim() || 'Prime'
+}
+
+function normalizeWorkItemTitle(title: unknown, description?: string): string {
+  if (typeof title === 'string') {
+    const normalized = title.replace(/\s+/g, ' ').trim()
+    if (normalized) return normalized.length > 160 ? `${normalized.slice(0, 157)}...` : normalized
+  }
+
+  if (typeof description === 'string') {
+    const normalized = description.replace(/\s+/g, ' ').trim()
+    if (normalized) return normalized.length > 160 ? `${normalized.slice(0, 157)}...` : normalized
+  }
+
+  return 'Untitled work item'
 }
 
 export async function updateWorkItem(

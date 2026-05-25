@@ -12,13 +12,17 @@ import {
   insertAgent,
   updateAgent,
   deleteAgent,
+  getAgentRuntimeConfig,
+  upsertAgentRuntimeConfig,
   insertCapabilityProfile,
   getCapabilityProfile,
   insertCapabilityBundleAdapter,
   listCapabilityBundleAdapters,
   insertToolGrant,
   getToolGrant,
+  listToolGrants,
 } from '../src/registry.js'
+import { resolveToolGrant } from '../src/tool-grants.js'
 
 const TEST_DB = process.env.TEST_DATABASE_URL!
 process.env.SECRET_ENCRYPTION_KEY = 'a'.repeat(64)
@@ -220,10 +224,10 @@ describe('registry — agents', () => {
     expect(agent.workspace_root).toBeNull()
     expect(agent.system_prompt).toBeNull()
     expect(agent.soul).toBeNull()
-    expect(agent.tier).toBeNull()
-    expect(agent.role).toBeNull()
-    expect(agent.state).toBeNull()
-    expect(agent.persona_file).toBeNull()
+    expect(agent.tier).toBe('durable')
+    expect(agent.role).toBe('custom')
+    expect(agent.state).toBe('ready')
+    expect(agent.persona_file).toBe('AGENTS.md')
   })
 
   it('listAgents — returns inserted agents', async () => {
@@ -334,6 +338,51 @@ describe('registry — agents', () => {
 })
 
 describe('registry — capability profiles and tool grants', () => {
+  it('upsertAgentRuntimeConfig/getAgentRuntimeConfig stores capability profile linkage and defaults', async () => {
+    const agent = await insertAgent(pool, {
+      name: 'runtime-config-agent',
+      type: 'custom',
+      runtime_family: 'custom',
+      execution_mode: 'local',
+      capabilities: ['implementation'],
+      config: {},
+      enabled: true,
+    })
+    const profile = await insertCapabilityProfile(pool, {
+      name: 'implementation-default',
+      description: 'Implementation baseline',
+      platform_primitives: ['work_item.update'],
+      capability_bundles: ['repo.read'],
+      deny_rules: [],
+      approval_rules: {},
+      config: {},
+    })
+
+    const saved = await upsertAgentRuntimeConfig(pool, {
+      agent_id: agent.id,
+      protocol: 'generic-http',
+      trust_zone: 'local',
+      workspace_root: '/tmp/runtime-config-agent',
+      limits: { cpu: 2 },
+      capability_profile_id: profile.id,
+      tool_grant_defaults: {
+        task_scope: { allowed_bundles: ['repo.read'] },
+        approval_state: { approved: true },
+      },
+    })
+
+    expect(saved.capability_profile_id).toBe(profile.id)
+    expect(saved.tool_grant_defaults).toEqual({
+      task_scope: { allowed_bundles: ['repo.read'] },
+      approval_state: { approved: true },
+    })
+
+    const fetched = await getAgentRuntimeConfig(pool, agent.id)
+    expect(fetched).not.toBeNull()
+    expect(fetched!.capability_profile_id).toBe(profile.id)
+    expect(fetched!.workspace_root).toBe('/tmp/runtime-config-agent')
+  })
+
   it('insertCapabilityProfile/getCapabilityProfile persist a reusable profile', async () => {
     const profile = await insertCapabilityProfile(pool, {
       name: 'ephemeral-qa-default',
@@ -434,5 +483,163 @@ describe('registry — capability profiles and tool grants', () => {
       { kind: 'approval', bundle: 'deploy.production', reason: 'missing approval' },
     ])
     expect(fetched!.revocation_state).toBe('active')
+  })
+
+  it('resolveToolGrant persists distinct grants for the same routing capability by role and task scope', async () => {
+    const architect = await insertAgent(pool, {
+      name: 'architect-agent',
+      type: 'custom',
+      runtime_family: 'custom',
+      execution_mode: 'local',
+      capabilities: ['implementation'],
+      config: {},
+      enabled: true,
+      role: 'architect',
+      tier: 'durable',
+      state: 'idle',
+    })
+    const reviewer = await insertAgent(pool, {
+      name: 'qa-agent',
+      type: 'custom',
+      runtime_family: 'custom',
+      execution_mode: 'local',
+      capabilities: ['implementation'],
+      config: {},
+      enabled: true,
+      role: 'qa-specialist',
+      tier: 'ephemeral',
+      state: 'busy',
+    })
+    const profile = await insertCapabilityProfile(pool, {
+      name: 'implementation-bundle',
+      description: 'Shared implementation profile',
+      platform_primitives: ['work_item.update', 'approval.request'],
+      capability_bundles: ['repo.read', 'repo.write', 'deploy.production'],
+      deny_rules: [
+        {
+          kind: 'bundle',
+          bundle: 'repo.write',
+          reason: 'qa role is read-only',
+          roles: ['qa-specialist'],
+        },
+      ],
+      approval_rules: {
+        'deploy.production': 'approval-required',
+      },
+      config: {},
+    })
+    await insertCapabilityBundleAdapter(pool, {
+      capability_bundle: 'repo.read',
+      provider_adapter_kind: 'mcp_server',
+      provider_adapter_ref: 'gitea-read',
+      priority: 1,
+      config: { transport: 'http' },
+    })
+    await insertCapabilityBundleAdapter(pool, {
+      capability_bundle: 'repo.write',
+      provider_adapter_kind: 'mcp_server',
+      provider_adapter_ref: 'gitea-write',
+      priority: 1,
+      config: { transport: 'http' },
+    })
+    await insertCapabilityBundleAdapter(pool, {
+      capability_bundle: 'deploy.production',
+      provider_adapter_kind: 'mcp_server',
+      provider_adapter_ref: 'gitea-deploy',
+      priority: 1,
+      config: { transport: 'http' },
+    })
+
+    await upsertAgentRuntimeConfig(pool, {
+      agent_id: architect.id,
+      protocol: 'generic-http',
+      trust_zone: 'local',
+      workspace_root: '/tmp/architect',
+      limits: {},
+      capability_profile_id: profile.id,
+      tool_grant_defaults: {
+        approval_state: { approved: true },
+        environment_context: {
+          available_provider_adapters: {
+            'mcp_server:gitea-read': true,
+            'mcp_server:gitea-write': true,
+            'mcp_server:gitea-deploy': true,
+          },
+          provider_adapter_health: {
+            'mcp_server:gitea-read': 'healthy',
+            'mcp_server:gitea-write': 'healthy',
+            'mcp_server:gitea-deploy': 'healthy',
+          },
+        },
+      },
+    })
+
+    await upsertAgentRuntimeConfig(pool, {
+      agent_id: reviewer.id,
+      protocol: 'generic-http',
+      trust_zone: 'local',
+      workspace_root: '/tmp/qa',
+      limits: {},
+      capability_profile_id: profile.id,
+      tool_grant_defaults: {
+        task_scope: { allowed_primitives: ['work_item.update'] },
+        approval_state: { approved: false },
+        environment_context: {
+          available_provider_adapters: {
+            'mcp_server:gitea-read': true,
+            'mcp_server:gitea-write': true,
+            'mcp_server:gitea-deploy': true,
+          },
+          provider_adapter_health: {
+            'mcp_server:gitea-read': 'healthy',
+            'mcp_server:gitea-write': 'healthy',
+            'mcp_server:gitea-deploy': 'healthy',
+          },
+        },
+      },
+    })
+
+    const workItem = await pool.query(
+      `INSERT INTO work_items (title) VALUES ('Resolve grants') RETURNING id`,
+    )
+    const delegation = await pool.query(
+      `INSERT INTO delegations (work_item_id, capability, request)
+       VALUES ($1, $2, $3)
+       RETURNING id, capability`,
+      [workItem.rows[0].id, 'implementation', '{}'],
+    )
+
+    const architectGrant = await resolveToolGrant(pool, {
+      agent: architect,
+      routingCapability: 'implementation',
+      delegationId: delegation.rows[0].id,
+      workItemId: workItem.rows[0].id,
+      fallbackProviderAdapters: [],
+    })
+    const reviewerGrant = await resolveToolGrant(pool, {
+      agent: reviewer,
+      routingCapability: 'implementation',
+      delegationId: delegation.rows[0].id,
+      workItemId: workItem.rows[0].id,
+      fallbackProviderAdapters: [],
+    })
+
+    expect(architectGrant.granted_capability_bundles).toEqual(['repo.read', 'repo.write', 'deploy.production'])
+    expect(reviewerGrant.granted_capability_bundles).toEqual(['repo.read'])
+    expect(architectGrant.selected_provider_adapters).toHaveLength(3)
+    expect(reviewerGrant.selected_provider_adapters).toHaveLength(1)
+    expect(reviewerGrant.exclusion_reasons).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: 'deny', target: 'repo.write' }),
+        expect.objectContaining({ kind: 'approval', target: 'deploy.production' }),
+      ]),
+    )
+
+    const byAgent = await listToolGrants(pool, { agent_id: reviewer.id })
+    const byDelegation = await listToolGrants(pool, { delegation_id: delegation.rows[0].id })
+    const byWorkItem = await listToolGrants(pool, { work_item_id: workItem.rows[0].id })
+    expect(byAgent.map((row) => row.id)).toContain(reviewerGrant.id)
+    expect(byDelegation.map((row) => row.id)).toEqual(expect.arrayContaining([architectGrant.id, reviewerGrant.id]))
+    expect(byWorkItem.map((row) => row.id)).toEqual(expect.arrayContaining([architectGrant.id, reviewerGrant.id]))
   })
 })

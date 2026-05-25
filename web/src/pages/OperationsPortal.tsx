@@ -38,7 +38,7 @@ const DEFAULT_PROFILE: PrimeProfile = {
 export function OperationsPortal() {
   const { approvals } = useApprovals()
   const { agents } = useAgentRegistry()
-  const { connected } = useWebSocket('/ws')
+  const { connected, events } = useWebSocket('/ws')
 
   const { data: healthData = [] } = useQuery({
     queryKey: ['agents', 'health'],
@@ -105,6 +105,7 @@ export function OperationsPortal() {
         <CollaborationRoomsView
           primeName={profile.name}
           connected={connected}
+          events={events}
           agents={agents}
           healthData={healthData}
           workItems={workItems}

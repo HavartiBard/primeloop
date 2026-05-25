@@ -69,11 +69,37 @@ describe('OpenCodeProcessManager', () => {
       if (sql.startsWith('SELECT * FROM providers')) {
         return { rows: [{ id: 'provider-1', type: 'llm', model: 'anthropic/claude-sonnet-4-5', base_url: 'https://proxy.example.com', api_key: 'encrypted' }] }
       }
+      if (sql.startsWith('SELECT * FROM agent_runtime_configs WHERE agent_id = $1')) {
+        return { rows: [] }
+      }
       if (sql.startsWith('SELECT token FROM agent_tokens')) {
         return { rows: [] }
       }
       if (sql.startsWith('INSERT INTO agent_tokens')) {
         return { rows: [{ token: 'agent-token-1' }] }
+      }
+      if (sql.startsWith('INSERT INTO tool_grants')) {
+        return {
+          rows: [{
+            id: 'grant-1',
+            agent_id: 'agent-1',
+            delegation_id: null,
+            work_item_id: null,
+            capability_profile_id: null,
+            routing_capability: 'implementation',
+            granted_primitives: [],
+            granted_capability_bundles: [],
+            selected_provider_adapters: [{ kind: 'http', ref: 'gitea' }],
+            exclusion_reasons: [{ kind: 'missing-profile', target: 'implementation', reason: 'no capability profile assigned' }],
+            task_scope: {},
+            approval_state: {},
+            environment_context: {},
+            revocation_state: 'active',
+            revoked_at: null,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          }],
+        }
       }
       if (sql.includes('FROM mcp_servers ms')) {
         return { rows: [{ id: 'mcp-1', name: 'gitea', description: 'Pull requests and issues', type: 'http', url: 'http://gitea:3000/mcp', env_vars: { GITEA_TOKEN: 'secret' } }] }
@@ -161,8 +187,34 @@ describe('OpenCodeProcessManager', () => {
       if (sql.startsWith('SELECT * FROM providers')) {
         return { rows: [] }
       }
+      if (sql.startsWith('SELECT * FROM agent_runtime_configs WHERE agent_id = $1')) {
+        return { rows: [] }
+      }
       if (sql.startsWith('SELECT token FROM agent_tokens')) {
         return { rows: [{ token: 'agent-token-2' }] }
+      }
+      if (sql.startsWith('INSERT INTO tool_grants')) {
+        return {
+          rows: [{
+            id: 'grant-2',
+            agent_id: 'agent-1',
+            delegation_id: null,
+            work_item_id: null,
+            capability_profile_id: null,
+            routing_capability: 'implementation',
+            granted_primitives: [],
+            granted_capability_bundles: [],
+            selected_provider_adapters: [],
+            exclusion_reasons: [{ kind: 'missing-profile', target: 'implementation', reason: 'no capability profile assigned' }],
+            task_scope: {},
+            approval_state: {},
+            environment_context: {},
+            revocation_state: 'active',
+            revoked_at: null,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          }],
+        }
       }
       if (sql.includes('FROM mcp_servers ms')) {
         return { rows: [] }
@@ -206,7 +258,31 @@ describe('OpenCodeProcessManager', () => {
         return { rows: [{ ...createAgent({ worktree_path: path.join(rootDir, 'agents', 'builder-one') }), state: 'idle' }] }
       }
       if (sql.startsWith('SELECT * FROM providers')) return { rows: [] }
+      if (sql.startsWith('SELECT * FROM agent_runtime_configs WHERE agent_id = $1')) return { rows: [] }
       if (sql.startsWith('SELECT token FROM agent_tokens')) return { rows: [{ token: 'agent-token-3' }] }
+      if (sql.startsWith('INSERT INTO tool_grants')) {
+        return {
+          rows: [{
+            id: 'grant-3',
+            agent_id: 'agent-1',
+            delegation_id: null,
+            work_item_id: null,
+            capability_profile_id: null,
+            routing_capability: 'implementation',
+            granted_primitives: [],
+            granted_capability_bundles: [],
+            selected_provider_adapters: [],
+            exclusion_reasons: [{ kind: 'missing-profile', target: 'implementation', reason: 'no capability profile assigned' }],
+            task_scope: {},
+            approval_state: {},
+            environment_context: {},
+            revocation_state: 'active',
+            revoked_at: null,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          }],
+        }
+      }
       if (sql.includes('FROM mcp_servers ms')) return { rows: [] }
       throw new Error(`unexpected query: ${sql}`)
     })
@@ -290,11 +366,64 @@ describe('OpenCodeProcessManager', () => {
       if (sql.startsWith('SELECT * FROM providers')) {
         return { rows: [] }
       }
+      if (sql.startsWith('SELECT * FROM agent_runtime_configs WHERE agent_id = $1')) {
+        return { rows: [] }
+      }
       if (sql.startsWith('SELECT token FROM agent_tokens')) {
         return { rows: [{ token: 'agent-token-4' }] }
       }
+      if (sql.startsWith('INSERT INTO tool_grants')) {
+        return {
+          rows: [{
+            id: 'grant-4',
+            agent_id: durable.id,
+            delegation_id: null,
+            work_item_id: null,
+            capability_profile_id: null,
+            routing_capability: 'implementation',
+            granted_primitives: [],
+            granted_capability_bundles: [],
+            selected_provider_adapters: [],
+            exclusion_reasons: [{ kind: 'missing-profile', target: 'implementation', reason: 'no capability profile assigned' }],
+            task_scope: {},
+            approval_state: {},
+            environment_context: {},
+            revocation_state: 'active',
+            revoked_at: null,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          }],
+        }
+      }
       if (sql.includes('FROM mcp_servers ms')) {
         return { rows: [] }
+      }
+      // Bootstrap queries for durable staff
+      if (sql.startsWith('SELECT * FROM capability_profiles WHERE name = $1')) {
+        return { rows: [] }
+      }
+      if (sql.startsWith('INSERT INTO capability_profiles')) {
+        return { rows: [{ id: 'profile-1', name: 'architect-default' }] }
+      }
+      if (sql.startsWith('SELECT * FROM agents WHERE role = $1')) {
+        return { rows: [] }
+      }
+      if (sql.startsWith('INSERT INTO agents')) {
+        return {
+          rows: [{
+            ...durable,
+            id: 'agent-bootstrapped',
+            role: 'architect',
+            tier: 'durable',
+            state: 'provisioning',
+          }],
+        }
+      }
+      if (sql.startsWith('INSERT INTO agent_runtime_configs')) {
+        return { rows: [{ agent_id: durable.id, capability_profile_id: 'profile-1' }] }
+      }
+      if (sql.startsWith('UPDATE capability_profiles SET')) {
+        return { rows: [], rowCount: 1 }
       }
       throw new Error(`unexpected query: ${sql}`)
     })
@@ -325,5 +454,82 @@ describe('OpenCodeProcessManager', () => {
       expect.stringContaining('UPDATE agents'),
       [ephemeral.id, 'error'],
     )
+  })
+
+  it('writes only granted control-plane primitives to TOOLS.md (Slice 4)', async () => {
+    const worktreePath = path.join(rootDir, 'agents', 'filtered-agent')
+    const child = { kill: vi.fn().mockReturnValue(true), on: vi.fn(), stdout: null, stderr: null }
+    const spawnFn = vi.fn().mockReturnValue(child)
+    const fetchFn = vi.fn().mockResolvedValue(new Response(JSON.stringify({ status: 'ok' }), { status: 200 }))
+    const execFileFn = vi.fn().mockResolvedValue({ stdout: '', stderr: '' })
+    const query = vi.fn(async (sql: string) => {
+      if (isLifecycleUpdate(sql)) return { rows: [], rowCount: 1 }
+      if (isRuntimeEventInsert(sql)) return { rows: [], rowCount: 1 }
+      if (sql.startsWith('SELECT * FROM agents WHERE id = $1')) {
+        return { rows: [createAgent({ worktree_path: worktreePath, state: 'idle' })] }
+      }
+      if (sql.startsWith('SELECT * FROM providers')) return { rows: [] }
+      if (sql.startsWith('SELECT * FROM agent_runtime_configs WHERE agent_id = $1')) return { rows: [] }
+      if (sql.startsWith('SELECT token FROM agent_tokens')) return { rows: [{ token: 'agent-token-filtered' }] }
+      if (sql.startsWith('INSERT INTO tool_grants')) {
+        return {
+          rows: [{
+            id: 'grant-filtered',
+            agent_id: 'agent-1',
+            delegation_id: null,
+            work_item_id: null,
+            capability_profile_id: null,
+            routing_capability: 'implementation',
+            granted_primitives: ['delegate', 'update_work_item'],
+            granted_capability_bundles: ['repo.read'],
+            selected_provider_adapters: [],
+            exclusion_reasons: [{ kind: 'missing-profile', target: 'implementation', reason: 'no capability profile assigned' }],
+            task_scope: {},
+            approval_state: {},
+            environment_context: {},
+            revocation_state: 'active',
+            revoked_at: null,
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+          }],
+        }
+      }
+      if (sql.includes('FROM mcp_servers ms')) return { rows: [] }
+      throw new Error(`unexpected query: ${sql}`)
+    })
+    const pool = { query } as unknown as pg.Pool
+    const manager = new OpenCodeProcessManager(pool, {
+      repoRoot: path.join(rootDir, 'repo'),
+      agentsRoot: path.join(rootDir, 'agents'),
+      spawnFn: spawnFn as any,
+      fetchFn: fetchFn as any,
+      execFileFn: execFileFn as any,
+      sleepFn: async () => {},
+    })
+
+    await manager.syncAgent(createAgent({ worktree_path: worktreePath }))
+
+    const toolsMd = await readFile(path.join(worktreePath, 'TOOLS.md'), 'utf8')
+    const controlPlaneToolsJson = await readFile(path.join(worktreePath, 'control-plane-tools.json'), 'utf8')
+
+    // Granted primitives should be present
+    expect(toolsMd).toContain('delegate_to_agent')
+    expect(toolsMd).toContain('update_work_item')
+    expect(controlPlaneToolsJson).toContain('"name": "delegate_to_agent"')
+    expect(controlPlaneToolsJson).toContain('"name": "update_work_item"')
+
+    // Non-granted primitives should be absent
+    expect(toolsMd).not.toContain('memory_search')
+    expect(toolsMd).not.toContain('soul_read')
+    expect(toolsMd).not.toContain('snapshot_create')
+    expect(controlPlaneToolsJson).not.toContain('"name": "memory_search"')
+    expect(controlPlaneToolsJson).not.toContain('"name": "soul_read"')
+
+    // Prime-only tools should never appear for non-Prime agents
+    expect(toolsMd).not.toContain('query_fleet_learnings')
+    expect(toolsMd).not.toContain('resolve_approval')
+    expect(toolsMd).not.toContain('publish_pattern')
+    expect(toolsMd).not.toContain('update_agent_soul')
+    expect(controlPlaneToolsJson).not.toContain('"name": "query_fleet_learnings"')
   })
 })

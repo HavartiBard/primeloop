@@ -17,7 +17,14 @@ const sessionMocks = vi.hoisted(() => ({
 
 const runtimeMocks = vi.hoisted(() => ({
   appendThreadMessage: vi.fn(),
+  createDelegation: vi.fn(),
+  createWorkItem: vi.fn(),
   getPrimeProfile: vi.fn(),
+  insertRuntimeEvent: vi.fn(),
+}))
+
+const registryMocks = vi.hoisted(() => ({
+  getAgentByRole: vi.fn(),
 }))
 
 const workspaceMocks = vi.hoisted(() => ({
@@ -48,7 +55,14 @@ vi.mock('../../src/prime-agent/session.js', async () => {
 
 vi.mock('../../src/runtime.js', () => ({
   appendThreadMessage: runtimeMocks.appendThreadMessage,
+  createDelegation: runtimeMocks.createDelegation,
+  createWorkItem: runtimeMocks.createWorkItem,
   getPrimeProfile: runtimeMocks.getPrimeProfile,
+  insertRuntimeEvent: runtimeMocks.insertRuntimeEvent,
+}))
+
+vi.mock('../../src/registry.js', () => ({
+  getAgentByRole: registryMocks.getAgentByRole,
 }))
 
 vi.mock('../../src/workspace.js', () => ({
@@ -69,7 +83,17 @@ vi.mock('../../src/prime-agent/modules/registry.js', async () => {
 import { handlePrimeEvent, PrimeEventLoopError } from '../../src/prime-agent/event-loop.js'
 import { listPrimeModules } from '../../src/prime-agent/modules/registry.js'
 
-const pool = { query: vi.fn().mockResolvedValue({ rows: [], rowCount: 1 }) } as unknown as pg.Pool
+const pool = {
+  query: vi.fn(async (sql: string) => {
+    if (sql.includes('SELECT * FROM agents')) return { rows: [], rowCount: 0 }
+    if (sql.includes('FROM agent_heartbeat')) return { rows: [], rowCount: 0 }
+    if (sql.includes('prime_agent_config')) return { rows: [{ config: {} }], rowCount: 1 }
+    if (sql.includes('routing_outcomes')) return { rows: [{ count: 0 }], rowCount: 1 }
+    if (sql.includes('INSERT INTO routing_outcomes')) return { rows: [], rowCount: 1 }
+    if (sql.includes('INSERT INTO routing_requests')) return { rows: [], rowCount: 1 }
+    return { rows: [], rowCount: 0 }
+  }),
+} as unknown as pg.Pool
 
 describe('prime-agent event loop', () => {
   beforeEach(() => {
@@ -81,6 +105,7 @@ describe('prime-agent event loop', () => {
       ...modules.map((module) => ({ module, rollout_mode: 'active' as const, config: {} })),
     ])
     runtimeMocks.getPrimeProfile.mockResolvedValue({ name: 'Prime Agent' })
+    registryMocks.getAgentByRole.mockResolvedValue(null)
     workspaceMocks.loadPrimeWorkspaceTemplates.mockResolvedValue({
       effectiveRoot: '/workspace/prime',
       revision: 'abc123',
@@ -109,6 +134,7 @@ describe('prime-agent event loop', () => {
       recentEvents: [],
       recentLessons: [],
       threadMessages: [],
+      runtimeTruth: { dispatchableAgents: [], registeredOnlyAgents: [], spawnableTemplates: [], capabilityGaps: [], allRuntimeAvailability: [] },
     })
     actionMocks.dispatchPrimeActions.mockResolvedValue([
       {
@@ -157,7 +183,7 @@ describe('prime-agent event loop', () => {
           sender: 'james',
         },
       },
-      { router }
+      { router, getHarness: () => undefined }
     )
 
     expect(sessionMocks.startPrimeSession).toHaveBeenCalledWith(
@@ -213,11 +239,18 @@ describe('prime-agent event loop', () => {
       recentEvents: [],
       recentLessons: [],
       threadMessages: [],
+      runtimeTruth: { dispatchableAgents: [], registeredOnlyAgents: [], spawnableTemplates: [], capabilityGaps: [], allRuntimeAvailability: [] },
     })
     sessionMocks.failPrimeSession.mockResolvedValue({
       id: 'session-2',
       status: 'failed',
       error: 'router exploded',
+    })
+    runtimeMocks.createWorkItem.mockResolvedValue({
+      id: 'investigation-1',
+      title: 'Investigate Prime failure: router exploded',
+      description: 'desc',
+      status: 'active',
     })
 
     const router = {
@@ -233,13 +266,104 @@ describe('prime-agent event loop', () => {
             triggered_at: '2026-05-09T23:00:00.000Z',
           },
         },
-        { router }
+        { router, getHarness: () => undefined }
       )
     ).rejects.toBeInstanceOf(PrimeEventLoopError)
 
     expect(sessionMocks.failPrimeSession).toHaveBeenCalledWith(pool, 'session-2', 'router exploded')
     expect(sessionMocks.completePrimeSession).not.toHaveBeenCalled()
     expect(runtimeMocks.appendThreadMessage).not.toHaveBeenCalled()
+  })
+
+  it('opens an SRE investigation when a prime message turn fails hard', async () => {
+    // Provide routing data: SRE agent with fresh heartbeat so routing finds dispatchable target
+    ;(pool.query as ReturnType<typeof vi.fn>).mockImplementation(async (sql: string) => {
+      if (sql.includes('SELECT * FROM agents')) {
+        return { rows: [{ id: 'sre-1', name: 'SRE', type: 'sre', runtime_family: 'local', execution_mode: 'managed', capabilities: ['incident_response', 'diagnostics'], config: {}, enabled: true, role: 'sre' }], rowCount: 1 }
+      }
+      if (sql.includes('FROM agent_heartbeat')) {
+        return { rows: [{ agent: 'SRE', last_seen: new Date().toISOString(), healthy: true }], rowCount: 1 }
+      }
+      if (sql.includes('prime_agent_config')) return { rows: [{ config: {} }], rowCount: 1 }
+      if (sql.includes('routing_outcomes')) return { rows: [{ count: 0 }], rowCount: 1 }
+      if (sql.includes('INSERT INTO routing_outcomes')) return { rows: [], rowCount: 1 }
+      if (sql.includes('INSERT INTO routing_requests')) return { rows: [], rowCount: 1 }
+      return { rows: [], rowCount: 0 }
+    })
+
+    sessionMocks.startPrimeSession.mockResolvedValue({
+      id: 'session-6',
+      status: 'running',
+    })
+    contextMocks.assemblePrimeContext.mockResolvedValue({
+      trigger: {
+        type: 'prime.message',
+        payload: {
+          thread_id: 'thread-1',
+          message_id: 'message-1',
+          content: 'Investigate this failure',
+          sender: 'james',
+        },
+      },
+      fleet: { agents: [], workItems: [], delegations: [] },
+      recentEvents: [],
+      recentLessons: [],
+      threadMessages: [],
+      runtimeTruth: { dispatchableAgents: [], registeredOnlyAgents: [], spawnableTemplates: [], capabilityGaps: [], allRuntimeAvailability: [] },
+    })
+    sessionMocks.failPrimeSession.mockResolvedValue({
+      id: 'session-6',
+      status: 'failed',
+      error: 'router exploded',
+    })
+    runtimeMocks.createWorkItem.mockResolvedValue({
+      id: 'investigation-2',
+      title: 'Investigate Prime failure: router exploded',
+      description: 'desc',
+      status: 'active',
+    })
+    runtimeMocks.createDelegation.mockResolvedValue({
+      id: 'delegation-2',
+      work_item_id: 'investigation-2',
+      status: 'queued',
+    })
+
+    const router = {
+      decide: vi.fn().mockRejectedValue(new Error('router exploded')),
+    }
+
+    await expect(
+      handlePrimeEvent(
+        pool,
+        {
+          type: 'prime.message',
+          payload: {
+            thread_id: 'thread-1',
+            message_id: 'message-1',
+            content: 'Investigate this failure',
+            sender: 'james',
+          },
+        },
+        { router, getHarness: () => undefined }
+      )
+    ).rejects.toBeInstanceOf(PrimeEventLoopError)
+
+    expect(runtimeMocks.createWorkItem).toHaveBeenCalled()
+    expect(runtimeMocks.createDelegation).toHaveBeenCalledWith(
+      pool,
+      expect.objectContaining({
+        work_item_id: 'investigation-2',
+        to_agent_id: 'sre-1',
+        capability: 'sre',
+      })
+    )
+    expect(runtimeMocks.appendThreadMessage).toHaveBeenCalledWith(
+      pool,
+      'thread-1',
+      expect.objectContaining({
+        content: 'I could not process that yet: router exploded I opened investigation work item investigation-2 and routed it to SRE.',
+      })
+    )
   })
 
   it('lowercases action reason when base does not end with terminal punctuation', async () => {
@@ -261,6 +385,7 @@ describe('prime-agent event loop', () => {
       recentEvents: [],
       recentLessons: [],
       threadMessages: [],
+      runtimeTruth: { dispatchableAgents: [], registeredOnlyAgents: [], spawnableTemplates: [], capabilityGaps: [], allRuntimeAvailability: [] },
     })
     actionMocks.dispatchPrimeActions.mockResolvedValue([
       {
@@ -310,7 +435,7 @@ describe('prime-agent event loop', () => {
           sender: 'james',
         },
       },
-      { router }
+      { router, getHarness: () => undefined }
     )
 
     // Base does not end with punctuation, so action reason stays lowercase
@@ -321,6 +446,125 @@ describe('prime-agent event loop', () => {
         role: 'assistant',
         sender: 'Prime Agent',
         content: "I'm handing this off delegate the task",
+      })
+    )
+  })
+
+  it('includes blocker remediation in the chat response when only no_op actions remain', async () => {
+    // Provide routing data: SRE agent with fresh heartbeat so investigation routes to dispatchable target
+    ;(pool.query as ReturnType<typeof vi.fn>).mockImplementation(async (sql: string) => {
+      if (sql.includes('SELECT * FROM agents')) {
+        return { rows: [{ id: 'sre-1', name: 'SRE', type: 'sre', runtime_family: 'local', execution_mode: 'managed', capabilities: ['incident_response', 'diagnostics'], config: {}, enabled: true, role: 'sre' }], rowCount: 1 }
+      }
+      if (sql.includes('FROM agent_heartbeat')) {
+        return { rows: [{ agent: 'SRE', last_seen: new Date().toISOString(), healthy: true }], rowCount: 1 }
+      }
+      if (sql.includes('prime_agent_config')) return { rows: [{ config: {} }], rowCount: 1 }
+      if (sql.includes('routing_outcomes')) return { rows: [{ count: 0 }], rowCount: 1 }
+      if (sql.includes('INSERT INTO routing_outcomes')) return { rows: [], rowCount: 1 }
+      if (sql.includes('INSERT INTO routing_requests')) return { rows: [], rowCount: 1 }
+      return { rows: [], rowCount: 0 }
+    })
+
+    sessionMocks.startPrimeSession.mockResolvedValue({
+      id: 'session-5',
+      status: 'running',
+    })
+    contextMocks.assemblePrimeContext.mockResolvedValue({
+      trigger: {
+        type: 'prime.message',
+        payload: {
+          thread_id: 'thread-1',
+          message_id: 'message-1',
+          content: 'Clean up stale cards',
+          sender: 'james',
+        },
+      },
+      fleet: { agents: [], workItems: [], delegations: [] },
+      recentEvents: [],
+      recentLessons: [],
+      threadMessages: [],
+      runtimeTruth: { dispatchableAgents: [], registeredOnlyAgents: [], spawnableTemplates: [], capabilityGaps: [], allRuntimeAvailability: [] },
+    })
+    actionMocks.dispatchPrimeActions.mockResolvedValue([
+      {
+        action: {
+          type: 'no_op',
+          payload: {},
+          reason: "No enabled agent advertises 'fleet_diagnostic'. Suggested fix: add capability 'fleet_diagnostic' to SRE or create a new agent for it.",
+        },
+        status: 'dispatched',
+      },
+    ])
+    runtimeMocks.appendThreadMessage.mockResolvedValue({
+      id: 'thread-msg-5',
+    })
+    runtimeMocks.createWorkItem.mockResolvedValue({
+      id: 'blocker-investigation-1',
+      title: 'Investigate Prime blocker: missing capability',
+      description: 'desc',
+      status: 'active',
+    })
+    runtimeMocks.createDelegation.mockResolvedValue({
+      id: 'blocker-delegation-1',
+      work_item_id: 'blocker-investigation-1',
+      status: 'queued',
+    })
+    registryMocks.getAgentByRole.mockResolvedValue({
+      id: 'sre-1',
+      enabled: true,
+      name: 'SRE',
+    })
+    sessionMocks.completePrimeSession.mockResolvedValue({
+      id: 'session-5',
+      status: 'completed',
+      reasoning_summary: 'Blocked on missing capability.',
+    })
+
+    const router = {
+      decide: vi.fn().mockResolvedValue({
+        reasoning: 'Blocked on missing capability.',
+        response: 'I found the blocker.',
+        actions: [
+          {
+            type: 'delegate',
+            payload: {},
+            reason: 'delegate it',
+          },
+        ],
+        token_count: 10,
+        provider_used: 'provider-1',
+        model_used: 'mock-model',
+      }),
+    }
+
+    await handlePrimeEvent(
+      pool,
+      {
+        type: 'prime.message',
+        payload: {
+          thread_id: 'thread-1',
+          message_id: 'message-1',
+          content: 'Clean up stale cards',
+          sender: 'james',
+        },
+      },
+      { router, getHarness: () => undefined }
+    )
+
+    expect(runtimeMocks.appendThreadMessage).toHaveBeenCalledWith(
+      pool,
+      'thread-1',
+      expect.objectContaining({
+        content: "I found the blocker. No enabled agent advertises 'fleet_diagnostic'. Suggested fix: add capability 'fleet_diagnostic' to SRE or create a new agent for it. I opened investigation work item blocker-investigation-1 and routed it to SRE.",
+      })
+    )
+    expect(runtimeMocks.createDelegation).toHaveBeenCalledWith(
+      pool,
+      expect.objectContaining({
+        work_item_id: 'blocker-investigation-1',
+        to_agent_id: 'sre-1',
+        capability: 'sre',
       })
     )
   })
@@ -351,6 +595,7 @@ describe('prime-agent event loop', () => {
       recentEvents: [],
       recentLessons: [],
       threadMessages: [],
+      runtimeTruth: { dispatchableAgents: [], registeredOnlyAgents: [], spawnableTemplates: [], capabilityGaps: [], allRuntimeAvailability: [] },
     })
     sessionMocks.failPrimeSession.mockResolvedValue({
       id: 'session-3',
@@ -383,7 +628,7 @@ describe('prime-agent event loop', () => {
             triggered_at: '2026-05-19T00:00:00.000Z',
           },
         },
-        { router }
+        { router, getHarness: () => undefined }
       )
     ).rejects.toBeInstanceOf(PrimeEventLoopError)
 

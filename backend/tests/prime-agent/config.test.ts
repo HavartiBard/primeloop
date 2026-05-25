@@ -36,7 +36,25 @@ describe('prime-agent config service', () => {
     expect(config.provider_routing).toEqual({})
     expect(config.cost_controls).toEqual({})
     expect(config.git_store).toEqual({})
+    expect(config.model_preferences).toEqual({})
     expect(config.status).toBe('stopped')
+  })
+
+  it('migrates legacy provider_routing to model_preferences on first read', async () => {
+    // Seed legacy provider_routing data
+    await pool.query(
+      `UPDATE prime_agent_config SET provider_routing = $1`,
+      [JSON.stringify({ planning: [{ provider_id: 'p1', model: 'claude-sonnet' }, { provider_id: 'p2', model: 'gpt-4o' }] })],
+    )
+
+    const config = await getPrimeConfig(pool)
+
+    expect(config.model_preferences).toEqual({
+      planning: {
+        primary: { provider_id: 'p1', model: 'claude-sonnet' },
+        fallbacks: [{ provider_id: 'p2', model: 'gpt-4o' }],
+      },
+    })
   })
 
   it('updates scalar and json fields and returns the typed row', async () => {
@@ -63,5 +81,62 @@ describe('prime-agent config service', () => {
     expect(updated.git_store).toEqual({ provider: 'gitea', branch: 'main' })
     expect(updated.status).toBe('running')
     expect(updated.last_error).toBe('previous failure')
+  })
+
+  it('updates model_preferences and returns the typed row', async () => {
+    const updated = await updatePrimeConfig(pool, {
+      model_preferences: {
+        planning: {
+          primary: { provider_id: 'anthropic-main', model: 'claude-sonnet-4' },
+          fallbacks: [
+            { provider_id: 'openai-main', model: 'gpt-4o' },
+            { provider_id: 'ollama-local', model: 'qwen3-32b' },
+          ],
+        },
+        routing: {
+          primary: { provider_id: 'openai-main', model: 'gpt-4o-mini' },
+          fallbacks: [],
+        },
+      },
+    })
+
+    expect(updated.model_preferences).toEqual({
+      planning: {
+        primary: { provider_id: 'anthropic-main', model: 'claude-sonnet-4' },
+        fallbacks: [
+          { provider_id: 'openai-main', model: 'gpt-4o' },
+          { provider_id: 'ollama-local', model: 'qwen3-32b' },
+        ],
+      },
+      routing: {
+        primary: { provider_id: 'openai-main', model: 'gpt-4o-mini' },
+        fallbacks: [],
+      },
+    })
+  })
+
+  it('resolveModelRoutes returns preference chain and falls back to legacy', async () => {
+    const { resolveModelRoutes } = await import('../../src/prime-agent/config.js')
+
+    // Test with model_preferences set
+    await updatePrimeConfig(pool, {
+      model_preferences: {
+        planning: {
+          primary: { provider_id: 'a', model: 'm1' },
+          fallbacks: [{ provider_id: 'b', model: 'm2' }],
+        },
+      },
+    })
+
+    const config = await getPrimeConfig(pool)
+    const routes = resolveModelRoutes(config, 'planning')
+    expect(routes).toEqual([
+      { provider_id: 'a', model: 'm1' },
+      { provider_id: 'b', model: 'm2' },
+    ])
+
+    // Test fallback to legacy provider_routing when no preferences for this function
+    const routingRoutes = resolveModelRoutes(config, 'routing')
+    expect(routingRoutes).toEqual([])
   })
 })

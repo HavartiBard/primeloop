@@ -14,9 +14,9 @@
 
 ## Current direction
 
-The original "circuit canvas" concept has been abandoned.
+The original "circuit canvas as the primary workspace" concept has been abandoned for v1.
 
-The Operations Portal is now a room-centric collaboration view:
+The Operations Portal is now a room-centric collaboration view as the primary operating surface:
 
 - left drawer: collaboration rooms sorted by activity
 - room status indicators:
@@ -30,7 +30,9 @@ The Operations Portal is now a room-centric collaboration view:
   - `Signals`
   - `Artifacts`
 
-This is the current product direction and should be continued instead of reviving the old canvas/map concept.
+This is the current v1 product direction.
+
+The circuit canvas is still in scope as a secondary relationship view over work, agents, approvals, and artifacts. OpenSwarm-style live chat/tool interaction inside the canvas is deferred to Phase 2.
 
 ## Key files
 

@@ -26,6 +26,8 @@ import type {
   PrimeSession,
   PrimeModuleConfig,
   PrimeModuleConfigAudit,
+  PrimeConfig,
+  PrimeConfigPatch,
   AgentWorkspaceStatus,
   AgentWorkspaceFile,
   PrimeMessageResult,
@@ -294,6 +296,25 @@ export async function fetchPrimeModules(): Promise<PrimeModuleConfig[]> {
   const res = await fetch(`${API_BASE}/prime-agent/modules`)
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   return res.json() as Promise<PrimeModuleConfig[]>
+}
+
+export async function fetchPrimeConfig(): Promise<PrimeConfig> {
+  const res = await fetch(`${API_BASE}/prime-agent/config`)
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json() as Promise<PrimeConfig>
+}
+
+export async function updatePrimeConfig(patch: PrimeConfigPatch): Promise<PrimeConfig> {
+  const res = await fetch(`${API_BASE}/prime-agent/config`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(patch),
+  })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new Error(body?.error ?? `HTTP ${res.status}`)
+  }
+  return res.json() as Promise<PrimeConfig>
 }
 
 export async function updatePrimeModule(

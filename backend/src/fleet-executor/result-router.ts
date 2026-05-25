@@ -2,7 +2,11 @@ import type pg from 'pg'
 import { appendThreadMessage, type Delegation } from '../runtime.js'
 import type { PrimeQueue } from '../prime-agent/queue.js'
 import type { AgentState } from '../registry.js'
+import { retireEphemeralAgent } from '../ephemeral-templates.js'
 import type { TaskResult } from './harness.js'
+import { transitionWorkItemStatus, updateWorkItem, getWorkItem } from '../goals/work-item-service.js'
+import { broadcastEvent } from '../ws/control-plane-events.js'
+import { createRecoveryEvent, selectRecoveryAction } from '../recovery/service.js'
 
 export interface ResultRouterDeps {
   pool: pg.Pool
@@ -12,6 +16,108 @@ export interface ResultRouterDeps {
 export type ResultOutcome =
   | { success: true; result: TaskResult }
   | { success: false; error: string }
+
+interface DelegationResult {
+  success: boolean
+  summary?: string
+  error?: string
+  blocked?: boolean
+  blockReason?: string
+}
+
+/**
+ * Update WorkItem status when a delegated task completes, fails, or blocks.
+ * Broadcasts work-item.updated events for each transition.
+ */
+export async function handleDelegationResult(
+  pool: pg.Pool,
+  workItemId: string,
+  result: DelegationResult,
+): Promise<void> {
+  const workItem = await getWorkItem(pool, workItemId)
+  if (!workItem) return
+
+  if (result.success) {
+    await transitionWorkItemStatus(pool, workItemId, 'completed')
+    if (result.summary) {
+      await updateWorkItem(pool, workItemId, { outcomeSummary: result.summary })
+    }
+    broadcastEvent({
+      type: 'work-item.updated',
+      occurredAt: new Date().toISOString(),
+      goalId: workItem.goalId,
+      payload: { workItemId, status: 'completed', outcomeSummary: result.summary },
+    })
+  } else if (result.blocked) {
+    await transitionWorkItemStatus(pool, workItemId, 'blocked', result.blockReason)
+    if (result.summary || result.blockReason) {
+      await updateWorkItem(pool, workItemId, {
+        outcomeSummary: result.summary ?? null,
+        failureReason: result.blockReason ?? null,
+      })
+    }
+    broadcastEvent({
+      type: 'work-item.updated',
+      occurredAt: new Date().toISOString(),
+      goalId: workItem.goalId,
+      payload: {
+        workItemId,
+        status: 'blocked',
+        outcomeSummary: result.summary,
+        failureReason: result.blockReason,
+      },
+    })
+    await recordRecovery(pool, workItem.goalId, workItemId, result.blockReason ?? 'Work item blocked', 'high')
+  } else {
+    await transitionWorkItemStatus(pool, workItemId, 'failed', result.error)
+    if (result.summary || result.error) {
+      await updateWorkItem(pool, workItemId, {
+        outcomeSummary: result.summary ?? null,
+        failureReason: result.error ?? null,
+      })
+    }
+    broadcastEvent({
+      type: 'work-item.updated',
+      occurredAt: new Date().toISOString(),
+      goalId: workItem.goalId,
+      payload: {
+        workItemId,
+        status: 'failed',
+        outcomeSummary: result.summary,
+        failureReason: result.error,
+      },
+    })
+    await recordRecovery(pool, workItem.goalId, workItemId, result.error ?? 'Work item failed', 'medium')
+  }
+}
+
+async function recordRecovery(
+  pool: pg.Pool,
+  goalId: string,
+  workItemId: string,
+  detectedCondition: string,
+  severity: 'low' | 'medium' | 'high' | 'critical',
+): Promise<void> {
+  const decision = selectRecoveryAction({ goalId, workItemId, detectedCondition, severity })
+  const recoveryEvent = await createRecoveryEvent(pool, {
+    goalId,
+    workItemId,
+    detectedCondition,
+    detectedAt: new Date().toISOString(),
+    severity,
+    selectedAction: decision.selectedAction,
+    actionReason: decision.actionReason,
+    resultStatus: decision.resultStatus,
+    resultSummary: decision.resultSummary,
+  })
+
+  broadcastEvent({
+    type: 'recovery.recorded',
+    occurredAt: new Date().toISOString(),
+    goalId,
+    payload: recoveryEvent as unknown as Record<string, unknown>,
+  })
+}
 
 export async function routeResult(
   deps: ResultRouterDeps,
@@ -48,6 +154,14 @@ export async function routeResult(
         result: { changed_files: outcome.result.changed_files },
       },
     })
+
+    // Update WorkItem status to completed
+    if (delegation.work_item_id) {
+      await handleDelegationResult(pool, delegation.work_item_id, {
+        success: true,
+        summary: outcome.result.text,
+      })
+    }
   } else {
     await pool.query(
       `UPDATE delegations SET status='failed', result=$2, completed_at=now(), updated_at=now() WHERE id=$1`,
@@ -72,11 +186,26 @@ export async function routeResult(
         error: outcome.error,
       },
     })
+
+    // Update WorkItem status to failed
+    if (delegation.work_item_id) {
+      await handleDelegationResult(pool, delegation.work_item_id, {
+        success: false,
+        error: outcome.error,
+      })
+    }
   }
 
   if (delegation.to_agent_id && nextState) {
     if (nextState === 'retiring') {
       await setAgentState(pool, delegation.to_agent_id, 'retiring', `delegation ${delegation.id} completed; teardown starting`)
+
+      // Retire ephemeral agent: revoke grants, persist outcome, keep row for audit
+      await retireEphemeralAgent(pool, delegation.to_agent_id, {
+        success: outcome.success,
+        error: outcome.success ? undefined : outcome.error,
+      })
+
       await setAgentState(pool, delegation.to_agent_id, 'terminated', `delegation ${delegation.id} teardown complete`)
     } else {
       await setAgentState(

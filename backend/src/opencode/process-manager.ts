@@ -5,7 +5,7 @@ import { promisify } from 'node:util'
 import type pg from 'pg'
 import { getOrCreateAgentToken } from '../agent-tokens.js'
 import { decryptEnvVars } from '../mcp-registry.js'
-import { listControlPlaneTools, type McpToolDefinition } from '../mcp/service.js'
+import { listControlPlaneToolsForGrant, type McpToolDefinition } from '../mcp/service.js'
 import { loadWorkspaceTemplate, renderTemplate } from '../workspace.js'
 import {
   getProviderApiKey,
@@ -14,6 +14,8 @@ import {
   type RegistryAgent,
   updateAgent,
 } from '../registry.js'
+import { resolveToolGrant } from '../tool-grants.js'
+import { bootstrapDurableStaff } from '../durable-staff.js'
 import { PiHarness } from '../fleet-executor/pi-harness.js'
 import type { AgentHarness } from '../fleet-executor/harness.js'
 
@@ -180,6 +182,15 @@ export class OpenCodeProcessManager {
 
   async initialize(): Promise<void> {
     await this.recoverLifecycleState()
+
+    // Bootstrap durable staff before syncing agents
+    const bootstrapResult = await bootstrapDurableStaff(this.pool)
+    if (bootstrapResult.created.length > 0 || bootstrapResult.updated.length > 0) {
+      console.log(
+        `[durable-staff] Bootstrapped: ${bootstrapResult.created.length} created, ${bootstrapResult.updated.length} updated, ${bootstrapResult.unchanged.length} unchanged`,
+      )
+    }
+
     const { rows } = await this.pool.query<RegistryAgent>('SELECT * FROM agents ORDER BY created_at')
     for (const agent of rows) {
       if (agent.tier === 'ephemeral') continue
@@ -288,7 +299,31 @@ export class OpenCodeProcessManager {
     const assignedServers = await this.listAssignedMcpServers(agent.id)
     const controlPlaneToken = await getOrCreateAgentToken(this.pool, agent.id)
     const model = await this.resolveModel(agent)
-    const controlPlaneTools = await listControlPlaneTools()
+    const fallbackProviderAdapters = assignedServers.map((server) => ({
+      kind: server.type,
+      ref: server.name,
+      config: server.type === 'http'
+        ? { url: server.url ?? null }
+        : { command: server.command ?? null, args: server.args ?? [] },
+    }))
+
+    // Slice 3: persist a baseline tool grant for this agent
+    const grant = await resolveToolGrant(this.pool, {
+      agent,
+      routingCapability: agent.role ?? agent.capabilities[0] ?? agent.type,
+      fallbackProviderAdapters,
+      taskScope: {},
+      approvalState: {},
+      environmentContext: {
+        assigned_mcp_servers: assignedServers.map((server) => server.name),
+      },
+    })
+
+    // Slice 4: filter control-plane tools based on resolved grant (CP-001, CP-004)
+    const controlPlaneTools = listControlPlaneToolsForGrant(
+      grant.granted_primitives ?? [],
+      false,
+    )
 
     await mkdir(worktreePath, { recursive: true })
     await writeFile(path.join(worktreePath, 'AGENTS.md'), `${(await defaultAgentInstructions(this.pool, agent)).trim()}\n`)
@@ -470,7 +505,7 @@ export class OpenCodeProcessManager {
     const { rows: interrupted } = await this.pool.query<{ id: string; to_agent_id: string | null }>(
       `UPDATE delegations
        SET status = 'failed',
-           result = jsonb_build_object('error', $1),
+           result = jsonb_build_object('error', $1::text),
            completed_at = now(),
            updated_at = now()
        WHERE status = 'in_progress'

@@ -1,0 +1,357 @@
+openapi: 3.1.0
+info:
+  title: Agentic Control Plane API
+  version: 0.1.0
+  summary: Operator-facing control plane contracts for Prime-led goal management.
+servers:
+  - url: https://example.invalid
+paths:
+  /goals:
+    get:
+      summary: List goals visible in the Prime control plane
+      operationId: listGoals
+      responses:
+        '200':
+          description: Goal list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [goals]
+                properties:
+                  goals:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/GoalSummary'
+    post:
+      summary: Create a new goal for Prime
+      operationId: createGoal
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateGoalRequest'
+      responses:
+        '201':
+          description: Goal created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GoalDetail'
+  /goals/{goalId}:
+    get:
+      summary: Retrieve a single goal and its current execution state
+      operationId: getGoal
+      parameters:
+        - $ref: '#/components/parameters/GoalId'
+      responses:
+        '200':
+          description: Goal detail
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GoalDetail'
+        '404':
+          description: Goal not found
+    patch:
+      summary: Update operator-editable goal attributes
+      operationId: updateGoal
+      parameters:
+        - $ref: '#/components/parameters/GoalId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateGoalRequest'
+      responses:
+        '200':
+          description: Goal updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GoalDetail'
+  /goals/{goalId}/cancel:
+    post:
+      summary: Cancel an active goal
+      operationId: cancelGoal
+      parameters:
+        - $ref: '#/components/parameters/GoalId'
+      responses:
+        '200':
+          description: Goal cancelled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GoalDetail'
+  /goals/{goalId}/work-items:
+    get:
+      summary: List delegated and direct work items for a goal
+      operationId: listGoalWorkItems
+      parameters:
+        - $ref: '#/components/parameters/GoalId'
+      responses:
+        '200':
+          description: Work item list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [workItems]
+                properties:
+                  workItems:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/WorkItem'
+  /goals/{goalId}/approvals:
+    get:
+      summary: List approvals related to a goal
+      operationId: listGoalApprovals
+      parameters:
+        - $ref: '#/components/parameters/GoalId'
+      responses:
+        '200':
+          description: Approval list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [approvals]
+                properties:
+                  approvals:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Approval'
+  /approvals/{approvalId}/decision:
+    post:
+      summary: Resolve an approval request
+      operationId: resolveApproval
+      parameters:
+        - $ref: '#/components/parameters/ApprovalId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ApprovalDecisionRequest'
+      responses:
+        '200':
+          description: Approval resolved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Approval'
+  /goals/{goalId}/learning-records:
+    get:
+      summary: List learning records generated for a goal
+      operationId: listGoalLearningRecords
+      parameters:
+        - $ref: '#/components/parameters/GoalId'
+      responses:
+        '200':
+          description: Learning record list
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [learningRecords]
+                properties:
+                  learningRecords:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/LearningRecord'
+components:
+  parameters:
+    GoalId:
+      name: goalId
+      in: path
+      required: true
+      schema:
+        type: string
+    ApprovalId:
+      name: approvalId
+      in: path
+      required: true
+      schema:
+        type: string
+  schemas:
+    CreateGoalRequest:
+      type: object
+      required: [title, intent]
+      properties:
+        title:
+          type: string
+        intent:
+          type: string
+        priority:
+          type: string
+          enum: [low, normal, high]
+    UpdateGoalRequest:
+      type: object
+      properties:
+        title:
+          type: string
+        intent:
+          type: string
+        priority:
+          type: string
+          enum: [low, normal, high]
+    GoalSummary:
+      type: object
+      required: [id, title, status, priority, currentSummary, updatedAt]
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        status:
+          type: string
+          enum: [draft, queued, in_progress, awaiting_approval, blocked, completed, failed, cancelled]
+        priority:
+          type: string
+          enum: [low, normal, high]
+        currentSummary:
+          type: string
+        updatedAt:
+          type: string
+          format: date-time
+    GoalDetail:
+      allOf:
+        - $ref: '#/components/schemas/GoalSummary'
+        - type: object
+          required: [intent, workItems, approvals, recoveryEvents, resultSummary]
+          properties:
+            intent:
+              type: string
+            resultSummary:
+              type: string
+            riskSummary:
+              type: string
+            workItems:
+              type: array
+              items:
+                $ref: '#/components/schemas/WorkItem'
+            approvals:
+              type: array
+              items:
+                $ref: '#/components/schemas/Approval'
+            recoveryEvents:
+              type: array
+              items:
+                $ref: '#/components/schemas/RecoveryEvent'
+    WorkItem:
+      type: object
+      required: [id, goalId, assignedAgentRole, domain, title, status]
+      properties:
+        id:
+          type: string
+        goalId:
+          type: string
+        parentWorkItemId:
+          type: string
+        assignedAgentRole:
+          type: string
+        domain:
+          type: string
+          enum: [homelab, development, personal_assistant, cross_domain]
+        title:
+          type: string
+        scope:
+          type: string
+        status:
+          type: string
+          enum: [queued, in_progress, awaiting_approval, blocked, retrying, escalated, completed, failed, cancelled]
+        decisionSummary:
+          type: string
+        outcomeSummary:
+          type: string
+        failureReason:
+          type: string
+    Approval:
+      type: object
+      required: [id, goalId, requestedByAgentRole, actionSummary, status]
+      properties:
+        id:
+          type: string
+        goalId:
+          type: string
+        workItemId:
+          type: string
+        requestedByAgentRole:
+          type: string
+        actionSummary:
+          type: string
+        riskSummary:
+          type: string
+        status:
+          type: string
+          enum: [pending, approved, rejected, expired, cancelled]
+        decisionNotes:
+          type: string
+        expiresAt:
+          type: string
+          format: date-time
+        resolvedAt:
+          type: string
+          format: date-time
+    ApprovalDecisionRequest:
+      type: object
+      required: [decision]
+      properties:
+        decision:
+          type: string
+          enum: [approved, rejected]
+        decisionNotes:
+          type: string
+    RecoveryEvent:
+      type: object
+      required: [id, goalId, detectedCondition, detectedAt, selectedAction, resultStatus]
+      properties:
+        id:
+          type: string
+        goalId:
+          type: string
+        workItemId:
+          type: string
+        detectedCondition:
+          type: string
+        detectedAt:
+          type: string
+          format: date-time
+        severity:
+          type: string
+          enum: [low, medium, high, critical]
+        selectedAction:
+          type: string
+          enum: [retry, reroute, escalate, request_approval, stop]
+        actionReason:
+          type: string
+        resultStatus:
+          type: string
+          enum: [succeeded, ongoing, failed, escalated]
+        resultSummary:
+          type: string
+    LearningRecord:
+      type: object
+      required: [id, goalId, category, signalType, observation]
+      properties:
+        id:
+          type: string
+        goalId:
+          type: string
+        workItemId:
+          type: string
+        category:
+          type: string
+          enum: [planning, delegation, recovery, approval, ux, domain_specific]
+        signalType:
+          type: string
+          enum: [success, failure, inefficiency, operator_correction, missed_risk]
+        observation:
+          type: string
+        recommendation:
+          type: string
+        confidence:
+          type: string
+          enum: [low, medium, high]

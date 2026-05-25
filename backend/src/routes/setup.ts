@@ -92,14 +92,19 @@ export function createSetupRouter({
           },
         })
       } else {
-        if (!apiKey && type !== 'litellm' && type !== 'llm') {
+        if (apiKey) {
+          upstream = await fetch(`${baseUrl}/models`, {
+            signal: controller.signal,
+            headers: { Authorization: `Bearer ${apiKey}` },
+          })
+        } else if (type === 'litellm' || type === 'llm') {
+          upstream = await fetch(`${baseUrl}/models`, { signal: controller.signal })
+        } else {
+          // No API key for OpenAI-compatible provider (e.g. subscription/device auth flow).
+          // Return sensible defaults so the UI can still populate model dropdowns.
           clearTimeout(timeout)
-          return res.status(400).json({ error: 'api_key is required for model discovery' })
+          return res.json({ models: ['gpt-4o', 'gpt-4o-mini', 'gpt-4.1', 'gpt-4.1-mini', 'o3', 'o3-mini', 'o4-mini'] })
         }
-        upstream = await fetch(`${baseUrl}/models`, {
-          signal: controller.signal,
-          headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : undefined,
-        })
       }
 
       clearTimeout(timeout)

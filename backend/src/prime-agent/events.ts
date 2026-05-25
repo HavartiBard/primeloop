@@ -36,8 +36,18 @@ export interface FleetDelegationFailedEvent {
   }
 }
 
+export interface GoalCreatedEvent {
+  type: 'goal.created'
+  payload: {
+    goal_id: string
+    title: string
+    intent: string
+  }
+}
+
 export type PrimeEvent =
   | PrimeMessageEvent
   | CronFastEvent
   | FleetDelegationCompletedEvent
   | FleetDelegationFailedEvent
+  | GoalCreatedEvent
