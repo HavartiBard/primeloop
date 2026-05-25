@@ -1,5 +1,6 @@
 .worktrees/
 .superpowers/
+.pi/
 backend/.env.test
 .env
 .env.local
