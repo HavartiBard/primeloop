@@ -1,4 +1,4 @@
-import { useMemo, useState, useRef, useCallback } from 'react'
+import { useMemo, useState, useRef, useCallback, useEffect } from 'react'
 import type { CSSProperties } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { CircuitCanvasControls } from '../components/agentCanvas/CircuitCanvasControls'
@@ -444,9 +444,24 @@ interface CircuitViewProps {
 
 export function CircuitView({ onNavigate }: CircuitViewProps) {
   const viewportHook = useCanvasViewport()
-  const { zoomIn, zoomOut, reset, fitToView, viewport, setViewport, dragHandlers, wheelHandler, touchHandlers } = viewportHook
+  const { dragHandlers, touchHandlers } = viewportHook
   const { positions, updatePosition } = useCanvasLayout()
   const queryClient = useQueryClient()
+  const canvasRef = useRef<HTMLDivElement>(null)
+
+  // Attach a non-passive wheel listener so preventDefault() actually works.
+  // React's synthetic onWheel is passive in some environments, letting the page scroll.
+  useEffect(() => {
+    const el = canvasRef.current
+    if (!el) return
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault()
+      const rect = el.getBoundingClientRect()
+      viewportHook.zoomBy(e.deltaY < 0 ? 1.1 : 0.9, e.clientX - rect.left, e.clientY - rect.top)
+    }
+    el.addEventListener('wheel', onWheel, { passive: false })
+    return () => el.removeEventListener('wheel', onWheel)
+  }, [viewportHook.zoomBy])
 
   const [toolbarDrafts, setToolbarDrafts] = useState<Record<string, ToolbarDraftAction>>({})
   const [showGoalModal, setShowGoalModal] = useState(false)
@@ -455,6 +470,7 @@ export function CircuitView({ onNavigate }: CircuitViewProps) {
     if (actionType === 'create_goal') {
       setShowGoalModal(true)
     }
+    // other actions: placeholder — future toolbar composers
   }, [])
 
   const handleCancelDraft = useCallback((draftId: string) => {
@@ -531,14 +547,17 @@ export function CircuitView({ onNavigate }: CircuitViewProps) {
 
   return (
     <div
+      ref={canvasRef}
       style={{ ...GRID_BG, flex: 1, overflow: 'hidden', position: 'relative', touchAction: 'none' }}
       tabIndex={0}
       {...dragHandlers}
-      {...wheelHandler}
       {...touchHandlers}
     >
-      {/* Canvas controls */}
-      <div className="absolute top-4 right-4 z-50">
+      {/* Canvas controls — pointer-isolated so drag-pan doesn't capture their clicks */}
+      <div
+        className="absolute top-4 right-4 z-50"
+        onPointerDown={(e) => e.stopPropagation()}
+      >
         <CircuitCanvasControls
           viewport={viewportHook}
           compact
@@ -565,14 +584,19 @@ export function CircuitView({ onNavigate }: CircuitViewProps) {
         ))}
       </div>
 
-      {/* Bottom action toolbar scoped to canvas */}
-      <BottomActionToolbar
-        drafts={toolbarDrafts}
-        onOpenDraft={handleOpenDraft}
-        onCancelDraft={handleCancelDraft}
-        compact
-        contained
-      />
+      {/* Bottom action toolbar — pointer-isolated so setPointerCapture on canvas doesn't eat button clicks */}
+      <div
+        style={{ position: 'absolute', bottom: '1rem', left: '50%', transform: 'translateX(-50%)', zIndex: 10 }}
+        onPointerDown={(e) => e.stopPropagation()}
+      >
+        <BottomActionToolbar
+          drafts={toolbarDrafts}
+          onOpenDraft={handleOpenDraft}
+          onCancelDraft={handleCancelDraft}
+          compact
+          contained
+        />
+      </div>
 
       <Legend />
 
