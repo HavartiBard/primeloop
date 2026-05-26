@@ -82,13 +82,39 @@ interface WorkspaceDraft {
   branch: string
 }
 
-interface WizardState {
+export interface ProviderDisplay extends ProviderDraft {
+  masked_credential_state?: 'absent' | 'present' | 'needs_replacement' | 'not_required'
+  connection_status?: 'idle' | 'verifying' | 'verified' | 'failed' | 'skipped' | 'unavailable'
+  available_models?: string[]
+  verification_error?: string
+}
+
+export interface WizardState {
   providers: ProviderDraft[]
   routing: RoutingDraft
+  functionAssignments?: import('../types').FunctionAssignment[]
   profile: ProfileDraft
   rules: RulesDraft
   costControls: { monthlyTokenBudget: number }
   workspace: WorkspaceDraft
+  pluginChoices?: Array<{
+    plugin_id: string
+    name: string
+    description: string
+    selected: boolean
+    configuration_state: 'not_required' | 'deferred_post_launch' | 'configured' | 'unavailable'
+  }>
+  primeConfig?: {
+    cron_fast_interval_seconds?: number
+    cron_slow_interval_seconds?: number
+    debounce_window_ms?: number
+  }
+  primeConfigDraft?: {
+    enabled?: boolean
+    cron_fast_interval_seconds?: number
+    cron_slow_interval_seconds?: number
+    debounce_window_ms?: number
+  }
 }
 
 const INITIAL_STATE: WizardState = {
@@ -102,10 +128,11 @@ const INITIAL_STATE: WizardState = {
   rules: { presets: [], custom: '' },
   costControls: { monthlyTokenBudget: 0 },
   workspace: { mode: 'local', root_path: '../.agent-workspace', remote_url: '', branch: 'main' },
+  pluginChoices: [],
 }
 
-const STEPS = ['Intro', 'Providers', 'Routing', 'Personality', 'Rules', 'Workspace', 'Launch'] as const
-type Step = 0 | 1 | 2 | 3 | 4 | 5 | 6
+const STEPS = ['Intro', 'Providers', 'Routing', 'Personality', 'Rules', 'Workspace', 'Plugins', 'Launch'] as const
+type Step = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7
 
 // ─── CSS helpers ─────────────────────────────────────────────────────────────
 
@@ -126,6 +153,177 @@ export const PRESET_RULES = [
   { key: 'confirm_destructive', label: 'Ask before taking destructive or irreversible actions' },
   { key: 'humans_in_loop', label: 'Keep humans in the loop on external communications' },
 ]
+
+// ─── validateAssignments ─────────────────────────────────────────────────────
+
+export function validateAssignments(assignments: import('../types').FunctionAssignment[]): {
+  readiness: { ready: boolean; warnings: string[]; blocking_reasons: string[] }
+} {
+  const warnings: string[] = []
+  const blocking_reasons: string[] = []
+
+  const seenModels = new Map<string, number>()
+  for (const a of assignments) {
+    if (!a.provider_id || !a.model) continue
+    const key = `${a.provider_id}/${a.model}`
+    seenModels.set(key, (seenModels.get(key) ?? 0) + 1)
+  }
+  for (const [key, count] of seenModels) {
+    if (count > 1) warnings.push(`Reuses this provider/model ${key} across ${count} functions`)
+  }
+
+  for (const a of assignments) {
+    if (!a.model) continue
+    const lc = a.model.toLowerCase()
+    if (lc.includes('tiny') || lc.includes('1b') || lc.includes('2b') || lc.includes('3b')) {
+      blocking_reasons.push(`${a.display_name}: model ${a.model} is blocked (too small, minimum recommended 7B)`)
+    } else if (lc.includes('phi') || lc.includes('7b') || lc.includes('mini')) {
+      warnings.push(`${a.display_name}: model ${a.model} is below recommended 7B quality tier`)
+    }
+  }
+
+  return { readiness: { ready: blocking_reasons.length === 0, warnings, blocking_reasons } }
+}
+
+// ─── StepPrimeFunctionAssignments ────────────────────────────────────────────
+
+export function StepPrimeFunctionAssignments({
+  state,
+  onChange,
+}: {
+  state: WizardState & { functionAssignments: import('../types').FunctionAssignment[] }
+  onChange: (next: typeof state) => void
+}) {
+  const assignments = state.functionAssignments ?? []
+  const providers = state.providers.filter((p) => p.active)
+
+  const updateAssignment = (idx: number, field: 'provider_id' | 'model', value: string) => {
+    const updated = assignments.map((a, i) => i === idx ? { ...a, [field]: value || null } : a)
+    onChange({ ...state, functionAssignments: updated })
+  }
+
+  return (
+    <div className="space-y-3">
+      <p className="text-xs text-[var(--muted)]">Assign a provider and model to each Prime function.</p>
+      {assignments.map((a, idx) => (
+        <div key={a.function_key} className="rounded-lg border border-[var(--border-soft)] bg-[var(--panel-subtle)] p-3 space-y-2">
+          <div className="text-xs font-medium text-[var(--text)]">{a.display_name}</div>
+          <div className="flex gap-2">
+            <div className="flex-1">
+              <label className={LABEL_CLS} htmlFor={`assign-provider-${idx}`}>{a.display_name} provider</label>
+              <select
+                id={`assign-provider-${idx}`}
+                aria-label={`${a.display_name} provider`}
+                value={a.provider_id ?? ''}
+                onChange={(e) => updateAssignment(idx, 'provider_id', e.target.value)}
+                className={INPUT_CLS}
+              >
+                <option value="">— select provider —</option>
+                {providers.map((p) => (
+                  <option key={p.name} value={p.id ?? p.name}>{p.name}</option>
+                ))}
+              </select>
+            </div>
+            <div className="flex-1">
+              <label className={LABEL_CLS} htmlFor={`assign-model-${idx}`}>{a.display_name} model</label>
+              <input
+                id={`assign-model-${idx}`}
+                aria-label={`${a.display_name} model`}
+                value={a.model ?? ''}
+                onChange={(e) => updateAssignment(idx, 'model', e.target.value)}
+                className={INPUT_CLS}
+                placeholder="e.g. claude-sonnet-4-6"
+              />
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+// ─── StepPrimeConfigReview ───────────────────────────────────────────────────
+
+export function StepPrimeConfigReview({
+  state,
+  onChange,
+}: {
+  state: WizardState
+  onChange: (next: WizardState) => void
+}) {
+  const cfg = state.primeConfigDraft ?? state.primeConfig ?? {}
+  const fieldErrors: string[] = []
+
+  const fastVal = cfg.cron_fast_interval_seconds ?? 300
+  const slowVal = cfg.cron_slow_interval_seconds ?? 3600
+  const debounceVal = cfg.debounce_window_ms ?? 10000
+  const budgetVal = state.costControls.monthlyTokenBudget
+
+  if (typeof fastVal === 'number' && !Number.isInteger(fastVal) || fastVal < 0)
+    fieldErrors.push('cron_fast_interval_seconds must be a positive integer')
+  if (typeof debounceVal === 'number' && debounceVal < 0)
+    fieldErrors.push('debounce_window_ms must be non-negative')
+  if (budgetVal < 0)
+    fieldErrors.push('monthly_token_budget must be non-negative')
+
+  const update = (field: keyof NonNullable<WizardState['primeConfigDraft']>, value: number) =>
+    onChange({ ...state, primeConfigDraft: { ...cfg, [field]: value } })
+
+  return (
+    <div className="space-y-4">
+      <p className="text-xs text-[var(--muted)]">Review Prime's operational configuration before launch.</p>
+      <div>
+        <label className={LABEL_CLS}>Fast cron interval (seconds)</label>
+        <input
+          type="number"
+          value={fastVal}
+          onChange={(e) => update('cron_fast_interval_seconds', Number(e.target.value))}
+          className={INPUT_CLS}
+          aria-label="Fast cron interval (seconds)"
+        />
+      </div>
+      <div>
+        <label className={LABEL_CLS}>Slow cron interval (seconds)</label>
+        <input
+          type="number"
+          value={slowVal}
+          onChange={(e) => update('cron_slow_interval_seconds', Number(e.target.value))}
+          className={INPUT_CLS}
+          aria-label="Slow cron interval (seconds)"
+        />
+      </div>
+      <div>
+        <label className={LABEL_CLS}>Debounce window (ms)</label>
+        <input
+          type="number"
+          value={debounceVal}
+          onChange={(e) => update('debounce_window_ms', Number(e.target.value))}
+          className={INPUT_CLS}
+          aria-label="Debounce window (ms)"
+        />
+      </div>
+      <div>
+        <label className={LABEL_CLS}>Monthly token budget</label>
+        <input
+          type="number"
+          value={budgetVal}
+          onChange={(e) => onChange({ ...state, costControls: { monthlyTokenBudget: Number(e.target.value) } })}
+          className={INPUT_CLS}
+          placeholder="0 (unlimited)"
+          aria-label="Monthly token budget"
+        />
+      </div>
+      {fieldErrors.length > 0 && (
+        <div>
+          <p className="text-xs font-medium text-red-400">Configuration validation errors</p>
+          {fieldErrors.map((e) => (
+            <p key={e} className="text-xs text-red-400">{e}</p>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
 
 function clamp01(value: number): number {
   return Math.max(0, Math.min(1, value))
@@ -204,6 +402,12 @@ function stepProgress(state: WizardState, step: Step): number {
       score += 0.15
     }
     return clamp01(score)
+  }
+
+  if (step === 6) {
+    // Plugins step - progress based on whether plugins have been selected or skipped
+    const hasPluginChoices = ( state.pluginChoices ?? []).length > 0
+    return hasPluginChoices ? 1 : 0.5
   }
 
   const activeProviders = state.providers.filter((provider) => provider.active)
@@ -313,6 +517,33 @@ function ProviderCard({ draft, onChange, onToggle, onConnect, onDeviceAuth }: {
               Connected
             </span>
           )}
+          {!draft.connectStatus && (draft as ProviderDisplay).connection_status === 'verified' && (
+            <span className="rounded border border-[var(--s-ok-bd)] bg-[var(--s-ok-bg)] px-2 py-0.5 text-[10px] text-[var(--s-ok-tx)]">Verified</span>
+          )}
+          {!draft.connectStatus && (draft as ProviderDisplay).connection_status === 'verifying' && (
+            <span className="rounded border border-[var(--border-soft)] bg-[var(--panel-subtle)] px-2 py-0.5 text-[10px] text-[var(--muted)]">Verifying</span>
+          )}
+          {!draft.connectStatus && (draft as ProviderDisplay).connection_status === 'failed' && (
+            <span className="rounded border border-[var(--s-blk-bd)] bg-[var(--s-blk-bg)] px-2 py-0.5 text-[10px] text-[var(--s-blk-tx)]">Failed</span>
+          )}
+          {!draft.connectStatus && (draft as ProviderDisplay).connection_status === 'skipped' && (
+            <span className="rounded border border-[var(--border-soft)] bg-[var(--panel-subtle)] px-2 py-0.5 text-[10px] text-[var(--muted)]">Skipped</span>
+          )}
+          {!draft.connectStatus && (draft as ProviderDisplay).connection_status === 'unavailable' && (
+            <span className="rounded border border-[var(--border-soft)] bg-[var(--panel-subtle)] px-2 py-0.5 text-[10px] text-[var(--muted)]">Unavailable</span>
+          )}
+          {(draft as ProviderDisplay).masked_credential_state === 'present' && (
+            <span className="text-[10px] text-[var(--muted)]">Credentials configured</span>
+          )}
+          {(draft as ProviderDisplay).masked_credential_state === 'not_required' && (
+            <span className="text-[10px] text-[var(--muted)]">No credentials required</span>
+          )}
+          {(draft as ProviderDisplay).available_models?.length && (
+            <span className="text-[10px] text-[var(--muted)]">{(draft as ProviderDisplay).available_models!.length} models found</span>
+          )}
+          {!draft.connectStatus && (draft as ProviderDisplay).connection_status === 'failed' && (draft as ProviderDisplay).verification_error && (
+            <span className="text-[10px] text-[var(--s-blk-tx)]">{(draft as ProviderDisplay).verification_error}</span>
+          )}
           {draft.authStatus === 'complete' && (
             <span className="rounded border border-[var(--s-ok-bd)] bg-[var(--s-ok-bg)] px-2 py-1 text-[10px] font-mono uppercase tracking-wider text-[var(--s-ok-tx)]">
               Authed
@@ -325,6 +556,20 @@ function ProviderCard({ draft, onChange, onToggle, onConnect, onDeviceAuth }: {
       </div>
       {draft.active && (
       <div className="space-y-3 border-t border-[var(--border-soft)] p-4">
+        {!draft.connectStatus && (draft as ProviderDisplay).connection_status === 'verifying' && (
+          <div className="text-xs text-[var(--muted)]">Discovering models…</div>
+        )}
+        {!draft.connectStatus && (draft as ProviderDisplay).connection_status === 'failed' && (
+          <div className="space-y-2">
+            {(draft as ProviderDisplay).verification_error && (
+              <p className="text-xs text-[var(--s-blk-tx)]">{(draft as ProviderDisplay).verification_error}</p>
+            )}
+            <div className="flex gap-2">
+              <button type="button" onClick={() => onConnect()} className={BTN_PRIMARY} style={{ padding: '4px 10px', fontSize: '11px' }}>Retry</button>
+              <button type="button" onClick={() => onChange({ connectStatus: undefined })} className={BTN_SECONDARY} style={{ padding: '4px 10px', fontSize: '11px' }}>Skip</button>
+            </div>
+          </div>
+        )}
         {draft.type === 'anthropic' && (
           <>
             <div>
@@ -575,7 +820,7 @@ function ProviderCard({ draft, onChange, onToggle, onConnect, onDeviceAuth }: {
   )
 }
 
-function StepProviders({ state, onChange }: { state: WizardState; onChange: Dispatch<SetStateAction<WizardState>> }) {
+export function StepProviders({ state, onChange }: { state: WizardState; onChange: Dispatch<SetStateAction<WizardState>> }) {
   const pollRef = useRef<ReturnType<typeof window.setTimeout> | null>(null)
 
   const stopPolling = () => {
@@ -1227,6 +1472,109 @@ function StepWorkspace({ state, onChange }: { state: WizardState; onChange: (s: 
   )
 }
 
+export function StepPlugins({ pluginChoices, onChange }: { pluginChoices: Array<{ plugin_id: string; name: string; description: string; selected: boolean; configuration_state: 'not_required' | 'deferred_post_launch' | 'configured' | 'unavailable' }>; onChange: (update: { plugin_choices: typeof pluginChoices }) => void }) {
+  const [plugins, setPlugins] = useState<Array<{ id: string; name: string; description: string; optional: boolean; status: 'available' | 'unavailable' }>>([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => {
+    import('../api').then(({ fetchSetupPlugins }) => {
+      fetchSetupPlugins().then((data) => {
+        setPlugins(data)
+        setLoading(false)
+      }).catch(() => {
+        setLoading(false)
+      })
+    })
+  }, [])
+
+  const togglePlugin = (plugin: typeof plugins[0], selected: boolean) => {
+    const existing = pluginChoices.find((p) => p.plugin_id === plugin.id)
+    let newChoices: typeof pluginChoices
+    if (existing) {
+      newChoices = pluginChoices.map((p) =>
+        p.plugin_id === plugin.id ? { ...p, selected } : p
+      )
+    } else {
+      newChoices = [
+        ...pluginChoices,
+        {
+          plugin_id: plugin.id,
+          name: plugin.name,
+          description: plugin.description,
+          selected,
+          configuration_state: 'deferred_post_launch',
+        },
+      ]
+    }
+    onChange({ plugin_choices: newChoices })
+  }
+
+  if (loading) {
+    return (
+      <div className="space-y-4">
+        <p className="text-xs text-[var(--muted)]">Loading plugin inventory...</p>
+      </div>
+    )
+  }
+
+  if (plugins.length === 0) {
+    return (
+      <div className="space-y-4">
+        <p className="text-xs text-[var(--muted)]">Select optional pi plugins to enhance Prime's capabilities.</p>
+        <div className="rounded-lg border border-[var(--border-soft)] bg-[var(--panel-subtle)] p-4 text-center">
+          <p className="text-xs text-[var(--muted)]">No plugins available at this time.</p>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-4">
+      <p className="text-xs text-[var(--muted)]">Select optional pi plugins to enhance Prime's capabilities.</p>
+      <div className="space-y-3">
+        {plugins.map((plugin) => {
+          const selected = pluginChoices.some((p) => p.plugin_id === plugin.id && p.selected)
+          return (
+            <div key={plugin.id} className="rounded-lg border border-[var(--border-soft)] bg-[var(--panel-subtle)] p-4">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <div className="text-sm font-medium text-[var(--text)]">{plugin.name}</div>
+                  <div className="mt-1 text-xs text-[var(--muted)]">{plugin.description}</div>
+                  {selected && (
+                    <div className="mt-2 rounded border border-[rgba(110,231,255,0.28)] bg-[rgba(31,111,235,0.12)] px-2 py-1">
+                      <p className="text-[10px] font-semibold text-[#6ee7ff]">Post-launch configuration required</p>
+                      <p className="text-[10px] text-[var(--muted)]">Configure this plugin after Prime launches.</p>
+                    </div>
+                  )}
+                </div>
+                <div className="flex gap-2">
+                  {selected ? (
+                    <button
+                      type="button"
+                      onClick={() => togglePlugin(plugin, false)}
+                      className="px-3 py-1.5 text-xs rounded border border-[rgba(148,163,184,0.28)] bg-[#1f2937] text-[#e2e8f0] hover:bg-[#334155] hover:text-white"
+                    >
+                      Skip
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => togglePlugin(plugin, true)}
+                      className="px-3 py-1.5 text-xs rounded border border-[#6ee7ff] bg-[#1f6feb] text-white hover:bg-[#2b7fff]"
+                    >
+                      Select
+                    </button>
+                  )}
+                </div>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 function StepIntro() {
   return (
     <div className="space-y-5">
@@ -1328,6 +1676,29 @@ function StepLaunch({ state, onSubmit, submitting, error, onGoToStep }: {
         }
       </div>
 
+      {/* Plugins summary */}
+      <div className="rounded-lg border border-[var(--border-soft)] bg-[var(--panel-subtle)] p-3">
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-xs font-medium text-[var(--text)]">Plugins</span>
+          <button type="button" onClick={() => onGoToStep(6)} className="text-xs text-blue-400 hover:underline">Edit</button>
+        </div>
+        {( state.pluginChoices ?? []).length === 0
+          ? <p className="text-xs text-[var(--muted)]">No plugins selected</p>
+          : (
+            <div className="text-xs text-[var(--muted)] space-y-0.5">
+              {(state.pluginChoices ?? []).map((p) => (
+                <div key={p.plugin_id}>
+                  • {p.name}{p.selected ? '' : ' (skipped)'}
+                  {p.selected && p.configuration_state === 'deferred_post_launch' && (
+                    <span className="ml-1 text-yellow-400">· configure after launch</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          )
+        }
+      </div>
+
       <div className="rounded-lg border border-[var(--border-soft)] bg-[var(--panel-subtle)] p-3">
         <div className="flex items-center justify-between mb-2">
           <span className="text-xs font-medium text-[var(--text)]">Agent Workspace</span>
@@ -1364,6 +1735,92 @@ function StepLaunch({ state, onSubmit, submitting, error, onGoToStep }: {
   )
 }
 
+// ─── StepPostLaunch ───────────────────────────────────────────────────────────
+
+function StepPostLaunch({
+  threadId,
+  teamPlan,
+  onConfirmTeamPlan,
+  confirming,
+}: {
+  threadId: string | null
+  teamPlan: import('../types').TeamPlan | null
+  onConfirmTeamPlan: (selectedRoles: string[]) => void
+  confirming: boolean
+}) {
+  const [selectedRoles, setSelectedRoles] = useState<string[]>(() =>
+    teamPlan?.agents.filter((a) => a.recommendation_strength === 'strongly_recommended').map((a) => a.role) ?? []
+  )
+
+  const toggleRole = (role: string) => {
+    setSelectedRoles((prev) => prev.includes(role) ? prev.filter((r) => r !== role) : [...prev, role])
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="rounded-lg border border-[var(--border-soft)] bg-[var(--panel-subtle)] p-4">
+        <p className="text-sm font-medium text-[var(--text)]">Prime is ready</p>
+        <p className="mt-1 text-xs text-[var(--muted)]">Setup is complete. Prime's onboarding conversation has started.</p>
+        {threadId && (
+          <a
+            href={`/governance?thread=${threadId}`}
+            className="mt-2 inline-block text-xs text-blue-400 hover:underline"
+          >
+            Open onboarding conversation →
+          </a>
+        )}
+      </div>
+
+      {teamPlan && teamPlan.confirmation_status === 'proposed' && (
+        <div className="rounded-lg border border-[var(--border-soft)] bg-[var(--panel-subtle)] p-4 space-y-3">
+          <p className="text-sm font-medium text-[var(--text)]">Proposed Team</p>
+          <p className="text-xs text-[var(--muted)]">Select the agents to create. SRE and DevOps are strongly recommended for system stability.</p>
+          <div className="space-y-2">
+            {teamPlan.agents.map((agent) => {
+              const isSelected = selectedRoles.includes(agent.role)
+              const isStrong = agent.recommendation_strength === 'strongly_recommended'
+              return (
+                <label key={agent.role} className="flex items-start gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={isSelected}
+                    onChange={() => toggleRole(agent.role)}
+                    className="mt-0.5"
+                  />
+                  <div>
+                    <span className="text-xs font-medium text-[var(--text)]">{agent.name}</span>
+                    {isStrong && (
+                      <span className="ml-1 text-[10px] text-yellow-400 font-medium">strongly recommended</span>
+                    )}
+                    <p className="text-[11px] text-[var(--muted)]">{agent.rationale}</p>
+                  </div>
+                </label>
+              )
+            })}
+          </div>
+          <button
+            type="button"
+            onClick={() => onConfirmTeamPlan(selectedRoles)}
+            disabled={confirming || selectedRoles.length === 0}
+            className={BTN_PRIMARY}
+          >
+            {confirming ? 'Creating agents…' : `Confirm team (${selectedRoles.length} agents)`}
+          </button>
+        </div>
+      )}
+
+      {teamPlan && (teamPlan.confirmation_status === 'confirmed' || teamPlan.confirmation_status === 'partially_confirmed') && (
+        <div className="rounded-lg border border-[var(--border-soft)] bg-[var(--panel-subtle)] p-4">
+          <p className="text-xs text-[var(--text)]">
+            {teamPlan.confirmation_status === 'confirmed' ? 'Team created.' : 'Team partially created.'}
+            {' '}{teamPlan.created_agent_ids.length} agent{teamPlan.created_agent_ids.length !== 1 ? 's' : ''} ready.
+          </p>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Main Setup component ─────────────────────────────────────────────────────
 
 export function Setup({ onSkip }: { onSkip?: () => void }) {
@@ -1371,6 +1828,8 @@ export function Setup({ onSkip }: { onSkip?: () => void }) {
   const [step, setStep] = useState<Step>(0)
   const [state, setState] = useState<WizardState>(INITIAL_STATE)
   const [submitting, setSubmitting] = useState(false)
+  const [launchResult, setLaunchResult] = useState<{ threadId: string | null; teamPlan: import('../types').TeamPlan | null } | null>(null)
+  const [confirming, setConfirming] = useState(false)
 
   useEffect(() => {
     import('../api').then(({ fetchPrimeProfile }) =>
@@ -1420,6 +1879,16 @@ export function Setup({ onSkip }: { onSkip?: () => void }) {
           custom: state.rules.custom,
         },
         cost_controls: { monthly_token_budget: state.costControls.monthlyTokenBudget },
+        prime_config: {
+          cron_fast_interval_seconds: state.primeConfig?.cron_fast_interval_seconds,
+          cron_slow_interval_seconds: state.primeConfig?.cron_slow_interval_seconds,
+          debounce_window_ms: state.primeConfig?.debounce_window_ms,
+          monthly_token_budget: state.costControls.monthlyTokenBudget,
+        },
+        plugin_choices: (state.pluginChoices ?? []).map((p) => ({
+          plugin_id: p.plugin_id,
+          selected: p.selected,
+        })),
         workspace: {
           mode: state.workspace.mode,
           root_path: state.workspace.root_path,
@@ -1433,16 +1902,37 @@ export function Setup({ onSkip }: { onSkip?: () => void }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       })
-      const data = await readResponseBody<{ ok?: boolean; error?: string }>(res) as { ok?: boolean; error?: string } | null
+      const data = await readResponseBody<{ ok?: boolean; error?: string; prime_launch?: { status: string; thread_id?: string } }>(res) as { ok?: boolean; error?: string; prime_launch?: { status: string; thread_id?: string } } | null
       if (!res.ok || !data?.ok) {
         setSubmitError(data?.error ?? `HTTP ${res.status}`)
       } else {
         await queryClient.invalidateQueries({ queryKey: ['setup-status'] })
+        if (launch && data?.prime_launch?.status === 'launched') {
+          const { generateTeamPlan } = await import('../api')
+          let teamPlan: import('../types').TeamPlan | null = null
+          try {
+            teamPlan = await generateTeamPlan()
+          } catch { /* non-blocking */ }
+          setLaunchResult({ threadId: data.prime_launch.thread_id ?? null, teamPlan })
+        }
       }
     } catch (err) {
       setSubmitError(err instanceof Error ? err.message : 'Network error')
     } finally {
       setSubmitting(false)
+    }
+  }
+
+  async function handleConfirmTeamPlan(selectedRoles: string[]) {
+    if (!launchResult?.teamPlan?.id) return
+    setConfirming(true)
+    try {
+      const { confirmTeamPlan } = await import('../api')
+      const result = await confirmTeamPlan(launchResult.teamPlan.id, { selected_roles: selectedRoles, confirm: true })
+      setLaunchResult((prev) => prev ? { ...prev, teamPlan: result.team_plan } : prev)
+      await queryClient.invalidateQueries({ queryKey: ['agents'] })
+    } catch { /* ignore */ } finally {
+      setConfirming(false)
     }
   }
 
@@ -1527,12 +2017,26 @@ export function Setup({ onSkip }: { onSkip?: () => void }) {
           {step === 4 && <StepRules state={state} onChange={setState} />}
           {step === 5 && <StepWorkspace state={state} onChange={setState} />}
           {step === 6 && (
+            <StepPlugins
+              pluginChoices={state.pluginChoices ?? []}
+              onChange={(update) => setState((s) => ({ ...s, pluginChoices: update.plugin_choices }))}
+            />
+          )}
+          {step === 7 && !launchResult && (
             <StepLaunch
               state={state}
               onSubmit={handleSubmit}
               submitting={submitting}
               error={submitError}
               onGoToStep={(s) => setStep(s)}
+            />
+          )}
+          {step === 7 && launchResult && (
+            <StepPostLaunch
+              threadId={launchResult.threadId}
+              teamPlan={launchResult.teamPlan}
+              onConfirmTeamPlan={handleConfirmTeamPlan}
+              confirming={confirming}
             />
           )}
         </div>
@@ -1552,7 +2056,7 @@ export function Setup({ onSkip }: { onSkip?: () => void }) {
                 Skip for now
               </button>
             )}
-            {step < 6 && (
+            {step < STEPS.length - 1 && (
               <button
                 type="button"
                 onClick={() => setStep((s) => (s + 1) as Step)}

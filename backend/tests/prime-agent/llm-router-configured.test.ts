@@ -26,6 +26,24 @@ vi.mock('openai', () => ({
 
 vi.mock('../../src/prime-agent/config.js', () => ({
   getPrimeConfig: mockGetPrimeConfig,
+  resolveModelRoutes: (config: any, funcType: string) => {
+    // Simple implementation matching the real one for tests
+    const prefs = config.model_preferences?.[funcType]
+    if (prefs && prefs.primary) {
+      return [prefs.primary, ...(prefs.fallbacks ?? [])]
+    }
+    const legacyRoutes = config.provider_routing?.[funcType]
+    if (Array.isArray(legacyRoutes) && legacyRoutes.length > 0) {
+      return legacyRoutes
+    }
+    if (funcType === 'planning') {
+      const fallback = config.provider_routing?.['routing']
+      if (Array.isArray(fallback) && fallback.length > 0) {
+        return fallback
+      }
+    }
+    return []
+  },
 }))
 
 vi.mock('../../src/registry.js', () => ({

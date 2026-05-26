@@ -6,6 +6,92 @@ import { handlePrimeEvent } from './event-loop.js'
 import { createConfiguredLlmRouter, type LlmRouter } from './llm-router.js'
 import { createInMemoryPrimeQueue, createPostgresPrimeQueue, type PrimeQueue } from './queue.js'
 
+/**
+ * Team plan for Prime onboarding.
+ * Represents a proposed set of agents derived from the setup conversation.
+ */
+export interface TeamPlan {
+  id: string
+  purpose: string
+  confirmation_status: 'proposed' | 'confirmed' | 'rejected' | 'partially_confirmed'
+  agents: Array<{
+    role: string
+    name: string
+    rationale: string
+    recommendation_strength: 'strongly_recommended' | 'optional'
+    category: 'platform_maintenance' | 'goal_specific'
+    capabilities: string[]
+  }>
+  created_agent_ids: string[]
+}
+
+/**
+ * Generate a team plan for initial Prime onboarding.
+ * Inserts a row into the team_plans table and returns the created plan.
+ */
+export async function generateTeamPlan(
+  pool: pg.Pool,
+  sessionId: string
+): Promise<TeamPlan> {
+  const agents: TeamPlan['agents'] = [
+    {
+      role: 'sre',
+      name: 'SRE Agent',
+      rationale: 'Monitors system health and responds to incidents',
+      recommendation_strength: 'strongly_recommended' as const,
+      category: 'platform_maintenance' as const,
+      capabilities: ['monitoring', 'alerting', 'incident_response'],
+    },
+    {
+      role: 'devops',
+      name: 'DevOps Agent',
+      rationale: 'Manages CI/CD pipelines and infrastructure provisioning',
+      recommendation_strength: 'strongly_recommended' as const,
+      category: 'platform_maintenance' as const,
+      capabilities: ['ci_cd', 'infrastructure', 'deployment'],
+    },
+    {
+      role: 'architect',
+      name: 'Architect Agent',
+      rationale: 'Reviews technical decisions and maintains system design consistency',
+      recommendation_strength: 'optional' as const,
+      category: 'goal_specific' as const,
+      capabilities: ['design_review', 'documentation'],
+    },
+    {
+      role: 'researcher',
+      name: 'Researcher Agent',
+      rationale: 'Investigates new technologies and gathers context for decisions',
+      recommendation_strength: 'optional' as const,
+      category: 'goal_specific' as const,
+      capabilities: ['research', 'analysis'],
+    },
+  ]
+
+  const { rows } = await pool.query(
+    `INSERT INTO team_plans (title, session_id, agents, confirmation_status, confirmed, recommended)
+     VALUES ($1, $2, $3, $4, $5, $6)
+     RETURNING id, confirmation_status, agents, created_agent_ids`,
+    [
+      'Recommended Initial Team',
+      sessionId,
+      JSON.stringify(agents),
+      'proposed',
+      false,
+      true,
+    ]
+  )
+
+  const row = rows[0]
+  return {
+    id: row.id,
+    purpose: 'Initial team to support Prime operations',
+    confirmation_status: row.confirmation_status as TeamPlan['confirmation_status'],
+    agents: row.agents as TeamPlan['agents'],
+    created_agent_ids: row.created_agent_ids as string[],
+  }
+}
+
 export interface PrimeAgentService {
   queue: PrimeQueue
   start(): Promise<void>

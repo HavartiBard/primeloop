@@ -47,3 +47,7 @@ When editing `backend/src/db.ts`:
 - Report changed files and the verification result.
 - If verification fails, report the failure clearly and do not hide it.
 - If no verification command is requested, do not invent one solely for process reasons.
+
+<!-- SPECKIT START -->
+Current Speckit plan: `specs/018-prime-onboarding-config/plan.md`
+<!-- SPECKIT END -->

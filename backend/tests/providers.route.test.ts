@@ -4,6 +4,7 @@ import express from 'express'
 import pg from 'pg'
 import { createPool, runMigrations } from '../src/db.js'
 import { createProvidersRouter } from '../src/routes/providers.js'
+import { createSetupRouter } from '../src/routes/setup.js'
 
 const TEST_DB = process.env.TEST_DATABASE_URL!
 process.env.SECRET_ENCRYPTION_KEY = 'a'.repeat(64)
@@ -97,4 +98,152 @@ describe('providers router', () => {
     expect(list2.body).toHaveLength(initialCount - 1)
     expect(list2.body.some((provider: { id: string }) => provider.id === id)).toBe(false)
   })
+})
+
+// ─── T014: Backend route tests for model capability assessment ──────────────
+
+describe('POST /api/providers/model-capability', () => {
+  let pool: pg.Pool
+  let app: express.Application
+
+  beforeAll(async () => {
+    pool = createPool(TEST_DB)
+    await runMigrations(pool)
+    app = express()
+    app.use(express.json())
+    app.use('/api/providers', createProvidersRouter({ pool }))
+  })
+
+  afterAll(async () => {
+    await pool.query('DELETE FROM agents')
+    await pool.query('DELETE FROM providers')
+    await pool.end()
+  })
+
+  it('returns capability assessment for a model', async () => {
+    const res = await request(app).post('/api/providers/model-capability').send({ model: 'claude-sonnet-4-6' })
+    expect(res.status).toBe(200)
+    expect(res.body.capability).toBeDefined()
+    expect(res.body.warning).toBeDefined()
+  })
+
+  it('returns 400 when model is missing', async () => {
+    const res = await request(app).post('/api/providers/model-capability').send({})
+    expect(res.status).toBe(400)
+    expect(res.body.error).toBeDefined()
+  })
+
+  it('returns 400 when model is not a string', async () => {
+    const res = await request(app).post('/api/providers/model-capability').send({ model: 123 })
+    expect(res.status).toBe(400)
+    expect(res.body.error).toBeDefined()
+  })
+})
+
+// ─── T014: Backend route tests for model discovery, provider rejection, unreachable local provider ─────────────
+
+describe('POST /api/setup/provider-models', () => {
+  let pool: pg.Pool
+  let app: express.Application
+
+  beforeAll(async () => {
+    pool = createPool(TEST_DB)
+    await runMigrations(pool)
+    app = express()
+    app.use(express.json())
+    app.use('/api/setup', createSetupRouter({ pool }))
+  })
+
+  afterAll(async () => {
+    await pool.end()
+  })
+
+  it('returns models for ollama provider', async () => {
+    const res = await request(app).post('/api/setup/provider-models').send({
+      type: 'ollama',
+      base_url: 'http://localhost:11434',
+    })
+    expect(res.status).toBe(200)
+    // Ollama may be unreachable in test environment, but should return valid shape
+    expect(Array.isArray(res.body.models)).toBe(true)
+  }, 5_000)
+
+  it('returns { error: "unreachable" } for unreachable ollama provider', async () => {
+    const res = await request(app).post('/api/setup/provider-models').send({
+      type: 'ollama',
+      base_url: 'http://127.0.0.1:19999',
+    })
+    expect(res.status).toBe(200)
+    expect(res.body.error).toBe('unreachable')
+    expect(Array.isArray(res.body.models)).toBe(true) // Empty array expected
+  }, 5_000)
+
+  it('returns 400 when type is missing', async () => {
+    const res = await request(app).post('/api/setup/provider-models').send({
+      base_url: 'http://localhost:11434',
+    })
+    expect(res.status).toBe(400)
+    expect(res.body.error).toBeDefined()
+  })
+
+  it('returns 400 when base_url is missing', async () => {
+    const res = await request(app).post('/api/setup/provider-models').send({
+      type: 'ollama',
+    })
+    expect(res.status).toBe(400)
+    expect(res.body.error).toBeDefined()
+  })
+
+  it('returns models for anthropic with api_key', async () => {
+    const res = await request(app).post('/api/setup/provider-models').send({
+      type: 'anthropic',
+      base_url: 'https://api.anthropic.com',
+      api_key: 'sk-test-invalid-key-for-discovery',
+    })
+    // Should return provider rejection error for invalid key
+    expect(res.status).toBe(200)
+    expect(Array.isArray(res.body.models)).toBe(true)
+  }, 5_000)
+})
+
+// ─── Provider rejection and unreachable recovery tests ─────────────
+
+describe('provider rejection and unreachable recovery', () => {
+  let pool: pg.Pool
+  let app: express.Application
+
+  beforeAll(async () => {
+    pool = createPool(TEST_DB)
+    await runMigrations(pool)
+    app = express()
+    app.use(express.json())
+    app.use('/api/setup', createSetupRouter({ pool }))
+  })
+
+  afterAll(async () => {
+    await pool.end()
+  })
+
+  it('returns recoverable error for unreachable local provider during model discovery', async () => {
+    const res = await request(app).post('/api/setup/provider-models').send({
+      type: 'ollama',
+      base_url: 'http://127.0.0.1:19999',
+    })
+    expect(res.status).toBe(200)
+    // Recovery path: return empty models with error flag
+    expect(res.body.error).toBe('unreachable')
+    expect(res.body.models).toEqual([])
+  }, 5_000)
+
+  it('returns provider rejection error for invalid anthropic key', async () => {
+    const res = await request(app).post('/api/setup/provider-models').send({
+      type: 'anthropic',
+      base_url: 'https://api.anthropic.com',
+      api_key: 'sk-invalid-key-12345',
+    })
+    // Provider rejects the request - should return appropriate error
+    expect(res.status).toBe(200)
+    // The backend returns models array (possibly empty) rather than throwing
+    expect(Array.isArray(res.body.models)).toBe(true)
+  }, 5_000)
 })

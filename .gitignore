@@ -8,6 +8,7 @@ backend/.env.test
 
 # Node.js / TypeScript
 node_modules/
+node_modules/.cache/
 dist/
 build/
 *.log

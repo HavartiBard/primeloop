@@ -498,7 +498,12 @@ export function Agents() {
                       }}
                       className={`cursor-pointer border-b border-[var(--border-soft)]/50 transition hover:bg-[var(--panel-subtle)] ${isSelected ? 'bg-[var(--sel-bg)]/35' : ''}`}
                     >
-                      <td className="px-4 py-3 text-[var(--text)] font-mono">{a.name}</td>
+                      <td className="px-4 py-3 text-[var(--text)] font-mono">
+                        {a.name}
+                        {!!a.config?.onboarding_created && (
+                          <span className="ml-1.5 px-1 py-0.5 rounded text-[10px] bg-[var(--panel-subtle)] border border-[var(--border-soft)] text-[var(--muted)]">onboarding</span>
+                        )}
+                      </td>
                       <td className="px-4 py-3 text-[var(--muted)]">{a.type}</td>
                       <td className="px-4 py-3">
                         <div className="font-mono text-[var(--text)]">{a.runtime_family}</div>

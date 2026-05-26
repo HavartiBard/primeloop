@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { fetchPrimeSession, fetchPrimeSessions, fetchThreadMessages, sendPrimeMessage } from '../api'
+import { BottomActionToolbar } from './agentCanvas/BottomActionToolbar'
 import type { AgentEvent, RegistryAgent, RuntimeAuditLoop, RuntimeDelegation, RuntimeThread, RuntimeWorkItem } from '../types'
 
 type AgentHealth = {
@@ -854,6 +855,17 @@ export function CollaborationRoomsView({
                   )}
                 </div>
               </div>
+
+              {/* Bottom Action Toolbar */}
+              {activeRoomId && (
+                <div className="shrink-0">
+                  <BottomActionToolbar
+                    drafts={{}}
+                    onOpenDraft={() => {}}
+                    compact
+                  />
+                </div>
+              )}
 
               {/* Chat input */}
               <div className="flex shrink-0 items-center gap-2 border-t border-[var(--border-soft)] bg-[var(--panel)] px-4 py-3">

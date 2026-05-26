@@ -36,6 +36,17 @@ import type {
   CodexDeviceAuthPoll,
   MCPServer,
   ModelCapabilityAssessment,
+  ProviderDraft,
+  FunctionAssignment,
+  PluginInfo,
+  PluginChoice,
+  TeamPlan,
+  LaunchReadinessResult,
+  PrimeConfigDraft,
+  SetupDraft,
+  SetupDraftUpdate,
+  TeamPlanConfirmRequest,
+  TeamPlanConfirmResponse,
 } from './types'
 
 const API_ORIGIN = ((import.meta.env.VITE_API_BASE as string | undefined) ?? '').replace(/\/+$/, '')
@@ -642,6 +653,91 @@ export async function fetchRuntimeAuditLoops(): Promise<RuntimeAuditLoop[]> {
 
 import type { PrimeProfileResponse, PrimeProfileSoul, PrimeProfileOperating, PrimeSectionKey } from './types'
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Prime Onboarding Configuration (spec 018) ───────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Fetch onboarding status. */
+export async function fetchSetupStatus(): Promise<{
+  complete: boolean
+  current_step?: string | null
+  status?: string | null
+  can_resume?: boolean
+  has_providers?: boolean
+  last_error?: string
+}> {
+  const res = await fetch(`${API_BASE}/setup/status`)
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json()
+}
+
+/** Fetch current onboarding draft. */
+export async function fetchSetupDraft(): Promise<SetupDraft> {
+  const res = await fetch(`${API_BASE}/setup/draft`)
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json()
+}
+
+/** Save onboarding draft. */
+export async function saveSetupDraft(data: SetupDraftUpdate): Promise<{
+  ok: boolean
+  launch_readiness: LaunchReadinessResult
+}> {
+  const res = await fetch(`${API_BASE}/setup/draft`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json()
+}
+
+/** Validate launch readiness. */
+export async function validateLaunch(): Promise<LaunchReadinessResult> {
+  const res = await fetch(`${API_BASE}/setup/validate-launch`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json()
+}
+
+/** Fetch available plugins for onboarding. */
+export async function fetchSetupPlugins(): Promise<PluginInfo[]> {
+  const res = await fetch(`${API_BASE}/setup/plugins`)
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json()
+}
+
+/** Generate an initial team plan for the current onboarding session. */
+export async function generateTeamPlan(): Promise<TeamPlan> {
+  const res = await fetch(`${API_BASE}/setup/team-plan/generate`, { method: 'POST' })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json()
+}
+
+/** Fetch a team plan by id. */
+export async function fetchTeamPlan(id: string): Promise<TeamPlan> {
+  const res = await fetch(`${API_BASE}/setup/team-plan/${id}`)
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json()
+}
+
+/** Confirm team plan. */
+export async function confirmTeamPlan(
+  id: string,
+  data: TeamPlanConfirmRequest
+): Promise<TeamPlanConfirmResponse> {
+  const res = await fetch(`${API_BASE}/setup/team-plan/${id}/confirm`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json()
+}
+
 export async function fetchPrimeProfile(): Promise<PrimeProfileResponse> {
   const res = await fetch(`${API_BASE}/api/prime-agent/profile`)
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
@@ -660,6 +756,76 @@ export async function savePrimeProfile(body: {
   })
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   return res.json()
+}
+
+/**
+ * Alias for savePrimeProfile to preserve backward compatibility
+ * @deprecated Use savePrimeProfile instead
+ */
+export async function updatePrimeProfile(body: {
+  name?: string
+  soul?: Partial<PrimeProfileSoul>
+  operating?: Partial<PrimeProfileOperating>
+}): Promise<PrimeProfileResponse> {
+  return savePrimeProfile(body)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Toolbar Action Helpers (spec 017)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Create a goal via control-plane API
+ */
+export async function createGoal(data: {
+  title: string
+  intent?: string
+  priority?: string
+  metadata?: Record<string, unknown>
+}): Promise<{ id: string; title: string }> {
+  const res = await fetch(`${API_BASE}/control-plane/goals`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json()
+}
+
+/**
+ * Create an artifact via thread messages with metadata
+ */
+export async function createArtifact(
+  threadId: string,
+  data: { name: string; type: string; content: string }
+): Promise<ThreadMessage> {
+  return appendThreadMessage(threadId, {
+    role: 'system',
+    sender: 'system',
+    content: `Artifact created: ${data.name}`,
+    metadata: {
+      artifact: {
+        name: data.name,
+        type: data.type,
+        has_content: true,
+      },
+    },
+  })
+}
+
+/**
+ * Add a note via thread messages with metadata
+ */
+export async function addNote(
+  threadId: string,
+  content: string,
+): Promise<ThreadMessage> {
+  return appendThreadMessage(threadId, {
+    role: 'user',
+    sender: 'operator',
+    content,
+    metadata: { note: true },
+  })
 }
 
 export async function patchPrimeProfileSection(

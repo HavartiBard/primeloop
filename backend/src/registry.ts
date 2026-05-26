@@ -472,3 +472,53 @@ export async function upsertLocalCodexProvider(pool: pg.Pool): Promise<void> {
     ON CONFLICT (name) DO UPDATE SET type = EXCLUDED.type, base_url = EXCLUDED.base_url
   `)
 }
+
+// ─── Onboarding: Masked credential mapping ─────────────────────────────────────
+
+/** Map a raw provider to a masked draft for onboarding. */
+export function mapProviderToDraft(provider: Provider): ProviderDraft {
+  const hasApiKey = !!provider.api_key
+  const isEncryptedKey = hasApiKey && isEncrypted(provider.api_key ?? '')
+  // Use spec-compliant masked_credential_state values from data-model.md:
+  // absent | present | needs_replacement | not_required
+  let maskedCredentialState: ProviderDraft['masked_credential_state'] = 'absent'
+  if (provider.type === 'codex') {
+    // Local codex provider doesn't need credentials
+    maskedCredentialState = 'not_required'
+  } else if (!hasApiKey) {
+    maskedCredentialState = 'absent'
+  } else if (isEncryptedKey) {
+    maskedCredentialState = 'present'
+  } else {
+    // Raw/unencrypted API key present (should not happen in production)
+    maskedCredentialState = 'needs_replacement'
+  }
+
+  // Map backend connection status to contract values:
+  // 'connected' -> 'verified', 'unknown' -> 'idle'
+  const connectionStatus: ProviderDraft['connection_status'] =
+    hasApiKey ? 'verified' : 'idle'
+
+  return {
+    id: provider.id,
+    name: provider.name,
+    type: provider.type,
+    base_url: provider.base_url,
+    model: provider.model ?? undefined,
+    masked_credential_state: maskedCredentialState,
+    connection_status: connectionStatus,
+  }
+}
+
+/** Provider draft interface for onboarding (with masked credentials). */
+export interface ProviderDraft {
+  id: string
+  name: string
+  type: string
+  base_url: string
+  model?: string | null
+  masked_credential_state: 'absent' | 'present' | 'needs_replacement' | 'not_required'
+  connection_status: 'idle' | 'verifying' | 'verified' | 'failed' | 'skipped' | 'unavailable'
+  available_models?: string[]
+  verification_error?: string | null
+}
