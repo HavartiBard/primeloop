@@ -40,6 +40,7 @@ export function NewGoalModal({ onClose, onCreated }: NewGoalModalProps) {
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         background: 'rgba(0,0,0,0.45)',
       }}
+      onPointerDown={(e) => e.stopPropagation()}
       onClick={(e) => { if (e.target === e.currentTarget) onClose() }}
     >
       <div
