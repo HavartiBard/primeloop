@@ -24,6 +24,8 @@ export interface BottomActionToolbarProps {
   onSubmitDraft?: (draftId: string) => void
   /** Compact layout */
   compact?: boolean
+  /** When true, renders with absolute positioning scoped inside the parent canvas container */
+  contained?: boolean
 }
 
 /**
@@ -35,6 +37,7 @@ export function BottomActionToolbar({
   onCancelDraft,
   onSubmitDraft,
   compact = false,
+  contained = false,
 }: BottomActionToolbarProps) {
   const actionTypes: ToolbarActionType[] = [
     'spawn_agent',
@@ -44,10 +47,26 @@ export function BottomActionToolbar({
     'add_note',
   ]
 
+  const containerStyle = contained
+    ? {
+        position: 'absolute' as const,
+        bottom: '1rem',
+        left: '50%',
+        transform: 'translateX(-50%)',
+        zIndex: 10,
+        borderRadius: 8,
+        border: '1px solid var(--border-soft)',
+        boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+        background: 'var(--panel)',
+      }
+    : undefined
+
   return (
     <div
-      className="fixed bottom-0 left-0 right-0 bg-[var(--panel)] border-t border-[var(--border-soft)]
-        shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.1)] z-50"
+      className={contained
+        ? ''
+        : 'fixed bottom-0 left-0 right-0 bg-[var(--panel)] border-t border-[var(--border-soft)] shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.1)] z-50'}
+      style={containerStyle}
       role="toolbar"
       aria-label="Action toolbar"
     >

@@ -6,44 +6,40 @@
 import { useState, useCallback, useRef } from 'react'
 import type { CanvasViewport } from '../types'
 
-/**
- * Options for the canvas viewport hook
- */
 export interface UseCanvasViewportOptions {
-  /** Initial viewport state */
   initialViewport?: Partial<CanvasViewport>
-  /** Minimum zoom level */
   minScale?: number
-  /** Maximum zoom level */
   maxScale?: number
-  /** Zoom step factor */
   zoomStep?: number
 }
 
-/**
- * Result from the canvas viewport hook
- */
 export interface UseCanvasViewportResult {
-  /** Current viewport state */
   viewport: CanvasViewport
-  /** Update viewport */
   setViewport: (viewport: Partial<CanvasViewport>) => void
-  /** Pan by offset */
   panBy: (dx: number, dy: number) => void
-  /** Zoom by factor */
   zoomBy: (factor: number, centerX?: number, centerY?: number) => void
-  /** Reset viewport to defaults */
   reset: () => void
-  /** Fit to view */
   fitToView: () => void
-  /** Zoom in */
   zoomIn: () => void
-  /** Zoom out */
   zoomOut: () => void
-  /** Set selected node ID */
   setSelectedNodeId: (nodeId?: string) => void
-  /** Get transform style string */
   getTransformStyle: () => string
+  /** Spread onto the canvas container div for pointer-drag pan */
+  dragHandlers: {
+    onPointerDown: (e: React.PointerEvent) => void
+    onPointerMove: (e: React.PointerEvent) => void
+    onPointerUp: (e: React.PointerEvent) => void
+  }
+  /** Spread onto the canvas container div for scroll-wheel zoom */
+  wheelHandler: {
+    onWheel: (e: React.WheelEvent) => void
+  }
+  /** Spread onto the canvas container div for two-finger pinch zoom */
+  touchHandlers: {
+    onTouchStart: (e: React.TouchEvent) => void
+    onTouchMove: (e: React.TouchEvent) => void
+    onTouchEnd: () => void
+  }
 }
 
 /**
@@ -67,6 +63,8 @@ export function useCanvasViewport(
   })
 
   const viewportRef = useRef(viewport)
+  const dragRef = useRef<{ x: number; y: number } | null>(null)
+  const pinchRef = useRef<number | null>(null)
 
   // Keep ref in sync
   viewportRef.current = viewport
@@ -155,6 +153,58 @@ export function useCanvasViewport(
     return `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.scale})`
   }, [viewport])
 
+  const onPointerDown = useCallback((e: React.PointerEvent) => {
+    if (e.button !== 0) return
+    dragRef.current = { x: e.clientX, y: e.clientY }
+    ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+  }, [])
+
+  const onPointerMove = useCallback((e: React.PointerEvent) => {
+    if (!dragRef.current) return
+    panBy(e.clientX - dragRef.current.x, e.clientY - dragRef.current.y)
+    dragRef.current = { x: e.clientX, y: e.clientY }
+  }, [panBy])
+
+  const onPointerUp = useCallback(() => {
+    dragRef.current = null
+  }, [])
+
+  const onWheel = useCallback((e: React.WheelEvent) => {
+    e.preventDefault()
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+    const cx = e.clientX - rect.left
+    const cy = e.clientY - rect.top
+    zoomBy(e.deltaY < 0 ? 1.1 : 0.9, cx, cy)
+  }, [zoomBy])
+
+  const onTouchStart = useCallback((e: React.TouchEvent) => {
+    if (e.touches.length === 2) {
+      pinchRef.current = Math.hypot(
+        e.touches[1].clientX - e.touches[0].clientX,
+        e.touches[1].clientY - e.touches[0].clientY,
+      )
+    }
+  }, [])
+
+  const onTouchMove = useCallback((e: React.TouchEvent) => {
+    if (e.touches.length === 2 && pinchRef.current !== null) {
+      const dist = Math.hypot(
+        e.touches[1].clientX - e.touches[0].clientX,
+        e.touches[1].clientY - e.touches[0].clientY,
+      )
+      const factor = dist / pinchRef.current
+      const cx = (e.touches[0].clientX + e.touches[1].clientX) / 2
+      const cy = (e.touches[0].clientY + e.touches[1].clientY) / 2
+      const rect = (e.currentTarget as HTMLElement).getBoundingClientRect()
+      zoomBy(factor, cx - rect.left, cy - rect.top)
+      pinchRef.current = dist
+    }
+  }, [zoomBy])
+
+  const onTouchEnd = useCallback(() => {
+    pinchRef.current = null
+  }, [])
+
   return {
     viewport,
     setViewport,
@@ -166,6 +216,9 @@ export function useCanvasViewport(
     zoomOut,
     setSelectedNodeId,
     getTransformStyle,
+    dragHandlers: { onPointerDown, onPointerMove, onPointerUp },
+    wheelHandler: { onWheel },
+    touchHandlers: { onTouchStart, onTouchMove, onTouchEnd },
   }
 }
 

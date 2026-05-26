@@ -44,6 +44,23 @@ export function createControlPlaneRouter({
         priority: body.priority,
       })
 
+      // Create goal-room thread in the same logical transaction
+      const threadResult = await pool.query<{ id: string }>(
+        `INSERT INTO threads (title, status, metadata)
+         VALUES ($1, 'active', $2)
+         RETURNING id`,
+        [goal.title, JSON.stringify({ kind: 'goal-room', goal_id: goal.id })],
+      )
+      const threadId = threadResult.rows[0]?.id ?? null
+
+      if (threadId) {
+        await pool.query(
+          `INSERT INTO thread_messages (thread_id, role, sender, content, metadata)
+           VALUES ($1, 'system', 'system', $2, '{}')`,
+          [threadId, `Goal created: ${goal.title}`],
+        )
+      }
+
       // Enqueue for Prime to process and transition to queued
       if (primeQueue) {
         await primeQueue.enqueue({
@@ -52,6 +69,7 @@ export function createControlPlaneRouter({
             goal_id: goal.id,
             title: goal.title,
             intent: goal.intent,
+            thread_id: threadId,
           },
         })
       }
@@ -67,10 +85,11 @@ export function createControlPlaneRouter({
           title: goal.title,
           status: queued.status,
           priority: goal.priority,
+          thread_id: threadId,
         },
       })
 
-      res.status(201).json(queued)
+      res.status(201).json({ ...queued, thread_id: threadId })
     } catch (err) {
       const message = err instanceof Error ? err.message : 'internal error'
       return res.status(400).json({ error: message })

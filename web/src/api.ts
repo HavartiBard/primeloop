@@ -782,7 +782,7 @@ export async function createGoal(data: {
   intent?: string
   priority?: string
   metadata?: Record<string, unknown>
-}): Promise<{ id: string; title: string }> {
+}): Promise<{ id: string; title: string; status: string; thread_id?: string }> {
   const res = await fetch(`${API_BASE}/control-plane/goals`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -839,4 +839,24 @@ export async function patchPrimeProfileSection(
   })
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   return res.json()
+}
+
+// Canvas layout persistence
+
+export async function fetchCanvasLayout(): Promise<Record<string, { x: number; y: number }>> {
+  const res = await fetch(`${API_BASE}/canvas/layout`)
+  if (!res.ok) return {}
+  const data = await res.json() as { positions: Record<string, { x: number; y: number }> }
+  return data.positions ?? {}
+}
+
+export async function saveCanvasLayout(
+  positions: Record<string, { x: number; y: number }>,
+): Promise<void> {
+  await fetch(`${API_BASE}/canvas/layout`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ positions }),
+  })
+  // Errors are intentionally swallowed — layout save must not block the UI
 }

@@ -1,6 +1,11 @@
-import { useMemo } from 'react'
+import { useMemo, useState, useRef, useCallback } from 'react'
 import type { CSSProperties } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { CircuitCanvasControls } from '../components/agentCanvas/CircuitCanvasControls'
+import { BottomActionToolbar } from '../components/agentCanvas/BottomActionToolbar'
+import { NewGoalModal } from '../components/agentCanvas/NewGoalModal'
+import { useCanvasViewport } from '../hooks/useCanvasViewport'
+import { useCanvasLayout } from '../hooks/useCanvasLayout'
 import {
   fetchAgentRegistry,
   fetchAgents,
@@ -10,7 +15,7 @@ import {
   fetchRuntimeWorkItems,
   fetchThreads,
 } from '../api'
-import type { RegistryAgent, RuntimeAuditLoop, RuntimeDelegation, RuntimeThread, RuntimeWorkItem } from '../types'
+import type { RegistryAgent, RuntimeAuditLoop, RuntimeDelegation, RuntimeThread, RuntimeWorkItem, ToolbarDraftAction, ToolbarActionType } from '../types'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -254,29 +259,60 @@ function sdotStyle(state: NodeState): { bg: string; cls: string } {
 
 interface CircuitNodeProps extends NodeDef {
   onRoomClick?: (id: string) => void
+  onPositionChange?: (id: string, x: number, y: number) => void
 }
 
-function CircuitNode({ id, type, state, x, y, wide, title, summary, chips, onRoomClick }: CircuitNodeProps) {
+function CircuitNode({ id, type, state, x, y, wide, title, summary, chips, onRoomClick, onPositionChange }: CircuitNodeProps) {
   const dot = sdotStyle(state)
   const isRoom = type === 'room'
   const width = wide ? ROOM_W : NODE_W
   const leftBorder = state === 'approval' ? '3px solid var(--s-att-bd)' : undefined
+  const dragState = useRef<{ startX: number; startY: number; nodeX: number; nodeY: number } | null>(null)
+  const [localPos, setLocalPos] = useState<{ x: number; y: number } | null>(null)
+
+  const displayX = localPos?.x ?? x
+  const displayY = localPos?.y ?? y
+
+  function handlePointerDown(e: React.PointerEvent) {
+    e.stopPropagation()
+    dragState.current = { startX: e.clientX, startY: e.clientY, nodeX: displayX, nodeY: displayY }
+    ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
+  }
+
+  function handlePointerMove(e: React.PointerEvent) {
+    if (!dragState.current) return
+    const dx = e.clientX - dragState.current.startX
+    const dy = e.clientY - dragState.current.startY
+    setLocalPos({ x: dragState.current.nodeX + dx, y: dragState.current.nodeY + dy })
+  }
+
+  function handlePointerUp() {
+    if (!dragState.current || !localPos) {
+      dragState.current = null
+      return
+    }
+    onPositionChange?.(id, localPos.x, localPos.y)
+    dragState.current = null
+  }
 
   return (
     <div
       onClick={isRoom && onRoomClick ? () => onRoomClick(id) : undefined}
+      onPointerDown={handlePointerDown}
+      onPointerMove={handlePointerMove}
+      onPointerUp={handlePointerUp}
       style={{
         position: 'absolute',
-        left: x,
-        top: y,
+        left: displayX,
+        top: displayY,
         width,
         background: 'var(--panel)',
         border: `1.5px solid ${nodeBorder(state)}`,
         borderLeft: leftBorder ?? `1.5px solid ${nodeBorder(state)}`,
         borderRadius: 5,
         padding: '9px 11px',
-        cursor: isRoom ? 'pointer' : 'default',
-        transition: 'box-shadow 0.15s, transform 0.1s',
+        cursor: dragState.current ? 'grabbing' : isRoom ? 'pointer' : 'grab',
+        transition: dragState.current ? 'none' : 'box-shadow 0.15s',
         boxShadow: nodeGlow(state),
         userSelect: 'none',
         opacity: state === 'neutral' ? 0.72 : 1,
@@ -407,6 +443,28 @@ interface CircuitViewProps {
 }
 
 export function CircuitView({ onNavigate }: CircuitViewProps) {
+  const viewportHook = useCanvasViewport()
+  const { zoomIn, zoomOut, reset, fitToView, viewport, setViewport, dragHandlers, wheelHandler, touchHandlers } = viewportHook
+  const { positions, updatePosition } = useCanvasLayout()
+  const queryClient = useQueryClient()
+
+  const [toolbarDrafts, setToolbarDrafts] = useState<Record<string, ToolbarDraftAction>>({})
+  const [showGoalModal, setShowGoalModal] = useState(false)
+
+  const handleOpenDraft = useCallback((actionType: ToolbarActionType) => {
+    if (actionType === 'create_goal') {
+      setShowGoalModal(true)
+    }
+  }, [])
+
+  const handleCancelDraft = useCallback((draftId: string) => {
+    setToolbarDrafts((prev) => {
+      const next = { ...prev }
+      delete next[draftId]
+      return next
+    })
+  }, [])
+
   const { data: agentRegistry = [] } = useQuery({
     queryKey: ['agent-registry', 'circuit'],
     queryFn: fetchAgentRegistry,
@@ -461,19 +519,77 @@ export function CircuitView({ onNavigate }: CircuitViewProps) {
     [primeName, agentRegistry, threads, workItems, delegations, auditLoops, healthMap],
   )
 
+  // Merge persisted positions into graph nodes
+  const mergedNodes = useMemo(() => {
+    const result = new Map<string, NodeDef>()
+    for (const [id, node] of nodes) {
+      const saved = positions[id]
+      result.set(id, saved ? { ...node, x: saved.x, y: saved.y } : node)
+    }
+    return result
+  }, [nodes, positions])
+
   return (
-    <div style={{ ...GRID_BG, flex: 1, overflow: 'auto', position: 'relative' }}>
-      <div style={{ position: 'relative', width: CANVAS_W, height: CANVAS_H }}>
-        <DynamicEdges nodes={nodes} edges={edges} />
-        {Array.from(nodes.values()).map((node) => (
+    <div
+      style={{ ...GRID_BG, flex: 1, overflow: 'hidden', position: 'relative', touchAction: 'none' }}
+      tabIndex={0}
+      {...dragHandlers}
+      {...wheelHandler}
+      {...touchHandlers}
+    >
+      {/* Canvas controls */}
+      <div className="absolute top-4 right-4 z-50">
+        <CircuitCanvasControls
+          viewport={viewportHook}
+          compact
+        />
+      </div>
+
+      <div
+        style={{
+          position: 'relative',
+          width: CANVAS_W,
+          height: CANVAS_H,
+          transform: viewportHook.getTransformStyle(),
+          transformOrigin: '0 0',
+        }}
+      >
+        <DynamicEdges nodes={mergedNodes} edges={edges} />
+        {Array.from(mergedNodes.values()).map((node) => (
           <CircuitNode
             key={node.id}
             {...node}
             onRoomClick={node.type === 'room' && onNavigate ? () => onNavigate('/') : undefined}
+            onPositionChange={updatePosition}
           />
         ))}
       </div>
+
+      {/* Bottom action toolbar scoped to canvas */}
+      <BottomActionToolbar
+        drafts={toolbarDrafts}
+        onOpenDraft={handleOpenDraft}
+        onCancelDraft={handleCancelDraft}
+        compact
+        contained
+      />
+
       <Legend />
+
+      {showGoalModal && (
+        <NewGoalModal
+          onClose={() => setShowGoalModal(false)}
+          onCreated={(result) => {
+            setShowGoalModal(false)
+            // Invalidate queries so canvas picks up the new thread/goal
+            queryClient.invalidateQueries({ queryKey: ['threads'] })
+            queryClient.invalidateQueries({ queryKey: ['runtime-work-items'] })
+            if (result.thread_id && onNavigate) {
+              onNavigate(`/rooms/${result.thread_id}`)
+            }
+          }}
+        />
+      )}
     </div>
   )
 }

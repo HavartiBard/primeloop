@@ -42,6 +42,7 @@ export interface GoalCreatedEvent {
     goal_id: string
     title: string
     intent: string
+    thread_id?: string | null
   }
 }
 

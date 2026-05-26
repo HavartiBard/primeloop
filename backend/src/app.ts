@@ -16,6 +16,7 @@ import { createMcpServersRouter } from './routes/mcp-servers.js'
 import { createPrimeAgentRouter } from './routes/prime-agent.js'
 import { createSetupRouter } from './routes/setup.js'
 import { createPrimeProfileRouter } from './routes/prime-profile.js'
+import { createCanvasRouter } from './routes/canvas.js'
 import type { PrimeQueue } from './prime-agent/queue.js'
 import type { RegistryAgent } from './registry.js'
 import type WebSocket from 'ws'
@@ -131,6 +132,7 @@ export function createApp(deps: AppDeps): express.Express {
     pool: deps.pool,
     onSetupCompleted: deps.onSetupCompleted,
   }))
+  app.use('/api/canvas', createCanvasRouter({ pool: deps.pool }))
   app.use('/api', createRuntimeRouter({ pool: deps.pool }))
 
   // Serve React SPA — must come after all API routes

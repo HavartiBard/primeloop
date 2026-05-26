@@ -842,6 +842,16 @@ CREATE TABLE IF NOT EXISTS learning_records (
   created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- canvas_layouts: persists operator card positions on the circuit canvas
+CREATE TABLE IF NOT EXISTS canvas_layouts (
+  canvas_key  TEXT        NOT NULL DEFAULT 'default',
+  card_id     TEXT        NOT NULL,
+  x           FLOAT       NOT NULL DEFAULT 0,
+  y           FLOAT       NOT NULL DEFAULT 0,
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (canvas_key, card_id)
+);
+
 -- Seed initial agent roles (idempotent)
 INSERT INTO agent_roles (id, name, tier, domain_capabilities, status, description, can_request_approval)
 VALUES ('role_prime', 'Prime', 'prime', ARRAY['homelab','development','personal_assistant','cross_domain'], 'active',
