@@ -248,7 +248,6 @@ export async function transitionGoalStatus(
   }
 
   values.push(goalId);
-  paramIndex++;
 
   const { rows } = await pool.query(
     `UPDATE goals SET ${setClauses.join(', ')} WHERE id = $${paramIndex} RETURNING *`,
