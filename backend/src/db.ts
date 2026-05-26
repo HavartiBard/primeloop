@@ -852,6 +852,11 @@ CREATE TABLE IF NOT EXISTS canvas_layouts (
   PRIMARY KEY (canvas_key, card_id)
 );
 
+-- Welcome room: always-present onboarding room shown on canvas before any goals exist
+INSERT INTO threads (title, status, metadata)
+SELECT 'Welcome', 'active', '{"kind":"welcome"}'::jsonb
+WHERE NOT EXISTS (SELECT 1 FROM threads WHERE metadata->>'kind' = 'welcome');
+
 -- Seed initial agent roles (idempotent)
 INSERT INTO agent_roles (id, name, tier, domain_capabilities, status, description, can_request_approval)
 VALUES ('role_prime', 'Prime', 'prime', ARRAY['homelab','development','personal_assistant','cross_domain'], 'active',

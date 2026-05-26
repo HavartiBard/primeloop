@@ -8,386 +8,339 @@ import { ToolbarActionComposer } from '../components/agentCanvas/ToolbarActionCo
 import { useCanvasViewport } from '../hooks/useCanvasViewport'
 import { useCanvasLayout } from '../hooks/useCanvasLayout'
 import {
-  fetchAgentRegistry,
-  fetchAgents,
-  fetchRuntimeDelegations,
-  fetchRuntimeOverview,
   fetchRuntimeWorkItems,
   fetchThreads,
 } from '../api'
-import type { RegistryAgent, RuntimeAuditLoop, RuntimeDelegation, RuntimeThread, RuntimeWorkItem, ToolbarDraftAction, ToolbarActionType } from '../types'
-
-// ─── Types ────────────────────────────────────────────────────────────────────
-
-type NodeType  = 'agent' | 'room' | 'work' | 'audit' | 'system'
-type NodeState = 'active' | 'running' | 'blocked' | 'approval' | 'neutral' | 'system'
-type EdgeStyle = 'coord' | 'part' | 'owns' | 'queued' | 'audit'
-
-interface Chip { label: string; variant?: 'ok' | 'run' | 'blk' | 'att' | 'neu' }
-
-interface NodeDef {
-  id: string
-  type: NodeType
-  state: NodeState
-  x: number
-  y: number
-  title: string
-  summary: string
-  chips: Chip[]
-  wide?: boolean
-}
-
-interface EdgeDef {
-  from: string
-  to: string
-  style: EdgeStyle
-}
+import type { RuntimeThread, RuntimeWorkItem, ToolbarDraftAction, ToolbarActionType } from '../types'
 
 // ─── Layout constants ─────────────────────────────────────────────────────────
 
-const CANVAS_W = 1296
-const CANVAS_H = 768
-const NODE_W   = 176
-const ROOM_W   = 192
-const NODE_H   = 96
-const ROW_Y    = [48, 192, 336, 480, 624] as const
+const CANVAS_W   = 2400
+const CANVAS_H   = 1600
+const CARD_W     = 280
+const CARD_H_COL = 96   // collapsed height
+const CARD_GAP_X = 40
+const CARD_GAP_Y = 40
+const GRID_START_X = 60
+const GRID_START_Y = 60
+const CARDS_PER_ROW = 5
+const SNAP = 24
 
-// ─── Layout helpers ───────────────────────────────────────────────────────────
+// ─── Room state helpers ───────────────────────────────────────────────────────
 
-function rowPositions(count: number, nodeWidth = NODE_W): number[] {
-  if (count === 0) return []
-  const spacing = CANVAS_W / (count + 1)
-  return Array.from({ length: count }, (_, i) => Math.round((i + 1) * spacing - nodeWidth / 2))
+type RoomState = 'active' | 'approval' | 'idle' | 'closed'
+
+function roomState(thread: RuntimeThread, workItems: RuntimeWorkItem[]): RoomState {
+  if (thread.status === 'closed') return 'closed'
+  const items = workItems.filter(wi => wi.thread_id === thread.id)
+  if (items.some(wi => wi.status === 'blocked')) return 'approval'
+  if (items.some(wi => wi.status === 'active'))  return 'active'
+  return 'idle'
 }
 
-function routeEdge(x1: number, y1: number, x2: number, y2: number, c = 8): string {
-  const midY = Math.round((y1 + y2) / 2)
-  if (Math.abs(x2 - x1) < 2) return `M ${x1},${y1} V ${y2}`
-  const dx = x2 > x1 ? c : -c
-  if (Math.abs(x2 - x1) <= c * 2) {
-    return `M ${x1},${y1} V ${midY - c} L ${x2},${midY + c} V ${y2}`
-  }
-  return [`M ${x1},${y1}`, `V ${midY - c}`, `L ${x1 + dx},${midY}`, `H ${x2 - dx}`, `L ${x2},${midY + c}`, `V ${y2}`].join(' ')
-}
-
-function nodePt(node: NodeDef, side: 'top' | 'bottom'): [number, number] {
-  const w = node.wide ? ROOM_W : NODE_W
-  return [node.x + Math.round(w / 2), side === 'top' ? node.y : node.y + NODE_H]
-}
-
-// ─── Graph builder ────────────────────────────────────────────────────────────
-
-function buildGraph(
-  primeName: string,
-  agents: RegistryAgent[],
-  threads: RuntimeThread[],
-  workItems: RuntimeWorkItem[],
-  delegations: RuntimeDelegation[],
-  _auditLoops: RuntimeAuditLoop[],
-  healthMap: Map<string, boolean>,
-): { nodes: Map<string, NodeDef>; edges: EdgeDef[] } {
-  const nodes = new Map<string, NodeDef>()
-  const edges: EdgeDef[] = []
-
-  // Row 0 — Prime (always shown)
-  const activeCount  = workItems.filter(i => i.status === 'active').length
-  const blockedCount = workItems.filter(i => i.status === 'blocked').length
-  const primeChips: Chip[] = []
-  if (activeCount)  primeChips.push({ label: `${activeCount} active`,  variant: 'ok'  })
-  if (blockedCount) primeChips.push({ label: `${blockedCount} blocked`, variant: 'blk' })
-  if (!primeChips.length) primeChips.push({ label: 'idle', variant: 'neu' })
-
-  nodes.set('prime', {
-    id: 'prime', type: 'agent', state: blockedCount > 0 ? 'blocked' : 'active',
-    x: Math.round(CANVAS_W / 2 - NODE_W / 2), y: ROW_Y[0],
-    title: primeName,
-    summary: 'orchestrator',
-    chips: primeChips,
-  })
-
-  // Row 1 — Rooms / Threads (primary work units)
-  const threadXs = rowPositions(threads.length, ROOM_W)
-  threads.forEach((thread, i) => {
-    const items  = workItems.filter(wi => wi.thread_id === thread.id)
-    const delegs = delegations.filter(d => d.work_item_id && items.some(it => it.id === d.work_item_id))
-    const state: NodeState = thread.status === 'closed' ? 'neutral'
-      : items.some(it => it.status === 'blocked')      ? 'blocked'
-      : delegs.some(d => d.status === 'running')       ? 'running'
-      : items.some(it => it.status === 'active')        ? 'active'
-      : 'neutral'
-
-    const tActive  = items.filter(it => it.status === 'active').length
-    const tBlocked = items.filter(it => it.status === 'blocked').length
-    const chips: Chip[] = []
-    if (tActive)  chips.push({ label: `${tActive} active`,  variant: 'ok'  })
-    if (tBlocked) chips.push({ label: `${tBlocked} blocked`, variant: 'blk' })
-    if (!chips.length) chips.push({ label: items.length ? `${items.length} items` : 'new', variant: 'neu' })
-
-    const id = `thread-${thread.id}`
-    nodes.set(id, {
-      id, type: 'room', state,
-      x: threadXs[i], y: ROW_Y[1],
-      title: thread.title || 'Untitled',
-      summary: items.length ? `${items.length} item${items.length === 1 ? '' : 's'}` : 'Prime evaluating…',
-      chips,
-      wide: true,
-    })
-    edges.push({ from: 'prime', to: id, style: 'coord' })
-  })
-
-  // Row 2 — Agents that are actively assigned to work (not all registered agents)
-  const activeAgentIds = new Set(workItems.map(wi => wi.owner_agent_id).filter(Boolean))
-  const activeAgents = agents.filter(a => activeAgentIds.has(a.id) && a.enabled)
-  const agentXs = rowPositions(activeAgents.length)
-
-  activeAgents.forEach((agent, i) => {
-    const healthy = healthMap.get(agent.name.toLowerCase())
-    const state: NodeState = healthy === false ? 'blocked' : 'running'
-    const agentItems = workItems.filter(wi => wi.owner_agent_id === agent.id)
-    const aActive  = agentItems.filter(it => it.status === 'active').length
-    const aBlocked = agentItems.filter(it => it.status === 'blocked').length
-    const chips: Chip[] = []
-    if (aActive)  chips.push({ label: `${aActive} active`,  variant: 'ok'  })
-    if (aBlocked) chips.push({ label: `${aBlocked} blocked`, variant: 'blk' })
-    if (!chips.length) chips.push({ label: agent.execution_mode || agent.type, variant: 'run' })
-
-    const id = `agent-${agent.id}`
-    nodes.set(id, {
-      id, type: 'agent', state,
-      x: agentXs[i], y: ROW_Y[2],
-      title: agent.name,
-      summary: [agent.type, agent.runtime_family].filter(Boolean).join(' · '),
-      chips,
-    })
-
-    // Connect agent to its rooms
-    const assignedThreadIds = new Set(agentItems.map(wi => wi.thread_id).filter(Boolean))
-    assignedThreadIds.forEach(tid => {
-      if (nodes.has(`thread-${tid}`)) {
-        edges.push({ from: `thread-${tid}`, to: id, style: 'part' })
-      }
-    })
-  })
-
-  return { nodes, edges }
-}
-
-// ─── Style helpers ────────────────────────────────────────────────────────────
-
-const TYPE_LABEL_COLOR: Record<NodeType, string> = {
-  agent:  '#0891b2',
-  room:   '#7c3aed',
-  work:   '#15803d',
-  audit:  '#6b7280',
-  system: '#9ca3af',
-}
-
-function nodeBorder(state: NodeState): string {
+function stateBorderColor(state: RoomState): string {
   if (state === 'active')   return 'var(--s-ok-bd)'
-  if (state === 'running')  return 'var(--s-run-bd)'
-  if (state === 'blocked')  return 'var(--s-blk-bd)'
   if (state === 'approval') return 'var(--s-att-bd)'
-  if (state === 'system')   return 'rgba(167,139,250,0.4)'
-  return 'var(--s-neu-bd)'
+  if (state === 'closed')   return 'var(--border-soft)'
+  return 'var(--border-soft)'
 }
 
-function nodeGlow(state: NodeState): string {
-  if (state === 'active')   return '0 0 0 2px rgba(34,197,94,0.14),  0 2px 8px rgba(0,0,0,0.07)'
-  if (state === 'running')  return '0 0 0 2px rgba(6,182,212,0.14),  0 2px 8px rgba(0,0,0,0.07)'
-  if (state === 'blocked')  return '0 0 0 4px rgba(239,68,68,0.18),  0 4px 14px rgba(0,0,0,0.10)'
-  if (state === 'approval') return '0 0 0 4px rgba(217,119,6,0.16),  0 4px 14px rgba(0,0,0,0.10)'
-  if (state === 'system')   return '0 0 0 2px rgba(124,58,237,0.10), 0 2px 8px rgba(0,0,0,0.07)'
-  return '0 1px 4px rgba(0,0,0,0.05)'
+function stateGlow(state: RoomState): string {
+  if (state === 'active')   return '0 0 0 2px rgba(34,197,94,0.14),  0 4px 16px rgba(0,0,0,0.10)'
+  if (state === 'approval') return '0 0 0 3px rgba(217,119,6,0.20),  0 4px 16px rgba(0,0,0,0.12)'
+  return '0 2px 8px rgba(0,0,0,0.07)'
 }
 
-function chipStyle(variant?: Chip['variant']): CSSProperties {
-  if (variant === 'ok')  return { color: 'var(--s-ok-tx)',  background: 'var(--s-ok-bg)',  border: '1px solid var(--s-ok-bd)'  }
-  if (variant === 'run') return { color: 'var(--s-run-tx)', background: 'var(--s-run-bg)', border: '1px solid var(--s-run-bd)' }
-  if (variant === 'blk') return { color: 'var(--s-blk-tx)', background: 'var(--s-blk-bg)', border: '1px solid var(--s-blk-bd)' }
-  if (variant === 'att') return { color: 'var(--s-att-tx)', background: 'var(--s-att-bg)', border: '1px solid var(--s-att-bd)' }
+function stateChipStyle(state: RoomState): CSSProperties {
+  if (state === 'active')   return { color: 'var(--s-ok-tx)',  background: 'var(--s-ok-bg)',  border: '1px solid var(--s-ok-bd)'  }
+  if (state === 'approval') return { color: 'var(--s-att-tx)', background: 'var(--s-att-bg)', border: '1px solid var(--s-att-bd)' }
   return { color: 'var(--muted)', background: 'var(--panel-subtle)', border: '1px solid var(--border-soft)' }
 }
 
-function sdotStyle(state: NodeState): { bg: string; cls: string } {
-  if (state === 'active')   return { bg: '#22c55e', cls: '' }
-  if (state === 'running')  return { bg: '#0891b2', cls: 'sd-run-pulse' }
-  if (state === 'blocked')  return { bg: '#ef4444', cls: 'sd-blk-pulse' }
-  if (state === 'approval') return { bg: '#d97706', cls: 'sd-att-pulse' }
-  if (state === 'system')   return { bg: '#8b5cf6', cls: '' }
-  return { bg: '#6b7280', cls: '' }
+function stateLabel(state: RoomState): string {
+  if (state === 'active')   return 'active'
+  if (state === 'approval') return 'awaiting'
+  if (state === 'closed')   return 'closed'
+  return 'idle'
 }
 
-// ─── Node card ────────────────────────────────────────────────────────────────
+function stateDotColor(state: RoomState): string {
+  if (state === 'active')   return '#22c55e'
+  if (state === 'approval') return '#d97706'
+  if (state === 'closed')   return '#6b7280'
+  return '#6b7280'
+}
 
-interface CircuitNodeProps extends NodeDef {
-  onRoomClick?: (id: string) => void
+function stateDotPulse(state: RoomState): string {
+  if (state === 'active')   return 'sd-run-pulse'
+  if (state === 'approval') return 'sd-att-pulse'
+  return ''
+}
+
+// ─── Grid layout ──────────────────────────────────────────────────────────────
+
+function gridPosition(index: number): { x: number; y: number } {
+  const col = index % CARDS_PER_ROW
+  const row = Math.floor(index / CARDS_PER_ROW)
+  return {
+    x: GRID_START_X + col * (CARD_W + CARD_GAP_X),
+    y: GRID_START_Y + row * (CARD_H_COL + CARD_GAP_Y),
+  }
+}
+
+function snapToGrid(v: number): number {
+  return Math.round(v / SNAP) * SNAP
+}
+
+// ─── Room Card ────────────────────────────────────────────────────────────────
+
+interface RoomCardProps {
+  thread: RuntimeThread
+  workItems: RuntimeWorkItem[]
+  x: number
+  y: number
+  onNavigate?: () => void
   onPositionChange?: (id: string, x: number, y: number) => void
 }
 
-function CircuitNode({ id, type, state, x, y, wide, title, summary, chips, onRoomClick, onPositionChange }: CircuitNodeProps) {
-  const dot = sdotStyle(state)
-  const isRoom = type === 'room'
-  const width = wide ? ROOM_W : NODE_W
-  const leftBorder = state === 'approval' ? '3px solid var(--s-att-bd)' : undefined
-  const dragState = useRef<{ startX: number; startY: number; nodeX: number; nodeY: number } | null>(null)
+function RoomCard({ thread, workItems, x, y, onNavigate, onPositionChange }: RoomCardProps) {
+  const [expanded, setExpanded] = useState(false)
+  const dragRef = useRef<{ startX: number; startY: number; nodeX: number; nodeY: number } | null>(null)
   const [localPos, setLocalPos] = useState<{ x: number; y: number } | null>(null)
+  const [isDragging, setIsDragging] = useState(false)
 
   const displayX = localPos?.x ?? x
   const displayY = localPos?.y ?? y
 
+  const state = roomState(thread, workItems)
+  const items = workItems.filter(wi => wi.thread_id === thread.id)
+  const isWelcome = thread.metadata?.kind === 'welcome'
+  const isGoalRoom = thread.metadata?.kind === 'goal-room'
+
+  const lastActivity = items.length > 0
+    ? `${items.length} work item${items.length === 1 ? '' : 's'}`
+    : isWelcome
+      ? 'Create your first goal to get started'
+      : 'Prime evaluating…'
+
   function handlePointerDown(e: React.PointerEvent) {
     e.stopPropagation()
-    dragState.current = { startX: e.clientX, startY: e.clientY, nodeX: displayX, nodeY: displayY }
+    dragRef.current = { startX: e.clientX, startY: e.clientY, nodeX: displayX, nodeY: displayY }
+    setIsDragging(false)
     ;(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId)
   }
 
   function handlePointerMove(e: React.PointerEvent) {
-    if (!dragState.current) return
-    const dx = e.clientX - dragState.current.startX
-    const dy = e.clientY - dragState.current.startY
-    setLocalPos({ x: dragState.current.nodeX + dx, y: dragState.current.nodeY + dy })
+    if (!dragRef.current) return
+    const dx = e.clientX - dragRef.current.startX
+    const dy = e.clientY - dragRef.current.startY
+    if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
+      setIsDragging(true)
+      setLocalPos({
+        x: snapToGrid(dragRef.current.nodeX + dx),
+        y: snapToGrid(dragRef.current.nodeY + dy),
+      })
+    }
   }
 
   function handlePointerUp() {
-    if (!dragState.current || !localPos) {
-      dragState.current = null
-      return
+    if (!dragRef.current) return
+    if (localPos && isDragging) {
+      onPositionChange?.(`thread-${thread.id}`, localPos.x, localPos.y)
     }
-    onPositionChange?.(id, localPos.x, localPos.y)
-    dragState.current = null
+    dragRef.current = null
+    setIsDragging(false)
   }
+
+  function handleClick(e: React.MouseEvent) {
+    if (isDragging) return
+    e.stopPropagation()
+  }
+
+  const dotColor = stateDotColor(state)
+  const dotPulse = stateDotPulse(state)
 
   return (
     <div
-      onClick={isRoom && onRoomClick ? () => onRoomClick(id) : undefined}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
       onPointerUp={handlePointerUp}
+      onClick={handleClick}
       style={{
         position: 'absolute',
         left: displayX,
         top: displayY,
-        width,
+        width: CARD_W,
         background: 'var(--panel)',
-        border: `1.5px solid ${nodeBorder(state)}`,
-        borderLeft: leftBorder ?? `1.5px solid ${nodeBorder(state)}`,
-        borderRadius: 5,
-        padding: '9px 11px',
-        cursor: dragState.current ? 'grabbing' : isRoom ? 'pointer' : 'grab',
-        transition: dragState.current ? 'none' : 'box-shadow 0.15s',
-        boxShadow: nodeGlow(state),
+        border: `1.5px solid ${stateBorderColor(state)}`,
+        borderRadius: 8,
+        boxShadow: stateGlow(state),
+        cursor: isDragging ? 'grabbing' : 'grab',
         userSelect: 'none',
-        opacity: state === 'neutral' ? 0.72 : 1,
+        transition: isDragging ? 'none' : 'box-shadow 0.15s',
+        overflow: 'hidden',
       }}
-      className="circuit-node group"
+      className="circuit-node"
     >
-      {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 5 }}>
-        <span style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.14em', fontFamily: 'monospace', fontWeight: 700, color: TYPE_LABEL_COLOR[type] }}>
-          {type}
-        </span>
+      {/* Header row */}
+      <div
+        style={{
+          display: 'flex', alignItems: 'center', gap: 8,
+          padding: '10px 12px 8px',
+          borderBottom: expanded ? '1px solid var(--border-soft)' : 'none',
+        }}
+      >
+        {/* Drag handle */}
+        <svg width="10" height="14" viewBox="0 0 10 14" style={{ flexShrink: 0, opacity: 0.35 }}>
+          <circle cx="2.5" cy="2.5" r="1.5" fill="currentColor"/>
+          <circle cx="7.5" cy="2.5" r="1.5" fill="currentColor"/>
+          <circle cx="2.5" cy="7" r="1.5" fill="currentColor"/>
+          <circle cx="7.5" cy="7" r="1.5" fill="currentColor"/>
+          <circle cx="2.5" cy="11.5" r="1.5" fill="currentColor"/>
+          <circle cx="7.5" cy="11.5" r="1.5" fill="currentColor"/>
+        </svg>
+
+        {/* Status dot */}
         <span
-          className={dot.cls}
-          style={{ width: 8, height: 8, borderRadius: '50%', background: dot.bg, boxShadow: `0 0 6px ${dot.bg}99`, display: 'inline-block' }}
+          className={dotPulse}
+          style={{ width: 7, height: 7, borderRadius: '50%', background: dotColor, flexShrink: 0, boxShadow: `0 0 5px ${dotColor}99` }}
         />
-      </div>
 
-      {/* Title */}
-      <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)', lineHeight: 1.3, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginBottom: 2 }}>
-        {title}
-      </div>
+        {/* Title */}
+        <span style={{
+          flex: 1, fontSize: 12, fontWeight: 600, color: 'var(--text)',
+          whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+        }}>
+          {thread.title}
+        </span>
 
-      {/* Summary */}
-      <div style={{ fontSize: 10, color: 'var(--muted)', fontFamily: 'monospace', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', marginBottom: 6 }}>
-        {summary}
-      </div>
+        {/* Status chip */}
+        <span style={{
+          fontSize: 9, fontFamily: 'monospace', textTransform: 'uppercase',
+          letterSpacing: '0.06em', padding: '2px 6px', borderRadius: 4, flexShrink: 0,
+          ...stateChipStyle(state),
+        }}>
+          {stateLabel(state)}
+        </span>
 
-      {/* Footer chips */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 4, flexWrap: 'wrap' }}>
-        {chips.map((chip, i) => (
-          <span
-            key={i}
-            style={{ fontSize: 9, fontFamily: 'monospace', textTransform: 'uppercase', letterSpacing: '0.04em', padding: '1px 5px', borderRadius: 3, ...chipStyle(chip.variant) }}
+        {/* Expand toggle */}
+        <button
+          onClick={(e) => { e.stopPropagation(); setExpanded(v => !v) }}
+          onPointerDown={(e) => e.stopPropagation()}
+          style={{
+            background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px',
+            color: 'var(--muted)', fontSize: 12, lineHeight: 1, flexShrink: 0,
+            display: 'flex', alignItems: 'center',
+          }}
+          title={expanded ? 'Collapse' : 'Expand'}
+        >
+          {expanded ? '▲' : '▼'}
+        </button>
+
+        {/* Navigate button */}
+        {onNavigate && !isWelcome && (
+          <button
+            onClick={(e) => { e.stopPropagation(); onNavigate() }}
+            onPointerDown={(e) => e.stopPropagation()}
+            style={{
+              background: 'none', border: 'none', cursor: 'pointer', padding: '0 2px',
+              color: 'var(--muted)', fontSize: 13, lineHeight: 1, flexShrink: 0,
+              display: 'flex', alignItems: 'center',
+            }}
+            title="Open room"
           >
-            {chip.label}
-          </span>
-        ))}
+            →
+          </button>
+        )}
       </div>
-    </div>
-  )
-}
 
-// ─── Dynamic edge SVG layer ───────────────────────────────────────────────────
+      {/* Body — collapsed preview */}
+      {!expanded && (
+        <div style={{ padding: '8px 12px 10px' }}>
+          {/* Kind badge */}
+          {(isWelcome || isGoalRoom) && (
+            <div style={{ fontSize: 9, fontFamily: 'monospace', color: 'var(--muted)', marginBottom: 5, textTransform: 'uppercase', letterSpacing: '0.1em' }}>
+              {isWelcome ? 'Welcome' : 'Goal Room'}
+            </div>
+          )}
+          {/* Last activity preview */}
+          <div style={{
+            fontSize: 11, color: 'var(--muted)', lineHeight: 1.4,
+            display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', overflow: 'hidden',
+          }}>
+            {lastActivity}
+          </div>
 
-function DynamicEdges({ nodes, edges }: { nodes: Map<string, NodeDef>; edges: EdgeDef[] }) {
-  return (
-    <svg style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', overflow: 'visible' }}>
-      <defs>
-        <marker id="a-coord" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,1L5,3L0,5Z" fill="#3b82f6" opacity="0.85"/></marker>
-        <marker id="a-part"  markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,1L5,3L0,5Z" fill="#6b7280" opacity="0.7"/></marker>
-        <marker id="a-owns"  markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,1L5,3L0,5Z" fill="#22c55e" opacity="0.8"/></marker>
-        <marker id="a-queue" markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto"><path d="M0,1L5,3L0,5Z" fill="#6b7280" opacity="0.55"/></marker>
-        <marker id="a-audit" markerWidth="5" markerHeight="5" refX="4" refY="2.5" orient="auto"><path d="M0,0.5L4,2.5L0,4.5Z" fill="#9ca3af" opacity="0.6"/></marker>
-      </defs>
-      {edges.map((edge, i) => {
-        const fromNode = nodes.get(edge.from)
-        const toNode   = nodes.get(edge.to)
-        if (!fromNode || !toNode) return null
-        const [x1, y1] = nodePt(fromNode, 'bottom')
-        const [x2, y2] = nodePt(toNode,   'top')
-        const d = routeEdge(x1, y1, x2, y2)
-        if (edge.style === 'coord') {
-          return <path key={i} className="e-flow"      d={d} stroke="#3b82f6" strokeWidth="1.5" fill="none" opacity="0.75" markerEnd="url(#a-coord)" />
-        }
-        if (edge.style === 'part') {
-          return <path key={i} className="e-flow"      d={d} stroke="#6b7280" strokeWidth="1.2" fill="none" opacity="0.6"  markerEnd="url(#a-part)"  />
-        }
-        if (edge.style === 'owns') {
-          return <path key={i} className="e-flow-slow" d={d} stroke="#22c55e" strokeWidth="1.2" fill="none" opacity="0.7"  markerEnd="url(#a-owns)"  />
-        }
-        if (edge.style === 'queued') {
-          return <path key={i} d={d} stroke="#6b7280" strokeWidth="1" strokeDasharray="4 4" fill="none" opacity="0.4" markerEnd="url(#a-queue)" />
-        }
-        return <path key={i} d={d} stroke="#9ca3af" strokeWidth="1" strokeDasharray="2 4" fill="none" opacity="0.5" markerEnd="url(#a-audit)" />
-      })}
-    </svg>
-  )
-}
-
-// ─── Legend ───────────────────────────────────────────────────────────────────
-
-function Legend() {
-  const rows: { stroke: string; width: number; dash?: string; label: string }[] = [
-    { stroke: '#3b82f6', width: 1.5,             label: 'coordinates  ▶ animated'  },
-    { stroke: '#6b7280', width: 1.2,             label: 'participating ▶ animated' },
-    { stroke: '#22c55e', width: 1.2,             label: 'owns active  ▶ animated'  },
-    { stroke: '#6b7280', width: 1,   dash: '4 4', label: 'queued / pending'         },
-    { stroke: '#9ca3af', width: 1,   dash: '2 4', label: 'audit schedule'           },
-  ]
-
-  return (
-    <div style={{
-      position: 'fixed', bottom: 16, right: 16, zIndex: 200,
-      background: 'var(--panel)', border: '1px solid var(--border-soft)',
-      borderRadius: 6, padding: '10px 14px',
-      fontSize: 10, fontFamily: 'monospace',
-      display: 'flex', flexDirection: 'column', gap: 5,
-      boxShadow: '0 2px 8px rgba(0,0,0,0.12)',
-    }}>
-      <div style={{ fontSize: 9, textTransform: 'uppercase', letterSpacing: '0.1em', color: 'var(--muted)', marginBottom: 3 }}>Edges</div>
-      {rows.map((r) => (
-        <div key={r.label} style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
-          <svg width="30" height="8" style={{ flexShrink: 0 }}>
-            <path d="M0,4 H30" stroke={r.stroke} strokeWidth={r.width} strokeDasharray={r.dash} fill="none"/>
-          </svg>
-          <span style={{ color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.07em' }}>{r.label}</span>
+          {/* Footer: participant count */}
+          {items.length > 0 && (
+            <div style={{ marginTop: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
+              <svg width="10" height="10" viewBox="0 0 10 10" style={{ opacity: 0.45 }}>
+                <circle cx="5" cy="3.5" r="2" fill="currentColor"/>
+                <path d="M1,9.5 C1,7.5 9,7.5 9,9.5" stroke="currentColor" strokeWidth="1" fill="none"/>
+              </svg>
+              <span style={{ fontSize: 9, fontFamily: 'monospace', color: 'var(--muted)' }}>
+                Prime{items.length > 0 ? ' + team' : ''}
+              </span>
+            </div>
+          )}
         </div>
-      ))}
+      )}
+
+      {/* Body — expanded */}
+      {expanded && (
+        <div style={{ padding: '10px 12px 12px' }}>
+          {/* Work item list */}
+          {items.length === 0 ? (
+            <div style={{ fontSize: 11, color: 'var(--muted)', fontStyle: 'italic' }}>
+              {isWelcome ? 'Use the + Goal button below to start your first goal.' : 'No work items yet.'}
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+              {items.slice(0, 5).map(wi => (
+                <div key={wi.id} style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                  <span style={{
+                    fontSize: 8, fontFamily: 'monospace', textTransform: 'uppercase',
+                    padding: '1px 4px', borderRadius: 3,
+                    ...(wi.status === 'active'  ? { color: 'var(--s-ok-tx)',  background: 'var(--s-ok-bg)',  border: '1px solid var(--s-ok-bd)'  } :
+                        wi.status === 'blocked' ? { color: 'var(--s-blk-tx)', background: 'var(--s-blk-bg)', border: '1px solid var(--s-blk-bd)' } :
+                                                  { color: 'var(--muted)', background: 'var(--panel-subtle)', border: '1px solid var(--border-soft)' }),
+                  }}>
+                    {wi.status}
+                  </span>
+                  <span style={{ fontSize: 11, color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {wi.title}
+                  </span>
+                </div>
+              ))}
+              {items.length > 5 && (
+                <div style={{ fontSize: 10, color: 'var(--muted)', fontFamily: 'monospace' }}>
+                  +{items.length - 5} more
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Navigate link */}
+          {onNavigate && !isWelcome && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onNavigate() }}
+              onPointerDown={(e) => e.stopPropagation()}
+              style={{
+                marginTop: 10, width: '100%', padding: '5px 0',
+                background: 'var(--panel-subtle)', border: '1px solid var(--border-soft)',
+                borderRadius: 5, cursor: 'pointer', fontSize: 11, color: 'var(--muted)',
+              }}
+            >
+              Open room →
+            </button>
+          )}
+        </div>
+      )}
     </div>
   )
 }
 
-// ─── Main component ───────────────────────────────────────────────────────────
+// ─── Background grid ──────────────────────────────────────────────────────────
 
 const GRID_BG: CSSProperties = {
   backgroundImage: [
@@ -400,6 +353,8 @@ const GRID_BG: CSSProperties = {
   backgroundColor: 'var(--bg)',
 }
 
+// ─── Main component ───────────────────────────────────────────────────────────
+
 interface CircuitViewProps {
   onNavigate?: (href: string) => void
 }
@@ -411,8 +366,7 @@ export function CircuitView({ onNavigate }: CircuitViewProps) {
   const queryClient = useQueryClient()
   const canvasRef = useRef<HTMLDivElement>(null)
 
-  // Attach a non-passive wheel listener so preventDefault() actually works.
-  // React's synthetic onWheel is passive in some environments, letting the page scroll.
+  // Non-passive wheel listener so preventDefault() works (React's synthetic onWheel is passive)
   useEffect(() => {
     const el = canvasRef.current
     if (!el) return
@@ -453,24 +407,6 @@ export function CircuitView({ onNavigate }: CircuitViewProps) {
     setComposerDraft(null)
   }, [])
 
-  const { data: agentRegistry = [] } = useQuery({
-    queryKey: ['agent-registry', 'circuit'],
-    queryFn: fetchAgentRegistry,
-    refetchInterval: 30_000,
-  })
-
-  const { data: healthData = [] } = useQuery({
-    queryKey: ['agents', 'health'],
-    queryFn: fetchAgents,
-    refetchInterval: 30_000,
-  })
-
-  const { data: runtimeOverview } = useQuery({
-    queryKey: ['runtime-overview'],
-    queryFn: fetchRuntimeOverview,
-    refetchInterval: 30_000,
-  })
-
   const { data: threads = [] } = useQuery({
     queryKey: ['threads'],
     queryFn: fetchThreads,
@@ -483,35 +419,15 @@ export function CircuitView({ onNavigate }: CircuitViewProps) {
     refetchInterval: 15_000,
   })
 
-  const { data: delegations = [] } = useQuery({
-    queryKey: ['runtime-delegations'],
-    queryFn: () => fetchRuntimeDelegations(),
-    refetchInterval: 15_000,
-  })
-
-  // auditLoops intentionally omitted — not shown on canvas
-
-  const healthMap = useMemo(
-    () => new Map(healthData.map(h => [h.agent.toLowerCase(), h.healthy])),
-    [healthData],
-  )
-
-  const primeName = runtimeOverview?.prime?.name ?? 'Prime'
-
-  const { nodes, edges } = useMemo(
-    () => buildGraph(primeName, agentRegistry, threads, workItems, delegations, [], healthMap),
-    [primeName, agentRegistry, threads, workItems, delegations, healthMap],
-  )
-
-  // Merge persisted positions into graph nodes
-  const mergedNodes = useMemo(() => {
-    const result = new Map<string, NodeDef>()
-    for (const [id, node] of nodes) {
-      const saved = positions[id]
-      result.set(id, saved ? { ...node, x: saved.x, y: saved.y } : node)
-    }
+  // Assign grid positions to threads that don't have a persisted position
+  const cardPositions = useMemo(() => {
+    const result: Record<string, { x: number; y: number }> = {}
+    threads.forEach((thread, i) => {
+      const id = `thread-${thread.id}`
+      result[id] = positions[id] ?? gridPosition(i)
+    })
     return result
-  }, [nodes, positions])
+  }, [threads, positions])
 
   return (
     <div
@@ -521,17 +437,15 @@ export function CircuitView({ onNavigate }: CircuitViewProps) {
       {...dragHandlers}
       {...touchHandlers}
     >
-      {/* Canvas controls — pointer-isolated so drag-pan doesn't capture their clicks */}
+      {/* Canvas controls */}
       <div
         className="absolute top-4 right-4 z-50"
         onPointerDown={(e) => e.stopPropagation()}
       >
-        <CircuitCanvasControls
-          viewport={viewportHook}
-          compact
-        />
+        <CircuitCanvasControls viewport={viewportHook} compact />
       </div>
 
+      {/* Scrollable canvas world */}
       <div
         style={{
           position: 'relative',
@@ -541,18 +455,36 @@ export function CircuitView({ onNavigate }: CircuitViewProps) {
           transformOrigin: '0 0',
         }}
       >
-        <DynamicEdges nodes={mergedNodes} edges={edges} />
-        {Array.from(mergedNodes.values()).map((node) => (
-          <CircuitNode
-            key={node.id}
-            {...node}
-            onRoomClick={node.type === 'room' && onNavigate ? () => onNavigate('/') : undefined}
-            onPositionChange={updatePosition}
-          />
-        ))}
+        {threads.map((thread) => {
+          const id = `thread-${thread.id}`
+          const pos = cardPositions[id]
+          return (
+            <RoomCard
+              key={thread.id}
+              thread={thread}
+              workItems={workItems}
+              x={pos.x}
+              y={pos.y}
+              onNavigate={onNavigate ? () => onNavigate('/') : undefined}
+              onPositionChange={updatePosition}
+            />
+          )
+        })}
+
+        {threads.length === 0 && (
+          <div style={{
+            position: 'absolute', top: '50%', left: '50%',
+            transform: 'translate(-50%, -50%)',
+            textAlign: 'center', color: 'var(--muted)', fontSize: 13,
+          }}>
+            <div style={{ fontSize: 28, marginBottom: 12, opacity: 0.3 }}>◎</div>
+            <div style={{ fontWeight: 600, marginBottom: 6 }}>Canvas is empty</div>
+            <div style={{ fontSize: 12, opacity: 0.75 }}>Use the toolbar below to create your first goal</div>
+          </div>
+        )}
       </div>
 
-      {/* Bottom action toolbar — pointer-isolated so setPointerCapture on canvas doesn't eat button clicks */}
+      {/* Bottom action toolbar */}
       <div
         style={{ position: 'absolute', bottom: '1rem', left: '50%', transform: 'translateX(-50%)', zIndex: 10 }}
         onPointerDown={(e) => e.stopPropagation()}
@@ -566,14 +498,11 @@ export function CircuitView({ onNavigate }: CircuitViewProps) {
         />
       </div>
 
-      <Legend />
-
       {showGoalModal && (
         <NewGoalModal
           onClose={() => setShowGoalModal(false)}
           onCreated={() => {
             setShowGoalModal(false)
-            // Stay on canvas so the new room card appears; rooms view is one click away
             queryClient.invalidateQueries({ queryKey: ['threads'] })
             queryClient.invalidateQueries({ queryKey: ['runtime-work-items'] })
           }}
