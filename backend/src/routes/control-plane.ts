@@ -47,7 +47,7 @@ export function createControlPlaneRouter({
       // Create goal-room thread in the same logical transaction
       const threadResult = await pool.query<{ id: string }>(
         `INSERT INTO threads (title, status, metadata)
-         VALUES ($1, 'active', $2)
+         VALUES ($1, 'active', $2::jsonb)
          RETURNING id`,
         [goal.title, JSON.stringify({ kind: 'goal-room', goal_id: goal.id })],
       )

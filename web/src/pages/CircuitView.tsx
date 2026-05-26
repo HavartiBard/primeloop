@@ -10,7 +10,6 @@ import { useCanvasLayout } from '../hooks/useCanvasLayout'
 import {
   fetchAgentRegistry,
   fetchAgents,
-  fetchRuntimeAuditLoops,
   fetchRuntimeDelegations,
   fetchRuntimeOverview,
   fetchRuntimeWorkItems,
@@ -84,13 +83,13 @@ function buildGraph(
   threads: RuntimeThread[],
   workItems: RuntimeWorkItem[],
   delegations: RuntimeDelegation[],
-  auditLoops: RuntimeAuditLoop[],
+  _auditLoops: RuntimeAuditLoop[],
   healthMap: Map<string, boolean>,
 ): { nodes: Map<string, NodeDef>; edges: EdgeDef[] } {
   const nodes = new Map<string, NodeDef>()
   const edges: EdgeDef[] = []
 
-  // Row 0 — Prime
+  // Row 0 — Prime (always shown)
   const activeCount  = workItems.filter(i => i.status === 'active').length
   const blockedCount = workItems.filter(i => i.status === 'blocked').length
   const primeChips: Chip[] = []
@@ -102,35 +101,11 @@ function buildGraph(
     id: 'prime', type: 'agent', state: blockedCount > 0 ? 'blocked' : 'active',
     x: Math.round(CANVAS_W / 2 - NODE_W / 2), y: ROW_Y[0],
     title: primeName,
-    summary: 'coordinator · delegate · approve',
+    summary: 'orchestrator',
     chips: primeChips,
   })
 
-  // Row 1 — Agents
-  const agentXs = rowPositions(agents.length)
-  agents.forEach((agent, i) => {
-    const healthy = healthMap.get(agent.name.toLowerCase())
-    const state: NodeState = !agent.enabled ? 'neutral' : healthy === false ? 'blocked' : 'active'
-    const agentItems = workItems.filter(wi => wi.owner_agent_id === agent.id)
-    const chips: Chip[] = []
-    const aActive  = agentItems.filter(it => it.status === 'active').length
-    const aBlocked = agentItems.filter(it => it.status === 'blocked').length
-    if (aActive)  chips.push({ label: `${aActive} active`,  variant: 'ok'  })
-    if (aBlocked) chips.push({ label: `${aBlocked} blocked`, variant: 'blk' })
-    if (!chips.length) chips.push({ label: agent.execution_mode || agent.type, variant: state === 'active' ? 'ok' : 'neu' })
-
-    const id = `agent-${agent.id}`
-    nodes.set(id, {
-      id, type: 'agent', state,
-      x: agentXs[i], y: ROW_Y[1],
-      title: agent.name,
-      summary: [agent.type, agent.runtime_family].filter(Boolean).join(' · '),
-      chips,
-    })
-    edges.push({ from: 'prime', to: id, style: 'coord' })
-  })
-
-  // Row 2 — Threads / Rooms
+  // Row 1 — Rooms / Threads (primary work units)
   const threadXs = rowPositions(threads.length, ROOM_W)
   threads.forEach((thread, i) => {
     const items  = workItems.filter(wi => wi.thread_id === thread.id)
@@ -140,72 +115,58 @@ function buildGraph(
       : delegs.some(d => d.status === 'running')       ? 'running'
       : items.some(it => it.status === 'active')        ? 'active'
       : 'neutral'
+
     const tActive  = items.filter(it => it.status === 'active').length
     const tBlocked = items.filter(it => it.status === 'blocked').length
     const chips: Chip[] = []
     if (tActive)  chips.push({ label: `${tActive} active`,  variant: 'ok'  })
     if (tBlocked) chips.push({ label: `${tBlocked} blocked`, variant: 'blk' })
-    if (!chips.length) chips.push({ label: `${items.length} items`, variant: 'neu' })
+    if (!chips.length) chips.push({ label: items.length ? `${items.length} items` : 'new', variant: 'neu' })
 
-    const lanePart = items[0]?.lane ? ` · ${items[0].lane}` : ''
     const id = `thread-${thread.id}`
     nodes.set(id, {
       id, type: 'room', state,
-      x: threadXs[i], y: ROW_Y[2],
+      x: threadXs[i], y: ROW_Y[1],
       title: thread.title || 'Untitled',
-      summary: `${items.length} item${items.length === 1 ? '' : 's'}${lanePart}`,
+      summary: items.length ? `${items.length} item${items.length === 1 ? '' : 's'}` : 'Prime evaluating…',
       chips,
       wide: true,
     })
     edges.push({ from: 'prime', to: id, style: 'coord' })
-
-    agents.forEach(agent => {
-      if (items.some(wi => wi.owner_agent_id === agent.id)) {
-        edges.push({ from: `agent-${agent.id}`, to: id, style: 'part' })
-      }
-    })
   })
 
-  // Row 3 — Work items
-  const workXs = rowPositions(workItems.length)
-  workItems.forEach((item, i) => {
-    const state: NodeState = item.status === 'blocked' ? 'blocked'
-      : item.status === 'active' ? 'active'
-      : item.status === 'queued' ? 'running'
-      : 'neutral'
-    const chips: Chip[] = [{
-      label: item.status,
-      variant: state === 'active' ? 'ok' : state === 'blocked' ? 'blk' : state === 'running' ? 'run' : 'neu',
-    }]
-    if (item.priority && item.priority !== 'medium') chips.push({ label: item.priority })
+  // Row 2 — Agents that are actively assigned to work (not all registered agents)
+  const activeAgentIds = new Set(workItems.map(wi => wi.owner_agent_id).filter(Boolean))
+  const activeAgents = agents.filter(a => activeAgentIds.has(a.id) && a.enabled)
+  const agentXs = rowPositions(activeAgents.length)
 
-    const id = `work-${item.id}`
+  activeAgents.forEach((agent, i) => {
+    const healthy = healthMap.get(agent.name.toLowerCase())
+    const state: NodeState = healthy === false ? 'blocked' : 'running'
+    const agentItems = workItems.filter(wi => wi.owner_agent_id === agent.id)
+    const aActive  = agentItems.filter(it => it.status === 'active').length
+    const aBlocked = agentItems.filter(it => it.status === 'blocked').length
+    const chips: Chip[] = []
+    if (aActive)  chips.push({ label: `${aActive} active`,  variant: 'ok'  })
+    if (aBlocked) chips.push({ label: `${aBlocked} blocked`, variant: 'blk' })
+    if (!chips.length) chips.push({ label: agent.execution_mode || agent.type, variant: 'run' })
+
+    const id = `agent-${agent.id}`
     nodes.set(id, {
-      id, type: 'work', state,
-      x: workXs[i], y: ROW_Y[3],
-      title: item.title,
-      summary: [item.owner_label, item.lane].filter(Boolean).join(' · '),
+      id, type: 'agent', state,
+      x: agentXs[i], y: ROW_Y[2],
+      title: agent.name,
+      summary: [agent.type, agent.runtime_family].filter(Boolean).join(' · '),
       chips,
     })
-    if (item.thread_id && nodes.has(`thread-${item.thread_id}`)) {
-      edges.push({ from: `thread-${item.thread_id}`, to: id, style: item.status === 'active' ? 'owns' : 'queued' })
-    } else {
-      edges.push({ from: 'prime', to: id, style: 'coord' })
-    }
-  })
 
-  // Row 4 — Audit loops
-  const auditXs = rowPositions(auditLoops.length)
-  auditLoops.forEach((loop, i) => {
-    const id = `audit-${loop.id}`
-    nodes.set(id, {
-      id, type: 'audit', state: 'neutral',
-      x: auditXs[i], y: ROW_Y[4],
-      title: loop.name,
-      summary: (loop.purpose || '').slice(0, 44),
-      chips: [{ label: loop.cadence_cron }],
+    // Connect agent to its rooms
+    const assignedThreadIds = new Set(agentItems.map(wi => wi.thread_id).filter(Boolean))
+    assignedThreadIds.forEach(tid => {
+      if (nodes.has(`thread-${tid}`)) {
+        edges.push({ from: `thread-${tid}`, to: id, style: 'part' })
+      }
     })
-    edges.push({ from: 'prime', to: id, style: 'audit' })
   })
 
   return { nodes, edges }
@@ -528,11 +489,7 @@ export function CircuitView({ onNavigate }: CircuitViewProps) {
     refetchInterval: 15_000,
   })
 
-  const { data: auditLoops = [] } = useQuery({
-    queryKey: ['runtime-audit-loops'],
-    queryFn: fetchRuntimeAuditLoops,
-    refetchInterval: 30_000,
-  })
+  // auditLoops intentionally omitted — not shown on canvas
 
   const healthMap = useMemo(
     () => new Map(healthData.map(h => [h.agent.toLowerCase(), h.healthy])),
@@ -542,8 +499,8 @@ export function CircuitView({ onNavigate }: CircuitViewProps) {
   const primeName = runtimeOverview?.prime?.name ?? 'Prime'
 
   const { nodes, edges } = useMemo(
-    () => buildGraph(primeName, agentRegistry, threads, workItems, delegations, auditLoops, healthMap),
-    [primeName, agentRegistry, threads, workItems, delegations, auditLoops, healthMap],
+    () => buildGraph(primeName, agentRegistry, threads, workItems, delegations, [], healthMap),
+    [primeName, agentRegistry, threads, workItems, delegations, healthMap],
   )
 
   // Merge persisted positions into graph nodes
@@ -614,13 +571,11 @@ export function CircuitView({ onNavigate }: CircuitViewProps) {
       {showGoalModal && (
         <NewGoalModal
           onClose={() => setShowGoalModal(false)}
-          onCreated={(result) => {
+          onCreated={() => {
             setShowGoalModal(false)
+            // Stay on canvas so the new room card appears; rooms view is one click away
             queryClient.invalidateQueries({ queryKey: ['threads'] })
             queryClient.invalidateQueries({ queryKey: ['runtime-work-items'] })
-            if (result.thread_id && onNavigate) {
-              onNavigate(`/rooms/${result.thread_id}`)
-            }
           }}
         />
       )}
