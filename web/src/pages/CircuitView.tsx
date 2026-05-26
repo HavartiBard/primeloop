@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { CircuitCanvasControls } from '../components/agentCanvas/CircuitCanvasControls'
 import { BottomActionToolbar } from '../components/agentCanvas/BottomActionToolbar'
 import { NewGoalModal } from '../components/agentCanvas/NewGoalModal'
+import { ToolbarActionComposer } from '../components/agentCanvas/ToolbarActionComposer'
 import { useCanvasViewport } from '../hooks/useCanvasViewport'
 import { useCanvasLayout } from '../hooks/useCanvasLayout'
 import {
@@ -465,12 +466,21 @@ export function CircuitView({ onNavigate }: CircuitViewProps) {
 
   const [toolbarDrafts, setToolbarDrafts] = useState<Record<string, ToolbarDraftAction>>({})
   const [showGoalModal, setShowGoalModal] = useState(false)
+  const [composerDraft, setComposerDraft] = useState<ToolbarDraftAction | null>(null)
 
   const handleOpenDraft = useCallback((actionType: ToolbarActionType) => {
     if (actionType === 'create_goal') {
       setShowGoalModal(true)
+      return
     }
-    // other actions: placeholder — future toolbar composers
+    const draft: ToolbarDraftAction = {
+      id: `draft-${Date.now()}`,
+      actionType,
+      status: 'draft',
+      originContext: {},
+      requiredInputs: {},
+    }
+    setComposerDraft(draft)
   }, [])
 
   const handleCancelDraft = useCallback((draftId: string) => {
@@ -479,6 +489,7 @@ export function CircuitView({ onNavigate }: CircuitViewProps) {
       delete next[draftId]
       return next
     })
+    setComposerDraft(null)
   }, [])
 
   const { data: agentRegistry = [] } = useQuery({
@@ -605,7 +616,6 @@ export function CircuitView({ onNavigate }: CircuitViewProps) {
           onClose={() => setShowGoalModal(false)}
           onCreated={(result) => {
             setShowGoalModal(false)
-            // Invalidate queries so canvas picks up the new thread/goal
             queryClient.invalidateQueries({ queryKey: ['threads'] })
             queryClient.invalidateQueries({ queryKey: ['runtime-work-items'] })
             if (result.thread_id && onNavigate) {
@@ -614,6 +624,14 @@ export function CircuitView({ onNavigate }: CircuitViewProps) {
           }}
         />
       )}
+
+      <ToolbarActionComposer
+        draft={composerDraft}
+        isOpen={composerDraft !== null}
+        onClose={() => setComposerDraft(null)}
+        onUpdateDraft={(updates) => setComposerDraft((prev) => prev ? { ...prev, ...updates } : null)}
+        onSubmit={() => setComposerDraft(null)}
+      />
     </div>
   )
 }

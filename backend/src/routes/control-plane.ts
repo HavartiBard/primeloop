@@ -61,9 +61,11 @@ export function createControlPlaneRouter({
         )
       }
 
-      // Enqueue for Prime to process and transition to queued
+      const queued = await transitionGoalStatus(pool, goal.id, 'queued')
+
+      // Enqueue for Prime asynchronously — do not let queue errors fail the response
       if (primeQueue) {
-        await primeQueue.enqueue({
+        primeQueue.enqueue({
           type: 'goal.created',
           payload: {
             goal_id: goal.id,
@@ -71,9 +73,10 @@ export function createControlPlaneRouter({
             intent: goal.intent,
             thread_id: threadId,
           },
+        }).catch((err: unknown) => {
+          console.error('[goals] prime queue enqueue failed:', err)
         })
       }
-      const queued = await transitionGoalStatus(pool, goal.id, 'queued')
 
       // Broadcast goal.created WebSocket event
       broadcastEvent({
