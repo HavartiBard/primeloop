@@ -739,7 +739,7 @@ export async function confirmTeamPlan(
 }
 
 export async function fetchPrimeProfile(): Promise<PrimeProfileResponse> {
-  const res = await fetch(`${API_BASE}/api/prime-agent/profile`)
+  const res = await fetch(`${API_BASE}/prime-agent/profile`)
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   return res.json()
 }
@@ -749,7 +749,7 @@ export async function savePrimeProfile(body: {
   soul?: Partial<PrimeProfileSoul>
   operating?: Partial<PrimeProfileOperating>
 }): Promise<PrimeProfileResponse> {
-  const res = await fetch(`${API_BASE}/api/prime-agent/profile`, {
+  const res = await fetch(`${API_BASE}/prime-agent/profile`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -832,7 +832,7 @@ export async function patchPrimeProfileSection(
   key: PrimeSectionKey,
   newText: string,
 ): Promise<PrimeProfileResponse> {
-  const res = await fetch(`${API_BASE}/api/prime-agent/profile/sections/${key}`, {
+  const res = await fetch(`${API_BASE}/prime-agent/profile/sections/${key}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ new_text: newText }),
