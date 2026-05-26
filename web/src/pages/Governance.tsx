@@ -14,7 +14,7 @@ import {
   initAgentWorkspace,
   updatePrimeConfig,
   updatePrimeModule,
-  savePrimeProfile,
+  updatePrimeProfile,
   patchPrimeProfileSection,
 } from '../api'
 import type {

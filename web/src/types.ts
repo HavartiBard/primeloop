@@ -523,10 +523,369 @@ export type PrimeSectionKey =
   | 'identity' | 'voice_tone' | 'decision_style'
   | 'default_behaviors' | 'approval_thresholds'
 
+// ─── Prime Onboarding Configuration (spec 018) ───────────────────────────────
+
+/** Provider readiness status for onboarding. */
+export type ProviderReadiness = 'idle' | 'verifying' | 'verified' | 'failed' | 'skipped' | 'unavailable'
+
+/** Prime function keys for onboarding assignments. */
+export type PrimeOnboardingFunctionKey =
+  | 'orchestration'
+  | 'planning'
+  | 'coding_execution'
+  | 'review_validation'
+  | 'platform_maintenance'
+
+/** Function assignment for onboarding. */
+export interface FunctionAssignment {
+  function_key: PrimeOnboardingFunctionKey | string
+  display_name: string
+  purpose: string
+  required: boolean
+  provider_id: string | null
+  provider_name?: string
+  model: string | null
+  validation_status: 'missing' | 'valid' | 'warning' | 'blocked'
+  warnings: string[]
+  is_default_choice: boolean
+  fallbacks?: Array<{ provider_id: string; model: string }>
+}
+
+/** Plugin info for inventory display (API response). */
+export interface PluginInfo {
+  id: string
+  name: string
+  description: string
+  optional: boolean
+  status: 'available' | 'unavailable'
+}
+
+/** Plugin choice for onboarding (internal state in setup draft). */
+export interface PluginChoice {
+  plugin_id: string
+  name: string
+  description: string
+  availability: 'available' | 'unavailable' | 'unknown'
+  selected: boolean
+  configuration_state: 'not_required' | 'deferred_post_launch' | 'configured' | 'unavailable'
+  post_launch_configuration_required: boolean
+}
+
+/** Agent entry in a team plan. */
+export interface TeamPlanAgent {
+  role: string
+  name: string
+  rationale: string
+  recommendation_strength: 'strongly_recommended' | 'optional'
+  category: 'platform_maintenance' | 'goal_specific'
+  capabilities: string[]
+}
+
+/** Team plan for onboarding. */
+export interface TeamPlan {
+  id: string
+  purpose: string
+  confirmation_status: 'proposed' | 'confirmed' | 'rejected' | 'partially_confirmed'
+  agents: TeamPlanAgent[]
+  created_agent_ids: string[]
+}
+
+/** Launch readiness result for onboarding. */
+export interface LaunchReadinessResult {
+  ready: boolean
+  overall_status?: 'ready' | 'warning' | 'blocked'
+  required_missing?: number
+  blocked?: number
+  blocking_reasons: string[]
+  warnings?: string[]
+  warning_messages?: string[]
+  assignments?: FunctionAssignment[]
+  summary?: {
+    providers: number
+    required_functions: number
+    selected_plugins: number
+    assigned_required_functions?: number
+  }
+}
+
+/** Prime configuration draft for onboarding. */
+export interface PrimeConfigDraft {
+  enabled?: boolean
+  cron_fast_interval_seconds?: number
+  cron_slow_interval_seconds?: number
+  debounce_window_ms?: number
+  monthly_token_budget?: number
+  cost_controls?: Record<string, unknown>
+  workspace?: {
+    mode: 'local' | 'git'
+    root_path?: string
+    remote_url?: string | null
+    branch?: string
+  }
+}
+
+/** Provider draft for onboarding (masked credentials). */
+export interface ProviderDraft {
+  id: string
+  name: string
+  type: string
+  base_url: string
+  masked_credential_state: 'absent' | 'present' | 'needs_replacement' | 'not_required'
+  connection_status: 'idle' | 'verifying' | 'verified' | 'failed' | 'skipped' | 'unavailable'
+  available_models?: string[]
+  verification_error?: string | null
+}
+
+/** Setup draft for onboarding (full state). */
+export interface SetupDraft {
+  providers: ProviderDraft[]
+  function_assignments: FunctionAssignment[]
+  prime_config_draft: PrimeConfigDraft
+  plugin_choices: PluginChoice[]
+  team_plan?: TeamPlan | null
+  current_step: 'intro' | 'providers' | 'function_assignment' | 'prime_config' | 'plugins' | 'workspace' | 'launch' | 'prime_conversation' | 'complete'
+  status: 'not_started' | 'in_progress' | 'blocked' | 'ready_to_launch' | 'launching' | 'launched' | 'complete'
+  last_error?: string
+}
+
+/** Setup draft update payload for PUT /api/setup/draft. */
+export interface SetupDraftUpdate {
+  providers?: ProviderDraft[]
+  function_assignments?: FunctionAssignment[]
+  prime_config_draft?: PrimeConfigDraft
+  plugin_choices?: PluginChoice[]
+  team_plan?: TeamPlan
+  current_step?: SetupDraft['current_step']
+  status?: SetupDraft['status']
+}
+
+/** Team plan confirmation request. */
+export interface TeamPlanConfirmRequest {
+  selected_roles: string[]
+  confirm: boolean
+}
+
+/** Team plan confirmation response. */
+export interface TeamPlanConfirmResponse {
+  team_plan: TeamPlan
+}
+
 export interface PrimeProfileResponse {
   name: string
   soul: PrimeProfileSoul
   operating: PrimeProfileOperating
   defaults_match: Record<PrimeSectionKey, boolean>
   shipped_defaults: Record<PrimeSectionKey, string>
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Expanded Canvas UX Display Types (spec 017)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Chat event kinds for the expanded timeline */
+export type ChatEventKind =
+  | 'message'
+  | 'thinking'
+  | 'tool_call'
+  | 'tool_result'
+  | 'context_attachment'
+  | 'approval'
+  | 'delegation'
+  | 'goal'
+  | 'artifact'
+  | 'note'
+  | 'system'
+
+/** Status for chat display events and canvas nodes */
+export type DisplayStatus =
+  | 'pending'
+  | 'streaming'
+  | 'running'
+  | 'success'
+  | 'failed'
+  | 'cancelled'
+  | 'timeout'
+  | 'blocked'
+  | 'resolved'
+  | 'unavailable'
+
+/** Source reference for a chat display event */
+export interface EventSource {
+  type: 'thread_message' | 'prime_session' | 'work_item' | 'delegation' | 'approval' | 'runtime_event'
+  id: string
+}
+
+/** Context attachment reference */
+export interface ContextAttachment {
+  id: string
+  name: string
+  type: 'file' | 'artifact' | 'goal' | 'work_item' | 'message' | 'tool_result' | 'note' | 'link' | 'other'
+  sourceLabel: string
+  availability: 'available' | 'restricted' | 'deleted' | 'too_large' | 'loading' | 'error'
+  previewSummary?: string
+  targetRef?: {
+    type: string
+    id: string
+  }
+}
+
+/** User action available on a display event */
+export interface UserAction {
+  label: string
+  type: 'approve' | 'deny' | 'retry' | 'cancel' | 'expand' | 'open' | 'copy'
+  handler?: () => void
+}
+
+/** Chat display event - normalized display item for the expanded chat timeline */
+export interface ChatDisplayEvent {
+  id: string
+  kind: ChatEventKind
+  actorLabel: string
+  status: DisplayStatus
+  occurredAt: string
+  summary: string
+  details?: string
+  source: EventSource
+  attachments: ContextAttachment[]
+  actions?: UserAction[]
+}
+
+/** Approval display card - actionable display of an approval request */
+export interface ApprovalDisplayCard {
+  id: string
+  requesterLabel: string
+  requestSummary: string
+  rationale?: string
+  urgency?: string
+  status: 'pending' | 'approved' | 'rejected' | 'cancelled' | 'expired'
+  decisionOptions?: string[]
+  decidedBy?: string
+  decidedAt?: string
+}
+
+/** Delegation display card - display delegated or assigned work */
+export interface DelegationDisplayCard {
+  id: string
+  sourceLabel: string
+  targetLabel: string
+  objective: string
+  status: 'pending' | 'queued' | 'running' | 'blocked' | 'completed' | 'failed' | 'cancelled'
+  resultSummary?: string
+  relatedWorkRef?: {
+    type: string
+    id: string
+  }
+}
+
+/** Circuit node type */
+export type CircuitNodeType =
+  | 'prime'
+  | 'agent'
+  | 'room'
+  | 'work_item'
+  | 'approval'
+  | 'delegation'
+  | 'artifact'
+  | 'note'
+  | 'system'
+
+/** Circuit node status category */
+export type CircuitNodeStatus =
+  | 'active'
+  | 'running'
+  | 'blocked'
+  | 'approval'
+  | 'neutral'
+  | 'system'
+
+/** Circuit node - spatial card or node representing an ACP object */
+export interface CircuitNode {
+  id: string
+  type: CircuitNodeType
+  title: string
+  summary: string
+  status: CircuitNodeStatus
+  position: { x: number; y: number }
+  collapsedDetails: string[]
+  expandedDetails?: {
+    participants?: string[]
+    currentActivity?: string
+    recentOutputs?: string[]
+    pendingApprovals?: number
+    context?: string[]
+  }
+  relatedRefs?: {
+    type: string
+    id: string
+  }[]
+}
+
+/** Circuit edge - visible relationship between circuit nodes */
+export interface CircuitEdge {
+  id: string
+  fromNodeId: string
+  toNodeId: string
+  relationship:
+    | 'coordinates'
+    | 'participates'
+    | 'owns'
+    | 'delegates'
+    | 'requests_approval'
+    | 'produces'
+    | 'references'
+  status?: CircuitNodeStatus
+}
+
+/** Canvas viewport state */
+export interface CanvasViewport {
+  x: number
+  y: number
+  scale: number
+  selectedNodeId?: string
+}
+
+/** Circuit canvas view - spatial operating picture */
+export interface CircuitCanvasView {
+  viewport: CanvasViewport
+  nodes: CircuitNode[]
+  edges: CircuitEdge[]
+  densityState: 'empty' | 'normal' | 'crowded' | 'overflow'
+  status: 'loading' | 'ready' | 'error' | 'empty'
+}
+
+/** Toolbar action type */
+export type ToolbarActionType =
+  | 'spawn_agent'
+  | 'tool_call'
+  | 'create_goal'
+  | 'capture_artifact'
+  | 'add_note'
+
+/** Toolbar draft action - context-preserving operator action */
+export interface ToolbarDraftAction {
+  id: string
+  actionType: ToolbarActionType
+  originContext: {
+    activeRoomId?: string
+    selectedWorkItemId?: string
+    selectedNodeId?: string
+  }
+  requiredInputs: Record<string, unknown>
+  status: 'draft' | 'submitting' | 'succeeded' | 'failed' | 'cancelled'
+  createdRef?: {
+    type: string
+    id: string
+  }
+  errorSummary?: string
+}
+
+/** Toolbar action result - linked result in chat/canvas */
+export interface ToolbarActionResult {
+  draftId: string
+  success: boolean
+  createdRef?: {
+    type: string
+    id: string
+  }
+  errorSummary?: string
 }

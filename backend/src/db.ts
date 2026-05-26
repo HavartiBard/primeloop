@@ -573,6 +573,48 @@ ALTER TABLE prime_agent_module_runs
 ALTER TABLE prime_agent_config
   ADD COLUMN IF NOT EXISTS model_preferences JSONB NOT NULL DEFAULT '{}';
 
+-- =============================================================
+-- Onboarding session and team plan tables — Spec 018
+-- Idempotent: safe to re-run. Uses CREATE TABLE IF NOT EXISTS.
+-- =============================================================
+
+CREATE TABLE IF NOT EXISTS onboarding_session (
+  id TEXT PRIMARY KEY DEFAULT 'default',
+  current_step TEXT NOT NULL DEFAULT 'providers' CHECK (current_step IN ('intro', 'providers', 'function_assignment', 'prime_config', 'plugins', 'workspace', 'launch', 'prime_conversation', 'complete')),
+  status TEXT NOT NULL DEFAULT 'not_started' CHECK (status IN ('not_started', 'in_progress', 'blocked', 'ready_to_launch', 'launching', 'launched', 'complete')),
+  providers JSONB NOT NULL DEFAULT '[]',
+  function_assignments JSONB NOT NULL DEFAULT '[]',
+  prime_config_draft JSONB NOT NULL DEFAULT '{}',
+  plugin_choices JSONB NOT NULL DEFAULT '[]',
+  team_plan JSONB,
+  last_error TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS team_plans (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  session_id TEXT NOT NULL REFERENCES onboarding_session(id) ON DELETE CASCADE,
+  title TEXT NOT NULL,
+  agents JSONB NOT NULL DEFAULT '[]',
+  recommended BOOLEAN NOT NULL DEFAULT false,
+  confirmed BOOLEAN NOT NULL DEFAULT false,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_team_plans_session_confirmed ON team_plans (session_id, confirmed);
+
+ALTER TABLE team_plans
+  ADD COLUMN IF NOT EXISTS confirmation_status TEXT NOT NULL DEFAULT 'proposed'
+    CHECK (confirmation_status IN ('proposed', 'confirmed', 'rejected', 'partially_confirmed'));
+
+ALTER TABLE team_plans
+  ADD COLUMN IF NOT EXISTS created_agent_ids JSONB NOT NULL DEFAULT '[]';
+
+ALTER TABLE team_plans
+  ADD COLUMN IF NOT EXISTS failed_agents JSONB NOT NULL DEFAULT '[]';
+
 CREATE TABLE IF NOT EXISTS agent_workspace_config (
   id TEXT PRIMARY KEY DEFAULT 'default',
   mode TEXT NOT NULL DEFAULT 'local' CHECK (mode IN ('local', 'git')),
