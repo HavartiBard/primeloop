@@ -21,7 +21,7 @@ export class PostgresCheckpointStore implements CheckpointStore {
   async enqueueItem(event: PrimeEvent, actorAgentId?: string): Promise<string> {
     const { rows } = await this.pool.query<{ id: string }>(
       `INSERT INTO prime_queue_items (event_type, payload, actor_agent_id)
-       VALUES ($1, $2, $3)
+       VALUES ($1, $2::jsonb, $3)
        RETURNING id`,
       [event.type, JSON.stringify(event.payload), actorAgentId ?? null]
     )
