@@ -1,112 +1,88 @@
 # Handoff
 
-## Recent Progress
-
-- Native memory, loop detection, snapshots, and fleet learning views are implemented and deployed.
-- Added an HTTP control-plane bridge for external agents with bearer-token issuance and tool calls.
-- Reworked the `Agents` page so the registry is the selector, health is shown in-table, and edit flows open inline in the lower detail panel.
-- CP tokens are now masked by default with an explicit `Show` toggle in the bridge panel.
-- Live review stack is currently running on the `agent-cp-*` deployment path with `pgvector/pgvector:pg16` and `SECRET_ENCRYPTION_KEY` configured.
-- Prime setup now restarts the Prime service after a successful wizard launch, so a fresh instance can handle the first message without a manual backend restart.
-- Prime chat replies now come from a dedicated user-facing `response` field instead of reusing the internal `reasoning` summary.
-- Prime messages now go through the shared queue, duplicate `prime.message` sessions are reconciled by `message_id`, and Prime runtime status is written back to `prime_agent_config`.
-- The local dev wrapper is the expected startup path; use `./scripts/dev-up.sh` and set `ACP_VM_IP=127.0.0.1` explicitly if hostname detection is unavailable in the current shell.
-
 ## Current direction
 
-The original "circuit canvas as the primary workspace" concept has been abandoned for v1.
+**Spec 017 — Expand Agent Canvas UX** is the active work stream. The canvas is being rebuilt as a room-centric spatial workspace. The rooms/chat sidebar view remains as the primary detail view; the circuit canvas is the spatial overview.
 
-The Operations Portal is now a room-centric collaboration view as the primary operating surface:
+The canvas UX is now:
+- **Room-centric**: only Room cards appear as top-level entities on the canvas. Prime is not a standalone node.
+- **OpenSwarm-style cards**: two-state collapsed/expanded RoomCard with header (drag handle, status dot, title, status chip, expand toggle, navigate arrow), collapsed body (last activity preview), expanded body (work item list + open room link).
+- **Welcome room**: a pre-seeded room (`kind='welcome'`) is always present as the initial canvas state before any goals are created.
+- **Goal creation**: "New Goal" modal from the bottom toolbar creates a room + thread automatically.
 
-- left drawer: collaboration rooms sorted by activity
-- room status indicators:
-  - green = active
-  - blue pulsing = attention/activity
-  - red pulsing = blocked
-  - gray = archived
-- right workspace: selected room with:
-  - `Chat`
-  - `Status`
-  - `Signals`
-  - `Artifacts`
+## Recent work (this session)
 
-This is the current v1 product direction.
+### Bugs fixed
+1. **`transitionGoalStatus` off-by-one bug** — `paramIndex` was incremented to 3 before use, causing `WHERE id = $3` with only 2 bound parameters. PostgreSQL reported "could not determine data type of parameter $2". Fixed by removing the spurious `paramIndex++` (`backend/src/goals/service.ts:250`).
+2. **JSONB type inference** — `threads` INSERT now uses `jsonb_build_object()` instead of passing a JSON string for the metadata column. `prime_queue_items` INSERT uses `$2::jsonb` cast. (`backend/src/routes/control-plane.ts`, `backend/src/checkpoint-store.ts`).
 
-The circuit canvas is still in scope as a secondary relationship view over work, agents, approvals, and artifacts. OpenSwarm-style live chat/tool interaction inside the canvas is deferred to Phase 2.
+### Canvas redesign
+- `web/src/pages/CircuitView.tsx` fully rewritten: room-centric, RoomCard component, snap-to-grid, grid layout, empty state.
+- Removed: Prime node, standalone agent nodes, edge legend, `agentRegistry`/`healthData` queries.
+- Added: Welcome room seed in `backend/src/db.ts`.
 
 ## Key files
 
-- `web/src/components/LiveCircuitMap.tsx`
-  - despite the filename, this is now the room-centric workspace UI
-  - contains:
-    - room drawer
-    - selected room workspace
-    - fallback sample rooms/messages for sparse live data
-- `web/src/pages/OperationsPortal.tsx`
-  - top status strip remains
-  - page is a flex column
-  - main content section gives remaining viewport height to the room workspace
-- `web/src/index.css`
-  - light/dark theme variables
-  - room/chat terminal colors are theme-aware
-  - tone colors moved to CSS variables to avoid poor light-mode pastel rendering
+| File | Purpose |
+|------|---------|
+| `web/src/pages/CircuitView.tsx` | Circuit canvas — room-centric spatial view |
+| `web/src/hooks/useCanvasViewport.ts` | Pan/zoom state hook (drag, pinch, wheel) |
+| `web/src/hooks/useCanvasLayout.ts` | Persisted card positions hook |
+| `web/src/hooks/useExpandableItems.ts` | Expandable item state hook |
+| `web/src/components/agentCanvas/` | Canvas components (BottomActionToolbar, NewGoalModal, etc.) |
+| `web/src/components/CollaborationRoomsView.tsx` | Rooms sidebar + chat detail view |
+| `web/src/pages/Setup.tsx` | Setup wizard (providers, LLM router, prime config) |
+| `backend/src/routes/control-plane.ts` | Goal creation, approvals API |
+| `backend/src/routes/canvas.ts` | Canvas layout persistence API |
+| `backend/src/goals/service.ts` | Goal state machine |
+| `backend/src/db.ts` | DB migrations + seeds (welcome room, canvas_layouts) |
+| `specs/017-expand-agent-canvas-ux/` | Feature spec, plan, tasks, contracts |
 
-## What was completed
+## Spec 017 task status
 
-- removed the multi-agent circuit/canvas layout
-- replaced it with a room drawer + room workspace
-- made the portal layout consume remaining viewport height
-- added internal scrolling so drawers and room content stop clipping
-- removed hardcoded dark-only chat styling in light mode
-- kept fallback sample data so the UI is visible even when runtime data is sparse
+The tasks.md in `specs/017-expand-agent-canvas-ux/tasks.md` is the authoritative task list. Most foundational tasks (pan/zoom, goal creation, room canvas, layout persistence) are done. Outstanding areas:
 
-## Current behavior
+- **Room card expanded state**: currently shows work items; should embed a mini-chat interface with actual thread messages
+- **Streaming chat bubbles**: thinking updates, tool-call/result bubbles inside room chat (FR-001–008)
+- **SSE agent-join listener**: when Prime assigns an agent, card appears on canvas in real time (FR-024)
+- **Room card last-message preview**: currently shows work item count, not actual last thread message; needs `fetchThreadMessages` per room or a `last_message` field on the threads API
+- **Bottom toolbar in rooms view**: toolbar is on canvas but not yet on the rooms/chat sidebar view (FR-014)
+- **Approval cards inline**: approval requests need a card inside the room chat (FR-006)
+- **Canvas tests**: `backend/tests/prime-agent-config.test.ts` and canvas route tests
 
-- rooms are sorted by derived activity score
-- room state is derived roughly from:
-  - blocked work -> `blocked`
-  - queued/running delegations -> `attention`
-  - active work -> `active`
-  - closed/no activity -> `archived`
-- right pane shows:
-  - chat transcript
-  - status summary
-  - signals derived from room/runtime state
-  - artifacts derived from work items and delegations
+## OpenSwarm reference
 
-## Known limitations / likely next steps
+[openswarm-ai/openswarm](https://github.com/openswarm-ai/openswarm) — the inspiration. Their AgentCard is the design reference:
+- 480px min width, header + metadata row, streaming chat via WebSocket, inline approval UI
+- `frontend/src/app/pages/Dashboard/cards/AgentCard.tsx` is the key file
+- Status colors: green=running, orange=waiting approval, gray=done/stopped, red=error
 
-1. Rename `LiveCircuitMap.tsx` to something accurate like `CollaborationRoomsView.tsx`.
-2. Make the room drawer denser so more rooms fit at once.
-3. Tighten the right-side room header so more vertical space goes to chat and artifacts.
-4. Improve the visual hierarchy of `Status`, `Signals`, and `Artifacts`.
-5. Replace some fallback/sample content with richer live-derived room content where available.
-6. Review whether the room list should include agent avatars/names more explicitly.
+## Known issues / next steps
 
-## Verification
+1. **Clear test rooms**: delete stale threads from the dev DB. Run:
+   ```sql
+   DELETE FROM threads WHERE metadata->>'kind' != 'welcome';
+   ```
+   The welcome room is protected by the seed condition.
 
-Latest successful verification:
+2. **Room card needs actual last message**: add `last_message_content` / `last_message_at` to the threads list API, or add a separate `/api/threads/:id/messages?limit=1` fetch per card.
 
-- `cd web && npm run build`
+3. **Expanded room card**: hook up to `fetchThreadMessages` to show actual chat history inside the expanded card.
 
-Build passed after the room-centric rewrite.
+4. **Bottom toolbar on CollaborationRoomsView**: import `BottomActionToolbar` into the rooms view (currently only on CircuitView).
 
-## Preview
+5. **Spring animation on new rooms**: add CSS animation on `RoomCard` mount (currently static).
 
-At the time of handoff, preview server was expected at:
+6. **Canvas navigate button**: currently navigates to `/` — needs to navigate to the specific room URL.
 
-- `http://localhost:5173/`
-- `http://<vm-ip>:5173/`
-- backend API at `http://<vm-ip>:3100/`
+## Environment
 
-Use `./scripts/dev-up.sh` from the repo root instead of starting `web/` manually. The script clears stale listeners on `3100` and `5173`, starts both services together, binds Vite on the VM interface, and points the backend at the Unraid dev database by default.
+- Start everything: `./scripts/dev-up.sh` from repo root
+- Backend: `tsx watch src/index.ts` on port 3100
+- Frontend: `vite` on port 5173
+- Dev DB: Unraid-hosted Postgres at `ACP_DEV_DATABASE_HOST` (defaults to `192.168.20.14:55433`)
+- The Docker `backend-dev` container uses `local/agent-cp-backend:current` image — needs a rebuild to pick up changes when not using `dev-up.sh`
 
-## Environment notes
+## Current branch
 
-- sandboxing is working again in this environment
-- this latest room-centric rewrite is local work in `agent-control-plane`
-- no live deploy was done as part of this UI iteration
-- local backend dev requires `DATABASE_URL` plus `SECRET_ENCRYPTION_KEY`; the wrapper script now supplies defaults for the Unraid-backed dev setup
-- development assumes the shared hosted dev DB, not a local long-lived Postgres instance
-- the Docker-backed `test:db` flow is only an optional disposable backend test database via `TEST_DATABASE_URL`
-- when Prime looks stuck, check `prime_agent_sessions` first; duplicate sessions for the same message can indicate a stale run that should be marked failed instead of waiting indefinitely
+`main` — all recent work was merged. Next feature work should be on a new branch.
