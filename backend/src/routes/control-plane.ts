@@ -42,7 +42,7 @@ export function createControlPlaneRouter({
         title: body.title,
         intent: body.intent,
         priority: body.priority,
-      })
+      }).catch((e: unknown) => { console.error('[goals] step=createGoal', e); throw e })
 
       // Create goal-room thread in the same logical transaction
       const threadResult = await pool.query<{ id: string }>(
@@ -50,7 +50,7 @@ export function createControlPlaneRouter({
          VALUES ($1, 'active', jsonb_build_object('kind', 'goal-room', 'goal_id', $2::text))
          RETURNING id`,
         [goal.title, goal.id],
-      )
+      ).catch((e: unknown) => { console.error('[goals] step=thread-insert', e); throw e })
       const threadId = threadResult.rows[0]?.id ?? null
 
       if (threadId) {
@@ -58,10 +58,11 @@ export function createControlPlaneRouter({
           `INSERT INTO thread_messages (thread_id, role, sender, content, metadata)
            VALUES ($1, 'system', 'system', $2, '{}')`,
           [threadId, `Goal created: ${goal.title}`],
-        )
+        ).catch((e: unknown) => { console.error('[goals] step=thread-message', e); throw e })
       }
 
       const queued = await transitionGoalStatus(pool, goal.id, 'queued')
+        .catch((e: unknown) => { console.error('[goals] step=transition-queued', e); throw e })
 
       // Enqueue for Prime asynchronously — do not let queue errors fail the response
       if (primeQueue) {
