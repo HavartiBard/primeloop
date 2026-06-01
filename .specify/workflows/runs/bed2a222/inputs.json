@@ -1,7 +1,0 @@
-{
-  "inputs": {
-    "spec": "specs/017-expand-agent-canvas-ux",
-    "integration": "claude",
-    "scope": "full"
-  }
-}
