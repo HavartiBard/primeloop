@@ -258,6 +258,7 @@ export function buildRuntimeWorkItem(overrides?: Partial<RuntimeWorkItem>): Runt
   return {
     id: 'wi:default',
     title: 'Default work item',
+    description: 'Default work item',
     status: 'active',
     priority: 'medium',
     lane: 'backlog',

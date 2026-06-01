@@ -60,11 +60,11 @@ describe('useCanvasViewport', () => {
       const { result } = renderHook(() => useCanvasViewport())
       const mockEvent = {
         button: 0,
-        currentTarget: { setPointerCapture: jest.fn() } as any,
+        currentTarget: { setPointerCapture: vi.fn() } as any,
         clientX: 100,
         clientY: 50,
-        preventDefault: jest.fn(),
-        stopPropagation: jest.fn(),
+        preventDefault: vi.fn(),
+        stopPropagation: vi.fn(),
       }
       act(() => {
         result.current.dragHandlers.onPointerDown(mockEvent)
@@ -76,19 +76,19 @@ describe('useCanvasViewport', () => {
       act(() => {
         result.current.dragHandlers.onPointerDown({
           button: 0,
-          currentTarget: { setPointerCapture: jest.fn() } as any,
+          currentTarget: { setPointerCapture: vi.fn() } as any,
           clientX: 100,
           clientY: 50,
-          preventDefault: jest.fn(),
-          stopPropagation: jest.fn(),
+          preventDefault: vi.fn(),
+          stopPropagation: vi.fn(),
         })
       })
       act(() => {
         result.current.dragHandlers.onPointerMove({
           clientX: 120,
           clientY: 60,
-          preventDefault: jest.fn(),
-          stopPropagation: jest.fn(),
+          preventDefault: vi.fn(),
+          stopPropagation: vi.fn(),
         } as any)
       })
       expect(result.current.viewport.x).toBe(20)
@@ -100,11 +100,11 @@ describe('useCanvasViewport', () => {
       act(() => {
         result.current.dragHandlers.onPointerDown({
           button: 0,
-          currentTarget: { setPointerCapture: jest.fn() } as any,
+          currentTarget: { setPointerCapture: vi.fn() } as any,
           clientX: 100,
           clientY: 50,
-          preventDefault: jest.fn(),
-          stopPropagation: jest.fn(),
+          preventDefault: vi.fn(),
+          stopPropagation: vi.fn(),
         })
       })
       act(() => {
@@ -118,12 +118,12 @@ describe('useCanvasViewport', () => {
       const { result } = renderHook(() => useCanvasViewport())
       const mockEvent = {
         currentTarget: {
-          getBoundingClientRect: jest.fn(() => ({ left: 0, top: 0 })),
+          getBoundingClientRect: vi.fn(() => ({ left: 0, top: 0 })),
         } as any,
         clientX: 100,
         clientY: 100,
         deltaY: -100,
-        preventDefault: jest.fn(),
+        preventDefault: vi.fn(),
       }
       act(() => {
         result.current.wheelHandler.onWheel(mockEvent)
@@ -162,7 +162,7 @@ describe('useCanvasViewport', () => {
           { clientX: 200, clientY: 0 },
         ],
         currentTarget: {
-          getBoundingClientRect: jest.fn(() => ({ left: 0, top: 0 })),
+          getBoundingClientRect: vi.fn(() => ({ left: 0, top: 0 })),
         } as any,
       }
       act(() => {

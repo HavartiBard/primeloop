@@ -107,3 +107,29 @@ export const KEYBOARD_HINTS = {
 export function getFocusManagementText(componentName: string): string {
   return `${componentName} focused. Use arrow keys to navigate, Enter to activate.`
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Toolbar action accessibility text
+// ─────────────────────────────────────────────────────────────────────────────
+
+export function getToolbarActionLabel(actionType: string): string {
+  const labels: Record<string, string> = {
+    spawn_agent: 'Spawn Agent',
+    tool_call: 'Tool Call',
+    create_goal: 'Create Goal',
+    capture_artifact: 'Capture Artifact',
+    add_note: 'Add Note',
+  }
+  return labels[actionType] || actionType
+}
+
+export function getToolbarActionShortcut(actionType: string): string | null {
+  const shortcuts: Record<string, string> = {
+    spawn_agent: 'A',
+    tool_call: 'T',
+    create_goal: 'G',
+    capture_artifact: 'R',
+    add_note: 'N',
+  }
+  return shortcuts[actionType] || null
+}

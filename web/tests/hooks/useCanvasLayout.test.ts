@@ -3,16 +3,17 @@
 import { renderHook, act, waitFor } from '@testing-library/react'
 import * as api from '../../src/api'
 import { useCanvasLayout } from '../../src/hooks/useCanvasLayout'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 
-jest.mock('../../src/api')
+vi.mock('../../src/api')
 
 describe('useCanvasLayout', () => {
   beforeEach(() => {
-    jest.clearAllMocks()
+    vi.clearAllMocks()
   })
 
   it('should load positions on mount', async () => {
-    ;(api.fetchCanvasLayout as jest.Mock).mockResolvedValue({
+    ;(api.fetchCanvasLayout as any).mockResolvedValue({
       'card-1': { x: 100, y: 200 },
     })
     const { result } = renderHook(() => useCanvasLayout())
@@ -24,7 +25,7 @@ describe('useCanvasLayout', () => {
   })
 
   it('should handle fetch error gracefully', async () => {
-    ;(api.fetchCanvasLayout as jest.Mock).mockRejectedValue(new Error('Network error'))
+    ;(api.fetchCanvasLayout as any).mockRejectedValue(new Error('Network error'))
     const { result } = renderHook(() => useCanvasLayout())
     await waitFor(() => {
       expect(result.current.isLoading).toBe(false)
@@ -41,7 +42,7 @@ describe('useCanvasLayout', () => {
   })
 
   it('should debounce save calls', async () => {
-    ;(api.saveCanvasLayout as jest.Mock).mockResolvedValue({ ok: true })
+    ;(api.saveCanvasLayout as any).mockResolvedValue({ ok: true })
     const { result } = renderHook(() => useCanvasLayout())
     act(() => {
       result.current.updatePosition('card-1', 100, 100)
@@ -56,8 +57,8 @@ describe('useCanvasLayout', () => {
   })
 
   it('should not block UI on save failure', async () => {
-    ;(api.fetchCanvasLayout as jest.Mock).mockResolvedValue({})
-    ;(api.saveCanvasLayout as jest.Mock).mockRejectedValue(new Error('Save failed'))
+    ;(api.fetchCanvasLayout as any).mockResolvedValue({})
+    ;(api.saveCanvasLayout as any).mockRejectedValue(new Error('Save failed'))
     const { result } = renderHook(() => useCanvasLayout())
     await waitFor(() => {
       expect(result.current.isLoading).toBe(false)
