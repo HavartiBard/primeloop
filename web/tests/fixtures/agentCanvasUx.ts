@@ -1,192 +1,310 @@
-// ─────────────────────────────────────────────────────────────────────────────
-// Test Fixtures for Agent Canvas UX (spec 017)
-// ─────────────────────────────────────────────────────────────────────────────
+// agentCanvasUx.ts - Test fixture builders for agent canvas UX components
 
-import type {
+import {
   ChatDisplayEvent,
   ContextAttachment,
-  ApprovalDisplayCard,
-  DelegationDisplayCard,
-  CircuitNode,
-  CircuitEdge,
-  ToolbarDraftAction,
+  UserAction,
+  Approval,
+  RuntimeDelegation,
+  RuntimeEvent,
+  RuntimeWorkItem,
+  ThreadMessage,
 } from '../../src/types'
 
-// ─── Chat Display Event Builders ─────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Chat Display Event fixtures
+// ─────────────────────────────────────────────────────────────────────────────
 
-export function buildChatDisplayEvent(overrides?: Partial<ChatDisplayEvent>): ChatDisplayEvent {
+export function buildChatDisplayEvent(
+  overrides: Partial<ChatDisplayEvent> = {}
+): ChatDisplayEvent {
   return {
-    id: overrides?.id || `event-${Date.now()}`,
-    kind: overrides?.kind || 'thinking',
-    actorLabel: overrides?.actorLabel || 'Prime',
-    status: overrides?.status || 'streaming',
-    occurredAt: overrides?.occurredAt || new Date().toISOString(),
-    summary: overrides?.summary || 'Thinking in progress...',
-    details: overrides?.details,
-    source: overrides?.source || {
-      type: 'prime_session',
-      id: 'session-123',
-    },
-    attachments: overrides?.attachments || [],
-    actions: overrides?.actions,
+    id: 'evt:default',
+    kind: 'message',
+    actorLabel: 'Prime',
+    status: 'success',
+    occurredAt: new Date().toISOString(),
+    summary: 'Default event summary',
+    source: { type: 'thread_message', id: 'msg:1' },
+    attachments: [],
+    ...overrides,
   }
 }
 
-// ─── Context Attachment Builders ─────────────────────────────────────────────
+export function buildThinkingEvent(overrides?: Partial<ChatDisplayEvent>): ChatDisplayEvent {
+  return buildChatDisplayEvent({
+    kind: 'thinking',
+    actorLabel: 'Prime',
+    status: 'streaming',
+    summary: 'Processing your request...',
+    details: 'Analyzing requirements and planning next steps.',
+    ...overrides,
+  })
+}
+
+export function buildToolCallEvent(overrides?: Partial<ChatDisplayEvent>): ChatDisplayEvent {
+  return buildChatDisplayEvent({
+    kind: 'tool_call',
+    actorLabel: 'agent-1',
+    status: 'running',
+    summary: 'Calling weather API...',
+    source: { type: 'runtime_event', id: 'evt:tool-call-1' },
+    ...overrides,
+  })
+}
+
+export function buildToolResultEvent(overrides?: Partial<ChatDisplayEvent>): ChatDisplayEvent {
+  return buildChatDisplayEvent({
+    kind: 'tool_result',
+    actorLabel: 'agent-1',
+    status: 'success',
+    summary: 'Weather data retrieved',
+    details: JSON.stringify({ temperature: 72, condition: 'sunny' }),
+    source: { type: 'runtime_event', id: 'evt:tool-result-1' },
+    ...overrides,
+  })
+}
+
+export function buildApprovalEvent(overrides?: Partial<ChatDisplayEvent>): ChatDisplayEvent {
+  return buildChatDisplayEvent({
+    kind: 'approval',
+    actorLabel: 'operator',
+    status: 'pending',
+    summary: 'Request: Approve deployment',
+    details: 'Deploy to production environment?',
+    source: { type: 'approval', id: 'app:1' },
+    actions: [
+      { label: 'Approve', type: 'approve' },
+      { label: 'Deny', type: 'deny' },
+    ],
+    ...overrides,
+  })
+}
+
+export function buildDelegationEvent(overrides?: Partial<ChatDisplayEvent>): ChatDisplayEvent {
+  return buildChatDisplayEvent({
+    kind: 'delegation',
+    actorLabel: 'agent-1',
+    status: 'running',
+    summary: 'Task: Research competitors',
+    details: 'Analyze top 5 competitors in the SaaS space.',
+    source: { type: 'delegation', id: 'del:1' },
+    ...overrides,
+  })
+}
+
+export function buildGoalEvent(overrides?: Partial<ChatDisplayEvent>): ChatDisplayEvent {
+  return buildChatDisplayEvent({
+    kind: 'goal',
+    actorLabel: 'operator',
+    status: 'running',
+    summary: 'Goal: Launch new feature',
+    details: 'Implement user authentication with OAuth2.',
+    source: { type: 'work_item', id: 'wi:goal-1' },
+    ...overrides,
+  })
+}
+
+export function buildArtifactEvent(overrides?: Partial<ChatDisplayEvent>): ChatDisplayEvent {
+  return buildChatDisplayEvent({
+    kind: 'artifact',
+    actorLabel: 'agent-1',
+    status: 'success',
+    summary: 'Artifact: Architecture diagram',
+    details: 'Created system architecture diagram in PDF format.',
+    source: { type: 'work_item', id: 'wi:artifact-1' },
+    ...overrides,
+  })
+}
+
+export function buildNoteEvent(overrides?: Partial<ChatDisplayEvent>): ChatDisplayEvent {
+  return buildChatDisplayEvent({
+    kind: 'note',
+    actorLabel: 'agent-1',
+    status: 'success',
+    summary: 'Note: Meeting minutes',
+    details: 'Discussed sprint planning and task assignments.',
+    source: { type: 'work_item', id: 'wi:note-1' },
+    ...overrides,
+  })
+}
+
+export function buildSystemEvent(overrides?: Partial<ChatDisplayEvent>): ChatDisplayEvent {
+  return buildChatDisplayEvent({
+    kind: 'system',
+    actorLabel: 'system',
+    status: 'success',
+    summary: 'System initialized',
+    source: { type: 'runtime_event', id: 'evt:system-1' },
+    ...overrides,
+  })
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Context Attachment fixtures
+// ─────────────────────────────────────────────────────────────────────────────
 
 export function buildContextAttachment(overrides?: Partial<ContextAttachment>): ContextAttachment {
   return {
-    id: overrides?.id || `att-${Date.now()}`,
-    name: overrides?.name || 'attachment.txt',
-    type: overrides?.type || 'file',
-    sourceLabel: overrides?.sourceLabel || 'System',
-    availability: overrides?.availability || 'available',
-    previewSummary: overrides?.previewSummary,
-    targetRef: overrides?.targetRef,
-  }
-}
-
-// ─── Approval Display Card Builders ──────────────────────────────────────────
-
-export function buildApprovalDisplayCard(overrides?: Partial<ApprovalDisplayCard>): ApprovalDisplayCard {
-  return {
-    id: overrides?.id || `approv-${Date.now()}`,
-    requesterLabel: overrides?.requesterLabel || 'Agent Alpha',
-    requestSummary: overrides?.requestSummary || 'Deploy to production',
-    status: overrides?.status || 'pending',
-    decisionOptions: overrides?.decisionOptions || ['approve', 'deny'],
+    id: 'att:default',
+    name: 'default.txt',
+    type: 'file',
+    sourceLabel: 'agent-1',
+    availability: 'available',
     ...overrides,
   }
 }
 
-// ─── Delegation Display Card Builders ────────────────────────────────────────
+export function buildRestrictedAttachment(overrides?: Partial<ContextAttachment>): ContextAttachment {
+  return buildContextAttachment({
+    name: 'confidential.pdf',
+    availability: 'restricted',
+    previewSummary: 'Access restricted - requires approval',
+    ...overrides,
+  })
+}
 
-export function buildDelegationDisplayCard(overrides?: Partial<DelegationDisplayCard>): DelegationDisplayCard {
+export function buildUnavailableAttachment(overrides?: Partial<ContextAttachment>): ContextAttachment {
+  return buildContextAttachment({
+    name: 'deleted-file.txt',
+    availability: 'deleted',
+    previewSummary: 'File no longer available',
+    ...overrides,
+  })
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// User Action fixtures
+// ─────────────────────────────────────────────────────────────────────────────
+
+export function buildApproveAction(overrides?: Partial<UserAction>): UserAction {
+  return { label: 'Approve', type: 'approve', ...overrides }
+}
+
+export function buildDenyAction(overrides?: Partial<UserAction>): UserAction {
+  return { label: 'Deny', type: 'deny', ...overrides }
+}
+
+export function buildRetryAction(overrides?: Partial<UserAction>): UserAction {
+  return { label: 'Retry', type: 'retry', ...overrides }
+}
+
+export function buildCancelAction(overrides?: Partial<UserAction>): UserAction {
+  return { label: 'Cancel', type: 'cancel', ...overrides }
+}
+
+export function buildExpandAction(overrides?: Partial<UserAction>): UserAction {
+  return { label: 'Expand', type: 'expand', ...overrides }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Runtime record fixtures (for mapping tests)
+// ─────────────────────────────────────────────────────────────────────────────────
+
+export function buildThreadMessage(overrides?: Partial<ThreadMessage>): ThreadMessage {
   return {
-    id: overrides?.id || `deleg-${Date.now()}`,
-    sourceLabel: overrides?.sourceLabel || 'Prime',
-    targetLabel: overrides?.targetLabel || 'Agent Beta',
-    objective: overrides?.objective || 'Process customer request',
-    status: overrides?.status || 'running',
+    id: 'msg:default',
+    thread_id: 'thread:1',
+    role: 'user',
+    sender: 'operator',
+    content: 'Default message content',
+    metadata: {},
+    created_at: new Date().toISOString(),
     ...overrides,
   }
 }
 
-// ─── Circuit Node Builders ───────────────────────────────────────────────────
-
-export function buildCircuitNode(overrides?: Partial<CircuitNode>): CircuitNode {
+export function buildApproval(overrides?: Partial<Approval>): Approval {
   return {
-    id: overrides?.id || `node-${Date.now()}`,
-    type: overrides?.type || 'agent',
-    title: overrides?.title || 'Agent Alpha',
-    summary: overrides?.summary || 'Processing requests',
-    status: overrides?.status || 'active',
-    position: overrides?.position || { x: 100, y: 100 },
-    collapsedDetails: overrides?.collapsedDetails || ['active', 'online'],
-    expandedDetails: overrides?.expandedDetails,
-    ...overrides,
-  }
-}
-
-// ─── Circuit Edge Builders ───────────────────────────────────────────────────
-
-export function buildCircuitEdge(overrides?: Partial<CircuitEdge>): CircuitEdge {
-  return {
-    id: overrides?.id || `edge-${Date.now()}`,
-    fromNodeId: overrides?.fromNodeId || 'prime',
-    toNodeId: overrides?.toNodeId || 'agent-1',
-    relationship: overrides?.relationship || 'coordinates',
-    ...overrides,
-  }
-}
-
-// ─── Toolbar Draft Action Builders ───────────────────────────────────────────
-
-export function buildToolbarDraftAction(overrides?: Partial<ToolbarDraftAction>): ToolbarDraftAction {
-  return {
-    id: overrides?.id || `draft-${Date.now()}`,
-    actionType: overrides?.actionType || 'spawn_agent',
-    originContext: overrides?.originContext || { activeRoomId: 'room-1' },
-    requiredInputs: overrides?.requiredInputs || {},
-    status: overrides?.status || 'draft',
-    ...overrides,
-  }
-}
-
-// ─── Fixture Collections ─────────────────────────────────────────────────────
-
-export const THINKING_EVENTS: ChatDisplayEvent[] = [
-  buildChatDisplayEvent({
-    id: 'thinking-1',
-    kind: 'thinking',
-    status: 'streaming',
-    summary: 'Analyzing customer request...',
-    actorLabel: 'Prime',
-  }),
-  buildChatDisplayEvent({
-    id: 'thinking-2',
-    kind: 'thinking',
-    status: 'success',
-    summary: 'Analysis complete. Proceeding with plan.',
-    actorLabel: 'Prime',
-  }),
-]
-
-export const TOOL_CALL_EVENTS: ChatDisplayEvent[] = [
-  buildChatDisplayEvent({
-    id: 'tool-call-1',
-    kind: 'tool_call',
-    status: 'running',
-    summary: 'Calling weather_api to get forecast',
-    actorLabel: 'Prime',
-  }),
-  buildChatDisplayEvent({
-    id: 'tool-result-1',
-    kind: 'tool_result',
-    status: 'success',
-    summary: 'Weather API returned forecast for 5 days',
-    actorLabel: 'Prime',
-  }),
-]
-
-export const APPROVAL_EVENTS: ChatDisplayEvent[] = [
-  buildChatDisplayEvent({
-    id: 'approv-1',
-    kind: 'approval',
+    approval_id: 'app:default',
+    run_id: 'run:1',
+    action: 'Deploy to production',
     status: 'pending',
-    summary: 'Deploy to production requested',
-    actorLabel: 'Agent Alpha',
-  } as any),
-]
+    created_at: new Date().toISOString(),
+    ...overrides,
+  }
+}
 
-export const DELEGATION_EVENTS: ChatDisplayEvent[] = [
-  buildChatDisplayEvent({
-    id: 'deleg-1',
-    kind: 'delegation',
+export function buildRuntimeDelegation(overrides?: Partial<RuntimeDelegation>): RuntimeDelegation {
+  return {
+    id: 'del:default',
+    work_item_id: 'wi:1',
+    from_agent_id: 'agent:1',
+    to_agent_id: 'agent:2',
     status: 'running',
-    summary: 'Delegated to Agent Beta for processing',
-    actorLabel: 'Prime',
-  } as any),
-]
+    capability: 'Research competitors',
+    request: { query: 'top SaaS competitors' },
+    result: {},
+    trace: [],
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+    ...overrides,
+  }
+}
 
-export const CONTEXT_ATTACHMENT_EVENTS: ChatDisplayEvent[] = [
-  buildChatDisplayEvent({
-    id: 'event-attach-1',
-    kind: 'message',
-    status: 'success',
-    summary: 'Here is the file you requested',
-    actorLabel: 'Agent Alpha',
-    attachments: [
-      buildContextAttachment({ name: 'report.pdf', type: 'file', availability: 'available' }),
-      buildContextAttachment({ name: 'data.json', type: 'artifact', availability: 'available' }),
-    ],
-  }),
-]
+export function buildRuntimeEvent(overrides?: Partial<RuntimeEvent>): RuntimeEvent {
+  return {
+    id: 'evt:default',
+    event_type: 'tool_call',
+    actor: 'agent-1',
+    thread_id: 'thread:1',
+    payload: { summary: 'Calling API', status: 'running' },
+    created_at: new Date().toISOString(),
+    ...overrides,
+  }
+}
 
-export const ALL_EVENT_TYPES: ChatDisplayEvent[] = [
-  ...THINKING_EVENTS,
-  ...TOOL_CALL_EVENTS,
-  ...APPROVAL_EVENTS,
-  ...DELEGATION_EVENTS,
-  ...CONTEXT_ATTACHMENT_EVENTS,
-]
+export function buildRuntimeWorkItem(overrides?: Partial<RuntimeWorkItem>): RuntimeWorkItem {
+  return {
+    id: 'wi:default',
+    title: 'Default work item',
+    status: 'active',
+    priority: 'medium',
+    lane: 'backlog',
+    owner_agent_id: 'agent:1',
+    owner_label: 'agent-1',
+    metadata: { kind: 'goal' },
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+    ...overrides,
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Collections
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const CHAT_EVENT_FIXTURES = {
+  message: buildChatDisplayEvent,
+  thinking: buildThinkingEvent,
+  tool_call: buildToolCallEvent,
+  tool_result: buildToolResultEvent,
+  approval: buildApprovalEvent,
+  delegation: buildDelegationEvent,
+  goal: buildGoalEvent,
+  artifact: buildArtifactEvent,
+  note: buildNoteEvent,
+  system: buildSystemEvent,
+}
+
+export const ATTACHMENT_FIXTURES = {
+  available: buildContextAttachment,
+  restricted: buildRestrictedAttachment,
+  unavailable: buildUnavailableAttachment,
+}
+
+export const ACTION_FIXTURES = {
+  approve: buildApproveAction,
+  deny: buildDenyAction,
+  retry: buildRetryAction,
+  cancel: buildCancelAction,
+  expand: buildExpandAction,
+}
+
+export const RUNTIME_FIXTURES = {
+  message: buildThreadMessage,
+  approval: buildApproval,
+  delegation: buildRuntimeDelegation,
+  event: buildRuntimeEvent,
+  workItem: buildRuntimeWorkItem,
+}

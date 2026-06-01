@@ -2,8 +2,15 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { fetchPrimeSession, fetchPrimeSessions, fetchThreadMessages, sendPrimeMessage } from '../api'
 import { BottomActionToolbar } from './agentCanvas/BottomActionToolbar'
+import { AgentActivityTimeline } from './agentCanvas/AgentActivityTimeline'
 import type { AgentEvent, RegistryAgent, RuntimeAuditLoop, RuntimeDelegation, RuntimeThread, RuntimeWorkItem } from '../types'
 
+import {
+  deriveChatEventsFromRuntime,
+  mapThreadMessageToChatEvent,
+  mapPrimeSessionToThinkingEvent,
+  mapRuntimeEventToChatEvents,
+} from "../lib/chatDisplayEvents"
 type AgentHealth = {
   agent: string
   last_seen: string
@@ -569,6 +576,33 @@ export function CollaborationRoomsView({
     selectedRoom.workItems.some((item) => item.status === 'active' || item.status === 'blocked')
     || selectedRoom.delegations.some((delegation) => delegation.status === 'queued' || delegation.status === 'running')
   )
+
+  // Derive chat display events from runtime records for AgentActivityTimeline
+  const liveActivityEvents = useMemo(() => {
+    if (!selectedRoom) return []
+    return deriveChatEventsFromRuntime(
+      selectedRoom.messages.map(m => ({
+        id: m.messageId || '',
+        thread_id: selectedRoom.id,
+        role: m.speaker === primeName ? 'assistant' : 'user',
+        sender: m.speaker,
+        content: m.text,
+        metadata: {},
+        created_at: m.at,
+      })),
+      visiblePrimeSessions.map(s => ({
+        id: s.id,
+        status: s.status,
+        error: s.error,
+        reasoning_summary: s.reasoning_summary,
+        started_at: s.started_at || '',
+      })),
+      events.filter(e => e.thread_id === selectedRoom.id),
+      [], // approvals
+      selectedRoom.delegations,
+      selectedRoom.workItems
+    ).events
+  }, [selectedRoom, visiblePrimeSessions, events])
   const processingOwners = Array.from(new Set(runningPrimeWork.map((item) => item.owner_label || primeName))).filter(Boolean)
   const processingLabel = processingOwners.length > 0 ? processingOwners.join(', ') : primeName
   const processingSummary = runningPrimeWork.length > 0
@@ -1001,9 +1035,7 @@ export function CollaborationRoomsView({
                       </>
                     ) : hasLiveActivity ? (
                       <>
-                        <div className="flex gap-2.5"><span className="text-[#58a6ff]">{selectedRoom.participants[0] ?? primeName} $</span><span className="text-[#79c0ff]">monitor coordination state</span></div>
-                        <div className="pl-4 text-[#c9d1d9]">{selectedRoom.summary}</div>
-                        <div className="mt-1.5 flex gap-2.5"><span className="text-[#58a6ff]">{selectedRoom.participants[0] ?? primeName} $</span><span className="text-[#d29922]">▌</span></div>
+                        <AgentActivityTimeline events={liveActivityEvents} />
                       </>
                     ) : (
                       <>

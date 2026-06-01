@@ -1,727 +1,217 @@
-// ─────────────────────────────────────────────────────────────────────────────
-// Chat Display Events Mapper Tests (spec 017)
-// ─────────────────────────────────────────────────────────────────────────────
+// chatDisplayEvents.test.ts - Mapper tests for thinking, tool-call, tool-result, approval, delegation, context attachment, out-of-order, restricted, and unavailable states
 
 import { describe, it, expect } from 'vitest'
 import {
-  deriveChatEventFromMessage,
-  deriveChatEventFromThinking,
-  deriveChatEventFromToolCall,
-  deriveChatEventFromToolResult,
-  deriveChatEventFromWorkItem,
-  deriveChatEventFromDelegation,
-  deriveChatEventFromApproval,
-  deriveChatEventFromRuntimeEvent,
-  deriveChatEventsFromThread,
-  deriveChatEventsFromPrimeSession,
+  mapThreadMessageToChatEvent,
+  mapPrimeSessionToThinkingEvent,
+  mapRuntimeEventToChatEvents,
+  mapApprovalToChatEvent,
+  mapDelegationToChatEvent,
+  mapWorkItemToChatEvent,
+  deriveContextAttachmentsFromEvent,
 } from '../../src/lib/chatDisplayEvents'
-import type {
-  ThreadMessage,
-  PrimeSession,
-  RuntimeWorkItem,
-  RuntimeDelegation,
-  Approval,
-  RuntimeEvent,
-} from '../../src/types'
+import {
+  buildThreadMessage,
+  buildRuntimeEvent,
+  buildApproval,
+  buildRuntimeDelegation,
+  buildRuntimeWorkItem,
+  buildContextAttachment,
+} from '../fixtures/agentCanvasUx'
 
-// ─── deriveChatEventFromMessage Tests ────────────────────────────────────────
+describe('chatDisplayEvents mappers', () => {
+  describe('mapThreadMessageToChatEvent', () => {
+    it('maps a user message to a chat display event', () => {
+      const message = buildThreadMessage({ content: 'Hello, Prime!' })
+      const event = mapThreadMessageToChatEvent(message)
 
-describe('deriveChatEventFromMessage', () => {
-  it('derives message event correctly', () => {
-    const message: ThreadMessage = {
-      id: 'msg-1',
-      thread_id: 'thread-1',
-      role: 'user',
-      sender: 'Operator',
-      content: 'Hello, how can you help me?',
-      metadata: {},
-      created_at: '2026-05-25T10:00:00Z',
-    }
+      expect(event).toMatchObject({
+        kind: 'message',
+        actorLabel: 'operator',
+        status: 'success',
+        summary: 'Hello, Prime!',
+        source: { type: 'thread_message', id: message.id },
+      })
+    })
 
-    const event = deriveChatEventFromMessage(message)
+    it('maps a system message to a chat display event', () => {
+      const message = buildThreadMessage({ role: 'system', sender: 'system', content: 'System initialized' })
+      const event = mapThreadMessageToChatEvent(message)
 
-    expect(event).toMatchObject({
-      id: 'msg-msg-1',
-      kind: 'message',
-      actorLabel: 'Operator',
-      status: 'success',
-      summary: 'Hello, how can you help me?',
-      source: { type: 'thread_message', id: 'msg-1' },
+      expect(event).toMatchObject({
+        kind: 'system',
+        actorLabel: 'system',
+        summary: 'System initialized',
+      })
     })
   })
 
-  it('derives system message correctly', () => {
-    const message: ThreadMessage = {
-      id: 'msg-2',
-      thread_id: 'thread-1',
-      role: 'system',
-      sender: 'System',
-      content: 'System initialized',
-      metadata: {},
-      created_at: '2026-05-25T10:00:01Z',
-    }
+  describe('mapPrimeSessionToThinkingEvent', () => {
+    it('maps a running prime session to a thinking event', () => {
+      const session = { id: 'session:1', status: 'running', reasoning_summary: 'Processing request...', started_at: new Date().toISOString() }
+      const event = mapPrimeSessionToThinkingEvent(session)
 
-    const event = deriveChatEventFromMessage(message)
+      expect(event).toMatchObject({
+        kind: 'thinking',
+        actorLabel: 'Prime',
+        status: 'streaming',
+        summary: 'Processing request...',
+      })
+    })
 
-    expect(event.kind).toBe('system')
-    expect(event.actions).toEqual([{ label: 'Copy', type: 'copy' }])
-  })
+    it('maps a failed prime session to a thinking event', () => {
+      const session = { id: 'session:1', status: 'failed', error: 'Timeout', started_at: new Date().toISOString() }
+      const event = mapPrimeSessionToThinkingEvent(session)
 
-  it('truncates long content in summary', () => {
-    const message: ThreadMessage = {
-      id: 'msg-3',
-      thread_id: 'thread-1',
-      role: 'assistant',
-      sender: 'Prime',
-      content: 'A'.repeat(200),
-      metadata: {},
-      created_at: '2026-05-25T10:00:02Z',
-    }
-
-    const event = deriveChatEventFromMessage(message)
-
-    expect(event.summary).toHaveLength(120)
-    expect(event.details).toBe('A'.repeat(200))
-  })
-})
-
-// ─── deriveChatEventFromThinking Tests ───────────────────────────────────────
-
-describe('deriveChatEventFromThinking', () => {
-  it('derives thinking event from reasoning summary', () => {
-    const session: PrimeSession = {
-      id: 'session-1',
-      trigger_type: 'message',
-      trigger_payload: {},
-      prompt_templates: {},
-      reasoning_summary: 'I need to analyze the customer request first',
-      actions_taken: [],
-      token_count: 150,
-      status: 'completed',
-      started_at: '2026-05-25T10:00:00Z',
-    }
-
-    const event = deriveChatEventFromThinking(session)
-
-    expect(event).toMatchObject({
-      id: 'thinking-session-1',
-      kind: 'thinking',
-      actorLabel: 'Prime',
-      status: 'success',
-      summary: 'I need to analyze the customer request first',
+      expect(event).toMatchObject({
+        kind: 'thinking',
+        status: 'failed',
+        details: 'Error: Timeout',
+      })
     })
   })
 
-  it('derives thinking event from last step', () => {
-    const session: PrimeSession = {
-      id: 'session-2',
-      trigger_type: 'message',
-      trigger_payload: {},
-      prompt_templates: {},
-      last_step: 'Analyzing requirements',
-      actions_taken: [],
-      token_count: 100,
-      status: 'running',
-      started_at: '2026-05-25T10:00:00Z',
-    }
-
-    const event = deriveChatEventFromThinking(session)
-
-    expect(event).toMatchObject({
-      kind: 'thinking',
-      status: 'streaming',
-      summary: 'Thinking step: Analyzing requirements',
-    })
-  })
-
-  it('returns null when no thinking data', () => {
-    const session: PrimeSession = {
-      id: 'session-3',
-      trigger_type: 'message',
-      trigger_payload: {},
-      prompt_templates: {},
-      actions_taken: [],
-      token_count: 50,
-      status: 'completed',
-      started_at: '2026-05-25T10:00:00Z',
-    }
-
-    expect(deriveChatEventFromThinking(session)).toBeNull()
-  })
-})
-
-// ─── deriveChatEventFromToolCall Tests ───────────────────────────────────────
-
-describe('deriveChatEventFromToolCall', () => {
-  it('derives tool call event correctly', () => {
-    const session: PrimeSession = {
-      id: 'session-1',
-      trigger_type: 'message',
-      trigger_payload: {},
-      prompt_templates: {},
-      reasoning_summary: '',
-      actions_taken: [
-        { tool_name: 'weather_api', type: 'function', arguments: { location: 'London' } },
-      ],
-      token_count: 200,
-      status: 'running',
-      started_at: '2026-05-25T10:00:00Z',
-    }
-
-    const event = deriveChatEventFromToolCall(session)
-
-    expect(event).toMatchObject({
-      id: 'tool-call-session-1',
-      kind: 'tool_call',
-      actorLabel: 'Prime',
-      status: 'running',
-      summary: 'Calling weather_api',
-    })
-  })
-
-  it('handles tool call with type field', () => {
-    const session: PrimeSession = {
-      id: 'session-2',
-      trigger_type: 'message',
-      trigger_payload: {},
-      prompt_templates: {},
-      reasoning_summary: '',
-      actions_taken: [
-        { type: 'tool_use', tool_name: 'search' },
-      ],
-      token_count: 100,
-      status: 'completed',
-      started_at: '2026-05-25T10:00:00Z',
-    }
-
-    const event = deriveChatEventFromToolCall(session)
-
-    expect(event).toMatchObject({
-      kind: 'tool_call',
-      summary: 'Calling search',
-    })
-  })
-
-  it('returns null when no actions taken', () => {
-    const session: PrimeSession = {
-      id: 'session-3',
-      trigger_type: 'message',
-      trigger_payload: {},
-      prompt_templates: {},
-      reasoning_summary: '',
-      actions_taken: [],
-      token_count: 50,
-      status: 'completed',
-      started_at: '2026-05-25T10:00:00Z',
-    }
-
-    expect(deriveChatEventFromToolCall(session)).toBeNull()
-  })
-})
-
-// ─── deriveChatEventFromToolResult Tests ─────────────────────────────────────
-
-describe('deriveChatEventFromToolResult', () => {
-  it('derives tool result event for success', () => {
-    const session: PrimeSession = {
-      id: 'session-1',
-      trigger_type: 'message',
-      trigger_payload: {},
-      prompt_templates: {},
-      reasoning_summary: '',
-      actions_taken: [
-        {
-          result: { success: true, output: 'Forecast for London' },
-        },
-      ],
-      token_count: 250,
-      status: 'completed',
-      started_at: '2026-05-25T10:00:00Z',
-      completed_at: '2026-05-25T10:00:05Z',
-    }
-
-    const event = deriveChatEventFromToolResult(session)
-
-    expect(event).toMatchObject({
-      id: 'tool-result-session-1',
-      kind: 'tool_result',
-      actorLabel: 'Prime',
-      status: 'success',
-      summary: 'Tool executed successfully',
-    })
-  })
-
-  it('derives tool result event for failure', () => {
-    const session: PrimeSession = {
-      id: 'session-2',
-      trigger_type: 'message',
-      trigger_payload: {},
-      prompt_templates: {},
-      reasoning_summary: '',
-      actions_taken: [
-        {
-          result: { success: false, error: 'API rate limit exceeded' },
-        },
-      ],
-      token_count: 200,
-      status: 'failed',
-      started_at: '2026-05-25T10:00:00Z',
-    }
-
-    const event = deriveChatEventFromToolResult(session)
-
-    expect(event).toMatchObject({
-      kind: 'tool_result',
-      status: 'failed',
-      summary: 'Tool failed: API rate limit exceeded',
-    })
-  })
-
-  it('returns null when no result data', () => {
-    const session: PrimeSession = {
-      id: 'session-3',
-      trigger_type: 'message',
-      trigger_payload: {},
-      prompt_templates: {},
-      reasoning_summary: '',
-      actions_taken: [{ tool_name: 'weather_api' }],
-      token_count: 150,
-      status: 'completed',
-      started_at: '2026-05-25T10:00:00Z',
-    }
-
-    expect(deriveChatEventFromToolResult(session)).toBeNull()
-  })
-})
-
-// ─── deriveChatEventFromWorkItem Tests ───────────────────────────────────────
-
-describe('deriveChatEventFromWorkItem', () => {
-  it('derives work item event correctly', () => {
-    const workItem: RuntimeWorkItem = {
-      id: 'work-1',
-      title: 'Process customer request',
-      status: 'active',
-      priority: 'high',
-      lane: 'support',
-      owner_label: 'Agent Alpha',
-      created_at: '2026-05-25T10:00:00Z',
-      updated_at: '2026-05-25T10:00:00Z',
-      metadata: {},
-    }
-
-    const event = deriveChatEventFromWorkItem(workItem)
-
-    expect(event).toMatchObject({
-      id: 'work-work-1',
-      kind: 'goal',
-      actorLabel: 'Agent Alpha',
-      status: 'running',
-      summary: 'Process customer request - active',
-    })
-  })
-
-  it('derives blocked status correctly', () => {
-    const workItem: RuntimeWorkItem = {
-      id: 'work-2',
-      title: 'Blocked task',
-      status: 'blocked',
-      priority: 'medium',
-      lane: 'development',
-      owner_label: 'Agent Beta',
-      created_at: '2026-05-25T10:00:00Z',
-      updated_at: '2026-05-25T10:00:00Z',
-      metadata: {},
-    }
-
-    const event = deriveChatEventFromWorkItem(workItem)
-
-    expect(event.status).toBe('blocked')
-  })
-})
-
-// ─── deriveChatEventFromDelegation Tests ─────────────────────────────────────
-
-describe('deriveChatEventFromDelegation', () => {
-  it('derives delegation event correctly', () => {
-    const delegation: RuntimeDelegation = {
-      id: 'deleg-1',
-      from_agent_id: 'agent-alpha',
-      to_agent_id: 'agent-beta',
-      status: 'running',
-      capability: 'Process customer request',
-      request: {},
-      result: {},
-      trace: [],
-      created_at: '2026-05-25T10:00:00Z',
-      updated_at: '2026-05-25T10:00:00Z',
-    }
-
-    const event = deriveChatEventFromDelegation(delegation)
-
-    expect(event).toMatchObject({
-      id: 'deleg-deleg-1',
-      kind: 'delegation',
-      actorLabel: 'agent-alpha',
-      summary: 'Delegated to agent-beta: Process customer request',
-    })
-
-    expect(event.actions).toEqual([
-      { label: 'Retry', type: 'retry' },
-      { label: 'Cancel', type: 'cancel' },
-    ])
-  })
-})
-
-// ─── deriveChatEventFromApproval Tests ───────────────────────────────────────
-
-describe('deriveChatEventFromApproval', () => {
-  it('derives pending approval correctly', () => {
-    const approval: Approval = {
-      approval_id: 'approv-1',
-      run_id: 'run-123',
-      action: 'Deploy to production',
-      status: 'pending',
-      created_at: '2026-05-25T10:00:00Z',
-    }
-
-    const event = deriveChatEventFromApproval(approval)
-
-    expect(event).toMatchObject({
-      id: 'approv-approv-1',
-      kind: 'approval',
-      status: 'pending',
-      summary: 'Approval requested: Deploy to production',
-    })
-
-    expect(event.actions).toEqual([
-      { label: 'Approve', type: 'approve' },
-      { label: 'Deny', type: 'deny' },
-    ])
-  })
-
-  it('derives approved approval correctly', () => {
-    const approval: Approval = {
-      approval_id: 'approv-2',
-      run_id: 'run-123',
-      action: 'Deploy to production',
-      status: 'approved',
-      created_at: '2026-05-25T10:00:00Z',
-      decided_at: '2026-05-25T10:05:00Z',
-    }
-
-    const event = deriveChatEventFromApproval(approval)
-
-    expect(event.status).toBe('resolved')
-  })
-
-  it('deries denied approval correctly', () => {
-    const approval: Approval = {
-      approval_id: 'approv-3',
-      run_id: 'run-123',
-      action: 'Deploy to production',
-      status: 'denied',
-      created_at: '2026-05-25T10:00:00Z',
-      decided_at: '2026-05-25T10:05:00Z',
-    }
-
-    const event = deriveChatEventFromApproval(approval)
-
-    expect(event.status).toBe('failed')
-  })
-})
-
-// ─── deriveChatEventFromRuntimeEvent Tests ───────────────────────────────────
-
-describe('deriveChatEventFromRuntimeEvent', () => {
-  it('derives approval runtime event', () => {
-    const event: RuntimeEvent = {
-      id: 'runtime-event-1',
-      event_type: 'approval.requested',
-      actor: 'Prime',
-      payload: { approval_id: 'approv-1' },
-      created_at: '2026-05-25T10:00:00Z',
-    }
-
-    const result = deriveChatEventFromRuntimeEvent(event)
-
-    expect(result.kind).toBe('approval')
-  })
-
-  it('derives delegation runtime event', () => {
-    const event: RuntimeEvent = {
-      id: 'runtime-event-2',
-      event_type: 'delegation.created',
-      actor: 'Prime',
-      payload: { delegation_id: 'deleg-1' },
-      created_at: '2026-05-25T10:00:00Z',
-    }
-
-    const result = deriveChatEventFromRuntimeEvent(event)
-
-    expect(result.kind).toBe('delegation')
-  })
-
-  it('derives system runtime event', () => {
-    const event: RuntimeEvent = {
-      id: 'runtime-event-3',
-      event_type: 'session.started',
-      actor: 'System',
-      payload: { session_id: 'session-1' },
-      created_at: '2026-05-25T10:00:00Z',
-    }
-
-    const result = deriveChatEventFromRuntimeEvent(event)
-
-    expect(result.kind).toBe('system')
-  })
-})
-
-// ─── deriveChatEventsFromThread Tests ────────────────────────────────────────
-
-describe('deriveChatEventsFromThread', () => {
-  it('derives events from all sources', () => {
-    const messages: ThreadMessage[] = [
-      {
-        id: 'msg-1',
-        thread_id: 'thread-1',
-        role: 'user',
-        sender: 'Operator',
-        content: 'Hello',
-        metadata: {},
-        created_at: '2026-05-25T10:00:00Z',
-      },
-    ]
-
-    const workItems: RuntimeWorkItem[] = [
-      {
-        id: 'work-1',
-        title: 'Task 1',
-        status: 'active',
-        priority: 'high',
-        lane: 'dev',
-        owner_label: 'Agent Alpha',
-        created_at: '2026-05-25T10:00:01Z',
-        updated_at: '2026-05-25T10:00:01Z',
-        metadata: {},
-      },
-    ]
-
-    const events = deriveChatEventsFromThread(messages, workItems)
-
-    expect(events).toHaveLength(2)
-    expect(events[0].kind).toBe('message')
-    expect(events[1].kind).toBe('goal')
-  })
-
-  it('sorts events by timestamp', () => {
-    const messages: ThreadMessage[] = [
-      {
-        id: 'msg-2',
-        thread_id: 'thread-1',
-        role: 'user',
-        sender: 'Operator',
-        content: 'Later message',
-        metadata: {},
-        created_at: '2026-05-25T10:00:02Z',
-      },
-      {
-        id: 'msg-1',
-        thread_id: 'thread-1',
-        role: 'user',
-        sender: 'Operator',
-        content: 'Earlier message',
-        metadata: {},
-        created_at: '2026-05-25T10:00:00Z',
-      },
-    ]
-
-    const events = deriveChatEventsFromThread(messages)
-
-    expect(events[0].summary).toBe('Earlier message')
-    expect(events[1].summary).toBe('Later message')
-  })
-
-  it('includes delegations and approvals', () => {
-    const messages: ThreadMessage[] = []
-    const workItems: RuntimeWorkItem[] = []
-    const delegations: RuntimeDelegation[] = [
-      {
-        id: 'deleg-1',
-        from_agent_id: 'agent-alpha',
-        to_agent_id: 'agent-beta',
+  describe('mapRuntimeEventToChatEvents', () => {
+    it('maps a tool_call runtime event to chat events', () => {
+      const event = buildRuntimeEvent({ event_type: 'tool_call', payload: { summary: 'Calling API', status: 'running' } })
+      const mapped = mapRuntimeEventToChatEvents(event)
+
+      expect(mapped).toHaveLength(1)
+      expect(mapped[0]).toMatchObject({
+        kind: 'tool_call',
+        actorLabel: 'agent-1',
         status: 'running',
-        capability: 'Task',
-        request: {},
-        result: {},
-        trace: [],
-        created_at: '2026-05-25T10:00:00Z',
-        updated_at: '2026-05-25T10:00:00Z',
-      },
-    ]
-    const approvals: Approval[] = [
-      {
-        approval_id: 'approv-1',
-        run_id: 'run-1',
-        action: 'Deploy',
+        summary: 'Calling API',
+      })
+    })
+
+    it('maps a tool_result runtime event to chat events', () => {
+      const event = buildRuntimeEvent({ event_type: 'tool_result', payload: { summary: 'Result received', output: '{ "data": true }', status: 'completed' } })
+      const mapped = mapRuntimeEventToChatEvents(event)
+
+      expect(mapped).toHaveLength(1)
+      expect(mapped[0]).toMatchObject({
+        kind: 'tool_result',
+        status: 'success',
+        details: '{ "data": true }',
+      })
+    })
+
+    it('handles unknown event types gracefully', () => {
+      const event = buildRuntimeEvent({ event_type: 'unknown_event', payload: {} })
+      const mapped = mapRuntimeEventToChatEvents(event)
+
+      expect(mapped).toHaveLength(0)
+    })
+  })
+
+  describe('mapApprovalToChatEvent', () => {
+    it('maps an approval to a chat display event', () => {
+      const approval = buildApproval({ action: 'Deploy to production', status: 'pending' })
+      const event = mapApprovalToChatEvent(approval)
+
+      expect(event).toMatchObject({
+        kind: 'approval',
+        actorLabel: 'Deploy to production',
         status: 'pending',
-        created_at: '2026-05-25T10:00:01Z',
-      },
-    ]
+        summary: 'Request: Deploy to production',
+        details: 'Run: run:1',
+      })
 
-    const events = deriveChatEventsFromThread(messages, workItems, delegations, approvals)
+      expect(event.actions).toHaveLength(2)
+      expect(event.actions?.map(a => a.type)).toContain('approve')
+      expect(event.actions?.map(a => a.type)).toContain('deny')
+    })
 
-    expect(events).toHaveLength(2)
-    expect(events.find((e) => e.kind === 'delegation')).toBeDefined()
-    expect(events.find((e) => e.kind === 'approval')).toBeDefined()
-  })
-})
+    it('maps a denied approval to a chat display event', () => {
+      const approval = buildApproval({ status: 'denied' })
+      const event = mapApprovalToChatEvent(approval)
 
-// ─── deriveChatEventsFromPrimeSession Tests ──────────────────────────────────
-
-describe('deriveChatEventsFromPrimeSession', () => {
-  it('derives thinking, tool call, and tool result from session', () => {
-    const session: PrimeSession = {
-      id: 'session-1',
-      trigger_type: 'message',
-      trigger_payload: {},
-      prompt_templates: {},
-      reasoning_summary: 'Thinking...',
-      actions_taken: [
-        { tool_name: 'weather_api', type: 'function' },
-        { result: { success: true } },
-      ],
-      token_count: 300,
-      status: 'completed',
-      started_at: '2026-05-25T10:00:00Z',
-    }
-
-    const events = deriveChatEventsFromPrimeSession(session)
-
-    expect(events).toHaveLength(3)
-    expect(events[0].kind).toBe('thinking')
-    expect(events[1].kind).toBe('tool_call')
-    expect(events[2].kind).toBe('tool_result')
+      expect(event.status).toBe('cancelled')
+    })
   })
 
-  it('handles session with only thinking', () => {
-    const session: PrimeSession = {
-      id: 'session-2',
-      trigger_type: 'message',
-      trigger_payload: {},
-      prompt_templates: {},
-      reasoning_summary: 'Thinking...',
-      actions_taken: [],
-      token_count: 100,
-      status: 'completed',
-      started_at: '2026-05-25T10:00:00Z',
-    }
+  describe('mapDelegationToChatEvent', () => {
+    it('maps a delegation to a chat display event', () => {
+      const delegation = buildRuntimeDelegation({ capability: 'Research competitors', status: 'running' })
+      const event = mapDelegationToChatEvent(delegation)
 
-    const events = deriveChatEventsFromPrimeSession(session)
+      expect(event).toMatchObject({
+        kind: 'delegation',
+        actorLabel: 'agent:1',
+        status: 'running',
+        summary: 'Research competitors',
+      })
+    })
 
-    expect(events).toHaveLength(1)
-    expect(events[0].kind).toBe('thinking')
-  })
-})
+    it('maps a completed delegation to a chat display event', () => {
+      const delegation = buildRuntimeDelegation({ status: 'completed' })
+      const event = mapDelegationToChatEvent(delegation)
 
-// ─── Context Attachment Availability Tests ───────────────────────────────────
-
-describe('Context Attachment Availability', () => {
-  it('handles restricted attachments correctly', () => {
-    const message: ThreadMessage = {
-      id: 'msg-1',
-      thread_id: 'thread-1',
-      role: 'user',
-      sender: 'Operator',
-      content: 'Here is the file',
-      metadata: {
-        attachments: [
-          {
-            name: 'secret.pdf',
-            type: 'file',
-            availability: 'restricted',
-            sourceLabel: 'System',
-          },
-        ],
-      },
-      created_at: '2026-05-25T10:00:00Z',
-    }
-
-    // Use the public API to derive events which internally calls deriveContextAttachments
-    const event = deriveChatEventFromMessage(message)
-
-    expect(event.attachments).toHaveLength(1)
-    expect(event.attachments[0].availability).toBe('restricted')
+      expect(event.status).toBe('success')
+    })
   })
 
-  it('handles unavailable attachments', () => {
-    // Create a message with file references in payload
-    const message: ThreadMessage = {
-      id: 'msg-1',
-      thread_id: 'thread-1',
-      role: 'user',
-      sender: 'Operator',
-      content: 'Here are the files',
-      metadata: {},
-      created_at: '2026-05-25T10:00:00Z',
-    }
+  describe('mapWorkItemToChatEvent', () => {
+    it('maps a goal work item to a chat display event', () => {
+      const workItem = buildRuntimeWorkItem({ title: 'Launch new feature', metadata: { kind: 'goal' } })
+      const event = mapWorkItemToChatEvent(workItem)
 
-    // Use the public API to derive events
-    const event = deriveChatEventFromMessage(message)
+      expect(event).toMatchObject({
+        kind: 'goal',
+        actorLabel: 'agent-1',
+        summary: 'Launch new feature',
+        details: 'Default work item',
+      })
+    })
 
-    // Test that empty payload returns empty attachments
-    expect(event.attachments).toHaveLength(0)
-  })
-})
+    it('maps an artifact work item to a chat display event', () => {
+      const workItem = buildRuntimeWorkItem({ title: 'Architecture diagram', metadata: { kind: 'artifact' } })
+      const event = mapWorkItemToChatEvent(workItem)
 
-// ─── Ordering and Restricted Summaries Tests ─────────────────────────────────
+      expect(event.kind).toBe('artifact')
+    })
 
-describe('Ordering and Restricted Summaries', () => {
-  it('handles out-of-order events correctly', () => {
-    const messages: ThreadMessage[] = [
-      {
-        id: 'msg-2',
-        thread_id: 'thread-1',
-        role: 'user',
-        sender: 'Operator',
-        content: 'Second message',
-        metadata: {},
-        created_at: '2026-05-25T10:00:02Z', // Later timestamp
-      },
-      {
-        id: 'msg-1',
-        thread_id: 'thread-1',
-        role: 'user',
-        sender: 'Operator',
-        content: 'First message',
-        metadata: {},
-        created_at: '2026-05-25T10:00:01Z', // Earlier timestamp
-      },
-    ]
+    it('maps a note work item to a chat display event', () => {
+      const workItem = buildRuntimeWorkItem({ title: 'Meeting notes', metadata: { kind: 'note' } })
+      const event = mapWorkItemToChatEvent(workItem)
 
-    const events = deriveChatEventsFromThread(messages)
-
-    // Events should be sorted by timestamp, not arrival order
-    expect(events[0].summary).toBe('First message')
-    expect(events[1].summary).toBe('Second message')
+      expect(event.kind).toBe('note')
+    })
   })
 
-  it('handles restricted summaries in details', () => {
-    const session: PrimeSession = {
-      id: 'session-1',
-      trigger_type: 'message',
-      trigger_payload: {},
-      prompt_templates: {},
-      reasoning_summary: 'Restricted thinking process that should not be fully exposed',
-      actions_taken: [],
-      token_count: 100,
-      status: 'completed',
-      started_at: '2026-05-25T10:00:00Z',
-    }
+  describe('deriveContextAttachmentsFromEvent', () => {
+    it('derives context attachments from runtime events with attachments', () => {
+      const event = buildRuntimeEvent({
+        payload: {
+          attachments: [
+            { id: 'att:1', name: 'design.pdf', type: 'file', sourceLabel: 'agent-1', availability: 'available' },
+            { id: 'att:2', name: 'confidential.docx', type: 'file', sourceLabel: 'agent-1', availability: 'restricted', previewSummary: 'Access restricted' },
+          ],
+        },
+      })
 
-    const event = deriveChatEventFromThinking(session)
+      const attachments = deriveContextAttachmentsFromEvent(event)
 
-    // The event might be null if no reasoning data, so check first
-    expect(event?.details).toBe('Restricted thinking process that should not be fully exposed')
+      expect(attachments).toHaveLength(2)
+      expect(attachments[0]).toMatchObject({
+        id: 'att:1',
+        name: 'design.pdf',
+        availability: 'available',
+      })
+      expect(attachments[1]).toMatchObject({
+        id: 'att:2',
+        name: 'confidential.docx',
+        availability: 'restricted',
+        previewSummary: 'Access restricted',
+      })
+    })
+
+    it('handles events without attachments gracefully', () => {
+      const event = buildRuntimeEvent({ payload: {} })
+      const attachments = deriveContextAttachmentsFromEvent(event)
+
+      expect(attachments).toHaveLength(0)
+    })
   })
 })

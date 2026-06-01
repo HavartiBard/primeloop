@@ -1,181 +1,161 @@
+// displayStatus.ts - Reusable status and formatting helpers for agent canvas UX
+
+import { DisplayStatus, ChatEventKind } from '../types'
+
 // ─────────────────────────────────────────────────────────────────────────────
-// Display Status Helpers (spec 017)
-// Expanded Canvas UX - Status formatting and color mapping
+// Status to visual label mapping
 // ─────────────────────────────────────────────────────────────────────────────
 
-import type { DisplayStatus, CircuitNodeStatus } from '../types'
-
-/** Status categories for UI rendering */
-export type StatusCategory = 'pending' | 'running' | 'success' | 'error' | 'neutral'
-
-/**
- * Get the status category for a display status
- */
-export function getStatusCategory(status: DisplayStatus): StatusCategory {
-  switch (status) {
-    case 'pending':
-    case 'streaming':
-    case 'running':
-      return 'running'
-    case 'success':
-    case 'resolved':
-      return 'success'
-    case 'failed':
-    case 'cancelled':
-    case 'timeout':
-    case 'blocked':
-    case 'unavailable':
-      return 'error'
-    default:
-      return 'neutral'
-  }
+export const STATUS_LABELS: Record<DisplayStatus, string> = {
+  pending: 'Pending',
+  streaming: 'Streaming',
+  running: 'Running',
+  success: 'Success',
+  failed: 'Failed',
+  cancelled: 'Cancelled',
+  timeout: 'Timeout',
+  blocked: 'Blocked',
+  resolved: 'Resolved',
+  unavailable: 'Unavailable',
 }
 
-/**
- * Get the status category for a circuit node status
- */
-export function getNodeStatusCategory(status: CircuitNodeStatus): StatusCategory {
-  switch (status) {
-    case 'active':
-    case 'running':
-      return 'success'
-    case 'blocked':
-    case 'approval':
-      return 'error'
-    default:
-      return 'neutral'
-  }
+// ─────────────────────────────────────────────────────────────────────────────
+// Status to color class mapping (Tailwind)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const STATUS_COLOR_CLASSES: Record<DisplayStatus, string> = {
+  pending: 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300',
+  streaming: 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300',
+  running: 'bg-indigo-100 text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-300',
+  success: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300',
+  failed: 'bg-rose-100 text-rose-800 dark:bg-rose-900/30 dark:text-rose-300',
+  cancelled: 'bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-300',
+  timeout: 'bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-300',
+  blocked: 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300',
+  resolved: 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300',
+  unavailable: 'bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-300',
 }
 
-/**
- * Format status for display
- */
-export function formatStatus(status: DisplayStatus | CircuitNodeStatus): string {
-  const formatted = status.toString().replace('_', ' ')
-  return formatted.charAt(0).toUpperCase() + formatted.slice(1)
+// ─────────────────────────────────────────────────────────────────────────────
+// Status to icon mapping (lucide-react icons)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const STATUS_ICONS: Record<DisplayStatus, string> = {
+  pending: 'circle-alert',
+  streaming: 'loader',
+  running: 'play',
+  success: 'check-circle',
+  failed: 'x-circle',
+  cancelled: 'ban',
+  timeout: 'clock',
+  blocked: 'shield-alert',
+  resolved: 'check-check',
+  unavailable: 'eye-off',
 }
 
-/**
- * Get CSS class for status color (Tailwind)
- */
-export function getStatusColorClasses(status: DisplayStatus): string {
-  const category = getStatusCategory(status)
-  switch (category) {
-    case 'running':
-      return 'text-[var(--s-run-tx)] bg-[var(--s-run-bg)] border-[var(--s-run-bd)]'
-    case 'success':
-      return 'text-[var(--s-ok-tx)] bg-[var(--s-ok-bg)] border-[var(--s-ok-bd)]'
-    case 'error':
-      return 'text-[var(--s-blk-tx)] bg-[var(--s-blk-bg)] border-[var(--s-blk-bd)]'
-    default:
-      return 'text-[var(--s-neu-tx)] bg-[var(--s-neu-bg)] border-[var(--s-neu-bd)]'
-  }
+// ─────────────────────────────────────────────────────────────────────────────
+// Helper: Get status label by status value
+// ─────────────────────────────────────────────────────────────────────────────
+
+export function getStatusLabel(status: DisplayStatus): string {
+  return STATUS_LABELS[status] ?? 'Unknown'
 }
 
-/**
- * Get CSS class for circuit node status
- */
-export function getNodeStatusColorClasses(status: CircuitNodeStatus): string {
-  const category = getNodeStatusCategory(status)
-  switch (category) {
-    case 'running':
-      return 'border-cyan-500 bg-cyan-500/10'
-    case 'success':
-      return 'border-emerald-500 bg-emerald-500/10'
-    case 'error':
-      return 'border-red-500 bg-red-500/10'
-    default:
-      return 'border-gray-500 bg-gray-500/10'
-  }
+// ─────────────────────────────────────────────────────────────────────────────
+// Helper: Get status color class by status value
+// ─────────────────────────────────────────────────────────────────────────────
+
+export function getStatusColorClass(status: DisplayStatus): string {
+  return STATUS_COLOR_CLASSES[status] ?? STATUS_COLOR_CLASSES.pending
 }
 
-/**
- * Check if status is terminal (no further updates expected)
- */
-export function isTerminalStatus(status: DisplayStatus): boolean {
+// ─────────────────────────────────────────────────────────────────────────────
+// Helper: Get status icon by status value
+// ─────────────────────────────────────────────────────────────────────────────
+
+export function getStatusIcon(status: DisplayStatus): string {
+  return STATUS_ICONS[status] ?? STATUS_ICONS.pending
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Helper: Determine if a status is active (streaming/running/pending)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export function isStatusActive(status: DisplayStatus): boolean {
+  return ['streaming', 'running', 'pending'].includes(status)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Helper: Determine if a status is terminal (success/failed/cancelled/timeout/blocked/resolved/unavailable)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export function isStatusTerminal(status: DisplayStatus): boolean {
   return ['success', 'failed', 'cancelled', 'timeout', 'blocked', 'resolved', 'unavailable'].includes(status)
 }
 
-/**
- * Check if status indicates activity in progress
- */
-export function isActiveStatus(status: DisplayStatus): boolean {
-  return ['streaming', 'running'].includes(status)
+// ─────────────────────────────────────────────────────────────────────────────
+// Helper: Format duration from timestamp (e.g., "2m ago")
+// ─────────────────────────────────────────────────────────────────────────────
+
+export function formatDurationSince(createdAt: string): string {
+  const created = new Date(createdAt).getTime()
+  const now = Date.now()
+  const diff = now - created
+
+  if (diff < 0) return 'just now'
+
+  const seconds = Math.floor(diff / 1000)
+  const minutes = Math.floor(seconds / 60)
+  const hours = Math.floor(minutes / 60)
+  const days = Math.floor(hours / 24)
+
+  if (days > 0) return `${days}d ago`
+  if (hours > 0) return `${hours}h ago`
+  if (minutes > 0) return `${minutes}m ago`
+  return `${seconds}s ago`
 }
 
-/**
- * Get status icon (simple string for now)
- */
-export function getStatusIcon(status: DisplayStatus): string {
-  switch (status) {
-    case 'pending':
-      return '•'
-    case 'streaming':
-      return '⟳'
-    case 'running':
-      return '▶'
-    case 'success':
-      return '✓'
-    case 'failed':
-      return '✗'
-    case 'cancelled':
-      return '⊘'
-    case 'timeout':
-      return '⏱'
-    case 'blocked':
-      return '⊘'
-    case 'resolved':
-      return '✓'
-    case 'unavailable':
-      return '○'
+// ─────────────────────────────────────────────────────────────────────────────
+// Helper: Derive status from ChatEventKind and raw status
+// ─────────────────────────────────────────────────────────────────────────────
+
+export function deriveDisplayStatusFromKind(kind: ChatEventKind, rawStatus?: string): DisplayStatus {
+  switch (kind) {
+    case 'thinking':
+      if (rawStatus === 'running') return 'streaming'
+      if (rawStatus === 'completed') return 'success'
+      if (rawStatus === 'failed') return 'failed'
+      return 'pending'
+    case 'tool_call':
+    case 'tool_result':
+      if (rawStatus === 'running') return 'running'
+      if (rawStatus === 'completed') return 'success'
+      if (rawStatus === 'failed') return 'failed'
+      return 'pending'
+    case 'approval':
+      if (rawStatus === 'pending') return 'pending'
+      if (rawStatus === 'approved') return 'resolved'
+      if (rawStatus === 'denied') return 'cancelled'
+      return 'pending'
+    case 'delegation':
+      if (['pending', 'queued'].includes(rawStatus || '')) return 'pending'
+      if (rawStatus === 'running') return 'running'
+      if (rawStatus === 'completed') return 'success'
+      if (['failed', 'blocked'].includes(rawStatus || '')) return 'failed'
+      if (rawStatus === 'cancelled') return 'cancelled'
+      return 'pending'
     default:
-      return '?'
+      return rawStatus ? (rawStatus as DisplayStatus) : 'success'
   }
 }
 
-/**
- * Get status description for ARIA labels
- */
-export function getStatusDescription(status: DisplayStatus): string {
-  switch (status) {
-    case 'pending':
-      return 'Pending action'
-    case 'streaming':
-      return 'Streaming content'
-    case 'running':
-      return 'In progress'
-    case 'success':
-      return 'Completed successfully'
-    case 'failed':
-      return 'Failed'
-    case 'cancelled':
-      return 'Cancelled'
-    case 'timeout':
-      return 'Timed out'
-    case 'blocked':
-      return 'Blocked'
-    case 'resolved':
-      return 'Resolved'
-    case 'unavailable':
-      return 'Unavailable'
-    default:
-      return status
-  }
-}
+// ─────────────────────────────────────────────────────────────────────────────
+// Helper: Get accessibility text for status badge
+// ─────────────────────────────────────────────────────────────────────────────
 
-/**
- * Get visual indicator for status (dot color class)
- */
-export function getStatusDotClass(status: DisplayStatus): string {
-  const category = getStatusCategory(status)
-  switch (category) {
-    case 'running':
-      return 'bg-cyan-400 shadow-[0_0_6px_rgba(34,211,238,0.5)] animate-pulse'
-    case 'success':
-      return 'bg-emerald-400 shadow-[0_0_6px_rgba(52,211,153,0.5)]'
-    case 'error':
-      return 'bg-red-400 shadow-[0_0_6px_rgba(248,113,113,0.5)]'
-    default:
-      return 'bg-gray-400'
-  }
+export function getStatusA11yText(status: DisplayStatus): string {
+  const label = getStatusLabel(status)
+  if (isStatusActive(status)) return `${label}, active`
+  if (isStatusTerminal(status)) return `${label}, complete`
+  return label
 }

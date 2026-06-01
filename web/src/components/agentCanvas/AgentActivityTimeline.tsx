@@ -1,82 +1,85 @@
-// ─────────────────────────────────────────────────────────────────────────────
-// Agent Activity Timeline (spec 017)
-// Ordered expandable chat timeline component with keyboard navigation
-// ─────────────────────────────────────────────────────────────────────────────
+// AgentActivityTimeline.tsx - Ordered expandable chat timeline component with keyboard navigation and live update states
 
-import React from 'react'
-import type { ChatDisplayEvent } from '../../types'
+import React, { useState, useEffect, useCallback } from 'react'
+import { ChatDisplayEvent } from '../../src/types'
 import { AgentActivityBubble } from './AgentActivityBubble'
 import { DecisionActivityCard } from './DecisionActivityCard'
-import { useExpandableItems } from '../../hooks/useExpandableItems'
-import { getTimelineKeyboardHelp, getStatusLabel } from '../../lib/accessibilityText'
+import { getTimelineA11yText, KEYBOARD_HINTS } from '../../lib/accessibilityText'
 
-/**
- * Props for AgentActivityTimeline
- */
 export interface AgentActivityTimelineProps {
-  /** Events to display */
   events: ChatDisplayEvent[]
-  /** Show empty state */
-  showEmptyState?: boolean
-  /** On event click handler */
-  onEventClick?: (event: ChatDisplayEvent) => void
-  /** Loading state */
-  isLoading?: boolean
+  onAction?: (actionType: string, eventId: string) => void
 }
 
-/**
- * Agent Activity Timeline Component
- */
 export function AgentActivityTimeline({
   events,
-  showEmptyState = true,
-  onEventClick,
-  isLoading = false,
-}: AgentActivityTimelineProps) {
-  const { expandedIds, toggleExpand } = useExpandableItems(events, {
-    initialExpandedIds: [],
-  })
+  onAction,
+}: AgentActivityTimelineProps): React.ReactNode {
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set())
+  const [focusedIndex, setFocusedIndex] = useState<number>(0)
 
-  // Keyboard navigation handlers
-  const handleKeyDown = (e: React.KeyboardEvent, index: number) => {
-    if (events.length === 0) return
+  // Sort events by occurredAt
+  const sortedEvents = [...events].sort(
+    (a, b) => new Date(a.occurredAt).getTime() - new Date(b.occurredAt).getTime()
+  )
 
-    switch (e.key) {
-      case 'ArrowDown':
-        e.preventDefault()
-        const nextIndex = Math.min(index + 1, events.length - 1)
-        document.getElementById(`event-${nextIndex}`)?.focus()
-        break
-      case 'ArrowUp':
-        e.preventDefault()
-        const prevIndex = Math.max(index - 1, 0)
-        document.getElementById(`event-${prevIndex}`)?.focus()
-        break
-      case 'Enter':
-      case ' ':
-        e.preventDefault()
-        toggleExpand(events[index].id)
-        break
+  // Keyboard navigation
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent) => {
+      if (sortedEvents.length === 0) return
+
+      switch (e.key) {
+        case 'ArrowDown':
+          e.preventDefault()
+          setFocusedIndex(prev => Math.min(prev + 1, sortedEvents.length - 1))
+          break
+        case 'ArrowUp':
+          e.preventDefault()
+          setFocusedIndex(prev => Math.max(prev - 1, 0))
+          break
+        case 'Enter':
+        case ' ':
+          e.preventDefault()
+          toggleExpand(sortedEvents[focusedIndex].id)
+          break
+        case 'Home':
+          e.preventDefault()
+          setFocusedIndex(0)
+          break
+        case 'End':
+          e.preventDefault()
+          setFocusedIndex(sortedEvents.length - 1)
+          break
+      }
+    },
+    [sortedEvents, focusedIndex]
+  )
+
+  const toggleExpand = useCallback((id: string) => {
+    setExpandedIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) {
+        next.delete(id)
+      } else {
+        next.add(id)
+      }
+      return next
+    })
+  }, [])
+
+  // Focus management for keyboard navigation
+  useEffect(() => {
+    const element = document.getElementById(`event-${sortedEvents[focusedIndex]?.id}`)
+    if (element) {
+      element.focus()
     }
-  }
+  }, [focusedIndex, sortedEvents])
 
-  // Loading state
-  if (isLoading) {
+  if (sortedEvents.length === 0) {
     return (
-      <div className="p-4 text-center">
-        <span className="animate-pulse text-[var(--muted)]">Loading activity...</span>
-      </div>
-    )
-  }
-
-  // Empty state
-  if (events.length === 0 && showEmptyState) {
-    return (
-      <div className="p-6 text-center rounded border border-dashed border-[var(--border-soft)] bg-[var(--panel-subtle)]/50">
-        <p className="text-sm text-[var(--muted)]">No activity yet</p>
-        <p className="text-xs text-[var(--muted)] mt-1">
-          Waiting for agent activity or tool calls
-        </p>
+      <div className="flex flex-col items-center justify-center py-12 text-gray-500 dark:text-gray-400">
+        <p>No activity yet</p>
+        <p className="text-sm mt-1">Waiting for agent activity...</p>
       </div>
     )
   }
@@ -84,105 +87,47 @@ export function AgentActivityTimeline({
   return (
     <div
       role="list"
-      aria-label="Agent activity timeline"
-      className="space-y-3"
+      aria-label={getTimelineA11yText(sortedEvents.length, focusedIndex)}
+      tabIndex={0}
+      onKeyDown={handleKeyDown}
+      className="flex flex-col gap-3 outline-none"
     >
-      {/* Keyboard help */}
-      <div className="text-xs text-[var(--muted)] mb-2" aria-live="polite">
-        {getTimelineKeyboardHelp()}
-      </div>
+      {sortedEvents.map((event, index) => {
+        const isExpanded = expandedIds.has(event.id)
+        const isFocused = index === focusedIndex
 
-      {/* Events */}
-      {events.map((event, index) => (
-        <div
-          id={`event-${index}`}
-          key={event.id}
-          role="listitem"
-          tabIndex={0}
-          onKeyDown={(e) => handleKeyDown(e, index)}
-          className="focus:outline-none focus:ring-2 focus:ring-[var(--sel-bd)] rounded"
-          aria-expanded={expandedIds.has(event.id)}
-        >
-          {isApprovalOrDelegation(event) ? (
-            <DecisionActivityCard
-              card={event as any}
-              initiallyExpanded={expandedIds.has(event.id)}
-              onToggle={(expanded) => toggleExpand(event.id)}
-            />
-          ) : (
-            <AgentActivityBubble
+        const CardComponent =
+          event.kind === 'approval' || event.kind === 'delegation'
+            ? DecisionActivityCard
+            : AgentActivityBubble
+
+        return (
+          <div
+            key={event.id}
+            id={`event-${event.id}`}
+            role="listitem"
+            tabIndex={-1}
+            aria-current={isFocused ? 'true' : undefined}
+            className={`focus:ring-2 focus:ring-blue-500 rounded-lg transition-colors ${
+              isFocused ? 'bg-blue-50 dark:bg-blue-900/20' : ''
+            }`}
+          >
+            <CardComponent
               event={event}
-              initiallyExpanded={expandedIds.has(event.id)}
-              onToggle={(expanded) => toggleExpand(event.id)}
+              isExpanded={isExpanded}
+              onToggleExpand={() => toggleExpand(event.id)}
+              onAction={(actionType) => onAction?.(actionType, event.id)}
             />
-          )}
-        </div>
-      ))}
+          </div>
+        )
+      })}
+
+      {/* Keyboard hints */}
+      <div className="mt-4 text-xs text-gray-500 dark:text-gray-400 border-t pt-2">
+        {KEYBOARD_HINTS.navigate}
+      </div>
     </div>
   )
 }
 
-/**
- * Check if event is approval or delegation
- */
-function isApprovalOrDelegation(
-  event: ChatDisplayEvent,
-): event is ChatDisplayEvent & { kind: 'approval' | 'delegation' } {
-  return event.kind === 'approval' || event.kind === 'delegation'
-}
-
-/**
- * Timeline with status filter
- */
-export function FilteredTimeline({
-  events,
-  filterStatuses,
-  ...props
-}: AgentActivityTimelineProps & { filterStatuses: string[] }) {
-  const filteredEvents = events.filter((e) =>
-    filterStatuses.includes(e.status),
-  )
-
-  return <AgentActivityTimeline events={filteredEvents} {...props} />
-}
-
-/**
- * Timeline with kind filter
- */
-export function KindFilteredTimeline({
-  events,
-  filterKinds,
-  ...props
-}: AgentActivityTimelineProps & { filterKinds: string[] }) {
-  const filteredEvents = events.filter((e) =>
-    filterKinds.includes(e.kind),
-  )
-
-  return <AgentActivityTimeline events={filteredEvents} {...props} />
-}
-
-/**
- * Timeline with loading and error states
- */
-export function AsyncTimeline({
-  events,
-  isLoading,
-  isError,
-  error,
-  ...props
-}: AgentActivityTimelineProps & {
-  isLoading: boolean
-  isError?: boolean
-  error?: Error | null
-}) {
-  if (isError) {
-    return (
-      <div className="p-4 text-center rounded border border-red-200 bg-red-50">
-        <p className="text-sm text-red-600">Failed to load activity</p>
-        {error && <p className="text-xs text-red-500 mt-1">{error.message}</p>}
-      </div>
-    )
-  }
-
-  return <AgentActivityTimeline events={events} isLoading={isLoading} {...props} />
-}
+export default AgentActivityTimeline

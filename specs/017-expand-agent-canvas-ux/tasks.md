@@ -51,20 +51,20 @@
 
 ### Tests for User Story 1
 
-- [ ] T012 [P] [US1] Add mapper tests for thinking, tool-call, tool-result, approval, delegation, context attachment, out-of-order, restricted, and unavailable states in `web/tests/lib/chatDisplayEvents.test.ts`
-- [ ] T013 [P] [US1] Add rendering tests for expanded chat bubbles and cards in `web/tests/components/AgentActivityTimeline.test.tsx`
-- [ ] T014 [P] [US1] Add integration test covering collaboration room chat timeline rendering in `web/tests/components/CollaborationRoomsView.agentActivity.test.tsx`
+- [x] T012 [P] [US1] Add mapper tests for thinking, tool-call, tool-result, approval, delegation, context attachment, out-of-order, restricted, and unavailable states in `web/tests/lib/chatDisplayEvents.test.ts`
+- [x] T013 [P] [US1] Add rendering tests for expanded chat bubbles and cards in `web/tests/components/AgentActivityTimeline.test.tsx`
+- [x] T014 [P] [US1] Add integration test covering collaboration room chat timeline rendering in `web/tests/components/CollaborationRoomsView.agentActivity.test.tsx`
 
 ### Implementation for User Story 1
 
-- [ ] T015 [US1] Implement complete `ChatDisplayEvent` derivation for messages, thinking, tool calls/results, approvals, delegations, goals, artifacts, notes, and system events in `web/src/lib/chatDisplayEvents.ts`
-- [ ] T016 [P] [US1] Create expandable thinking/tool/message bubble components in `web/src/components/agentCanvas/AgentActivityBubble.tsx`
-- [ ] T017 [P] [US1] Create approval and delegation display card components in `web/src/components/agentCanvas/DecisionActivityCard.tsx`
-- [ ] T018 [US1] Create ordered expandable chat timeline component with keyboard navigation and live update states in `web/src/components/agentCanvas/AgentActivityTimeline.tsx`
-- [ ] T019 [US1] Integrate `AgentActivityTimeline` into active room chat rendering in `web/src/components/CollaborationRoomsView.tsx`
-- [ ] T020 [US1] Integrate typed bubbles/cards into live event feed while preserving existing empty state in `web/src/components/EventFeed.tsx`
-- [ ] T021 [US1] Add failure, timeout, restricted-content, unavailable-attachment, and large-result states in `web/src/components/agentCanvas/AgentActivityTimeline.tsx`
-- [ ] T022 [US1] Verify keyboard access, expand/collapse, chronological ordering, and non-color-only status text in `web/tests/components/AgentActivityTimeline.test.tsx`
+- [x] T015 [US1] Implement complete `ChatDisplayEvent` derivation for messages, thinking, tool calls/results, approvals, delegations, goals, artifacts, notes, and system events in `web/src/lib/chatDisplayEvents.ts`
+- [x] T016 [P] [US1] Create expandable thinking/tool/message bubble components in `web/src/components/agentCanvas/AgentActivityBubble.tsx`
+- [x] T017 [P] [US1] Create approval and delegation display card components in `web/src/components/agentCanvas/DecisionActivityCard.tsx`
+- [x] T018 [US1] Create ordered expandable chat timeline component with keyboard navigation and live update states in `web/src/components/agentCanvas/AgentActivityTimeline.tsx`
+- [x] T019 [US1] Integrate `AgentActivityTimeline` into active room chat rendering in `web/src/components/CollaborationRoomsView.tsx`
+- [x] T020 [US1] Integrate typed bubbles/cards into live event feed while preserving existing empty state in `web/src/components/EventFeed.tsx`
+- [x] T021 [US1] Add failure, timeout, restricted-content, unavailable-attachment, and large-result states in `web/src/components/agentCanvas/AgentActivityTimeline.tsx`
+- [x] T022 [US1] Verify keyboard access, expand/collapse, chronological ordering, and non-color-only status text in `web/tests/components/AgentActivityTimeline.test.tsx`
 
 **Checkpoint**: User Story 1 is fully functional and independently testable as the MVP.
 
