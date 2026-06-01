@@ -9,6 +9,7 @@ implement/
 review-qwen-local/
 worker-qwen-local/
 subagents/
+.specify/workflows/runs/
 backend/.env.test
 .env
 .env.local
