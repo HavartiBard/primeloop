@@ -28,6 +28,6 @@ describe('EventFeed', () => {
 
   it('shows empty state when no events', () => {
     render(<EventFeed events={[]} connected={true} />)
-    expect(screen.getByText(/no events/i)).toBeInTheDocument()
+    expect(screen.getByText(/No activity yet/i)).toBeInTheDocument()
   })
 })

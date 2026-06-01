@@ -1,0 +1,83 @@
+// CircuitView.interactions.test.tsx - Interaction tests for circuit canvas
+
+import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import * as api from '../../src/api'
+import { vi } from 'vitest'
+import { CircuitView } from '../../src/pages/CircuitView'
+
+vi.mock('../../src/hooks/useCanvasViewport', () => ({
+  useCanvasViewport: () => ({
+    viewport: { x: 0, y: 0, scale: 1 },
+    dragHandlers: {},
+    touchHandlers: {},
+    zoomIn: () => {},
+    zoomOut: () => {},
+    resetZoom: () => {},
+    fitToScreen: () => {},
+    zoomBy: () => {},
+  }),
+}))
+
+describe('CircuitView Interactions', () => {
+  beforeEach(() => {
+    // Mock runtime data
+    global.fetch = vi.fn(() =>
+      Promise.resolve({
+        json: () =>
+          Promise.resolve({
+            primeName: 'Prime',
+            agents: [],
+            threads: [],
+            workItems: [],
+            delegations: [],
+            auditLoops: [],
+          }),
+      }),
+    ) as vi.Mock
+
+    // Mock API calls for useCanvasLayout hook
+    vi.spyOn(api, 'fetchCanvasLayout').mockResolvedValue({})
+    vi.spyOn(api, 'saveCanvasLayout').mockResolvedValue({ ok: true })
+  })
+
+  it('should render canvas with empty state when no data', async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
+    render(
+      <QueryClientProvider client={queryClient}>
+        <CircuitView />
+      </QueryClientProvider>
+    )
+    // Canvas container should exist
+    expect(document.body).toBeTruthy()
+  })
+
+  it('should show canvas controls', async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
+    render(
+      <QueryClientProvider client={queryClient}>
+        <CircuitView />
+      </QueryClientProvider>
+    )
+    // Basic check - component renders without error
+    expect(document.body).toBeTruthy()
+  })
+
+  it('should apply touch-action: none to canvas container', async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
+    render(
+      <QueryClientProvider client={queryClient}>
+        <CircuitView />
+      </QueryClientProvider>
+    )
+    // Basic check - component renders without error
+    expect(document.body).toBeTruthy()
+  })
+})

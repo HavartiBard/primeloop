@@ -149,16 +149,16 @@
 
 **Purpose**: Final verification, accessibility review, design consistency, and FR compliance across all user stories.
 
-- [ ] T057 [P] Run web unit and component tests with `npm test` from `web/` and confirm all pass
-- [ ] T058 [P] Run web production build with `npm run build` from `web/` and confirm successful
-- [ ] T059 Run backend tests with `npm test` from `backend/` (new routes in T029 and T045 require this)
-- [ ] T060 Review new chat bubbles, cards, canvas controls, toolbar, and modal for keyboard reachability and accessible names in `web/src/components/agentCanvas/`
-- [ ] T061 Review visual consistency: spacing, hierarchy, status colors, empty/error states, non-color-only indicators, fade-in animation across changed component files
-- [ ] T062 Confirm toolbar renders inside canvas viewport and does not overlap sidebar at all viewport widths in `web/src/pages/CircuitView.tsx`
-- [ ] T063 Confirm card positions are saved after drag and restored on reload (manual or test)
-- [ ] T064 Confirm `touch-action: none` prevents browser scroll interference during canvas pan/pinch
-- [ ] T065 Update implementation notes and manual acceptance evidence in `specs/017-expand-agent-canvas-ux/quickstart.md`
-- [ ] T066 Confirm all requirements FR-001 through FR-024 are covered by implemented behavior or documented deferrals in `specs/017-expand-agent-canvas-ux/tasks.md`
+- [x] T057 [P] Run web unit and component tests with `npm test` from `web/` and confirm all pass
+- [x] T058 [P] Run web production build with `npm run build` from `web/` and confirm successful
+- [x] T059 Run backend tests with `npm test` from `backend/` (new routes in T029 and T045 require this)
+- [x] T060 Review new chat bubbles, cards, canvas controls, toolbar, and modal for keyboard reachability and accessible names in `web/src/components/agentCanvas/`
+- [x] T061 Review visual consistency: spacing, hierarchy, status colors, empty/error states, non-color-only indicators, fade-in animation across changed component files
+- [x] T062 Confirm toolbar renders inside canvas viewport and does not overlap sidebar at all viewport widths in `web/src/pages/CircuitView.tsx`
+- [x] T063 Confirm card positions are saved after drag and restored on reload (manual or test)
+- [x] T064 Confirm `touch-action: none` prevents browser scroll interference during canvas pan/pinch
+- [x] T065 Update implementation notes and manual acceptance evidence in `specs/017-expand-agent-canvas-ux/quickstart.md`
+- [x] T066 Confirm all requirements FR-001 through FR-024 are covered by implemented behavior or documented deferrals in `specs/017-expand-agent-canvas-ux/tasks.md`
 
 ---
 

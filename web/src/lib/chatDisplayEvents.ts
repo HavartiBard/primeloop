@@ -222,7 +222,7 @@ export function mapWorkItemToChatEvent(workItem: RuntimeWorkItem): ChatDisplayEv
     status: 'running',
     occurredAt: workItem.created_at,
     summary: workItem.title,
-    details: workItem.description,
+    details: workItem.description ?? undefined,
     source: { type: 'work_item', id: workItem.id },
     attachments: [],
   }

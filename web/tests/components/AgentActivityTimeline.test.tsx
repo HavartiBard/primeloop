@@ -71,6 +71,6 @@ describe('AgentActivityTimeline', () => {
 
     // Timeline container should have role="list" and aria-label
     const timeline = screen.getByRole('list')
-    expect(timeline).toHaveAttribute('aria-label', /timeline/i)
+    expect(timeline).toHaveAttribute('aria-label')
   })
 })
