@@ -7,3 +7,14 @@ Dockerfile*
 coverage/
 dist/
 build/
+
+# Speckit-generated
+specs/019-inline-chat-artifacts/checklists/
+specs/019-inline-chat-artifacts/contracts/
+specs/019-inline-chat-artifacts/data-model.md
+specs/019-inline-chat-artifacts/plan.md
+specs/019-inline-chat-artifacts/quickstart.md
+specs/019-inline-chat-artifacts/research.md
+specs/019-inline-chat-artifacts/tasks.md
+specs/019-inline-chat-artifacts/spec.md
+.specify/feature.json

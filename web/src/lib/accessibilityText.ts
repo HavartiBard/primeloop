@@ -133,3 +133,21 @@ export function getToolbarActionShortcut(actionType: string): string | null {
   }
   return shortcuts[actionType] || null
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Canvas controls accessibility text
+// ─────────────────────────────────────────────────────────────────────────────
+
+export function getCanvasControlLabel(control: 'zoomIn' | 'zoomOut' | 'reset' | 'fit'): string {
+  const labels = {
+    zoomIn: 'Zoom in',
+    zoomOut: 'Zoom out',
+    reset: 'Reset canvas view',
+    fit: 'Fit canvas to view',
+  }
+  return labels[control]
+}
+
+export function getCanvasKeyboardHelp(): string {
+  return 'Use mouse drag or touch to pan. Use mouse wheel or pinch to zoom. Use canvas controls to zoom, reset, or fit.'
+}

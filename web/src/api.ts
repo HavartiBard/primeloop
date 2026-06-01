@@ -52,7 +52,7 @@ import type {
 const API_ORIGIN = ((import.meta.env.VITE_API_BASE as string | undefined) ?? '').replace(/\/+$/, '')
 const ROOT_BASE = API_ORIGIN || ''
 const BASE = `${ROOT_BASE}/api/approvals`
-const API_BASE = `${ROOT_BASE}/api`
+export const API_BASE = `${ROOT_BASE}/api`
 
 export function getApiOrigin(): string {
   return API_ORIGIN

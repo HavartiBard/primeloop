@@ -49,5 +49,5 @@ When editing `backend/src/db.ts`:
 - If no verification command is requested, do not invent one solely for process reasons.
 
 <!-- SPECKIT START -->
-Current Speckit plan: `specs/018-prime-onboarding-config/plan.md`
+Current Speckit plan: `specs/019-inline-chat-artifacts/plan.md`
 <!-- SPECKIT END -->
