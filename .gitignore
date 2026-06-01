@@ -1,6 +1,14 @@
 .worktrees/
 .superpowers/
 .pi/
+.agent-workspace/
+.claude/
+context/
+context-qwen-local/
+implement/
+review-qwen-local/
+worker-qwen-local/
+subagents/
 backend/.env.test
 .env
 .env.local
