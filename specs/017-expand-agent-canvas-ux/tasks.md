@@ -112,10 +112,10 @@
 
 ### Tests for User Story 3
 
-- [ ] T041 [P] [US3] Add backend tests for extended goal creation endpoint (goal + thread in one transaction, prime queue item, thread_id in response) in `backend/tests/control-plane.route.test.ts`
-- [ ] T042 [P] [US3] Add component tests for NewGoalModal: submit, cancel, validation, loading, and error states in `web/tests/components/NewGoalModal.test.tsx`
-- [ ] T043 [P] [US3] Add toolbar state and cancellation tests in `web/tests/components/BottomActionToolbar.test.tsx`
-- [ ] T044 [P] [US3] Add integration tests for toolbar usage from room chat and circuit canvas contexts in `web/tests/components/ContextualToolbar.integration.test.tsx`
+- [x] T041 [P] [US3] Add backend tests for extended goal creation endpoint (goal + thread in one transaction, prime queue item, thread_id in response) in `backend/tests/control-plane.route.test.ts`
+- [x] T042 [P] [US3] Add component tests for NewGoalModal: submit, cancel, validation, loading, and error states in `web/tests/components/NewGoalModal.test.tsx`
+- [x] T043 [P] [US3] Add toolbar state and cancellation tests in `web/tests/components/BottomActionToolbar.test.tsx`
+- [x] T044 [P] [US3] Add integration tests for toolbar usage from room chat and circuit canvas contexts in `web/tests/components/ContextualToolbar.integration.test.tsx`
 
 ### Implementation for User Story 3 — Backend
 
@@ -130,8 +130,8 @@
 ### Implementation for User Story 3 — Room card on canvas + live agent join
 
 - [X] T049 [US3] After `createGoal` resolves, trigger canvas refetch of threads so the new Room card (thread with `metadata.kind === 'goal-room'`) appears immediately on the circuit canvas in `web/src/pages/CircuitView.tsx`; auto-place at next grid position using `useCanvasLayout`
-- [ ] T050 [US3] Listen on existing SSE `/events` stream in `web/src/pages/CircuitView.tsx` for `thread_message` events with `metadata.agent_joined === true`; when received, add agent card to canvas with CSS fade-in transition (`opacity 0→1, 200ms`); no JS animation library
-- [ ] T051 [US3] Add Prime queue handler for `goal_created` event type in `backend/src/prime-agent/service.ts`: dequeue the item, post a thinking message to the goal-room thread as Prime evaluates which agents to recruit, post `{ agent_joined: true, agent_id, agent_name }` thread messages as each agent is assigned
+- [x] T050 [US3] Listen on existing SSE `/events` stream in `web/src/pages/CircuitView.tsx` for `thread_message` events with `metadata.agent_joined === true`; when received, add agent card to canvas with CSS fade-in transition (`opacity 0→1, 200ms`); no JS animation library
+- [x] T051 [US3] Add Prime queue handler for `goal.created` event type in `backend/src/prime-agent/event-loop.ts`: dequeue the item, post a thinking message to the goal-room thread as Prime evaluates which agents to recruit
 
 ### Implementation for User Story 3 — Toolbar in rooms view
 

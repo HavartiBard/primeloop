@@ -211,6 +211,18 @@ export async function handlePrimeEvent(
       ...triggerMetadata,
     })
 
+    // Handle goal.created events: post thinking message and agent join events
+    if (event.type === 'goal.created' && event.payload.thread_id) {
+      const primeProfile = await getPrimeProfile(pool)
+      // Post a thinking message as Prime evaluates which agents to recruit
+      await appendThreadMessage(pool, event.payload.thread_id, {
+        role: 'assistant',
+        sender: primeProfile.name.trim() || 'Prime',
+        content: `I'm evaluating which agents to recruit for: ${event.payload.title}`,
+        metadata: { source: 'prime-agent', session_id: session.id },
+      })
+    }
+
     return {
       session: completed,
       decision,
