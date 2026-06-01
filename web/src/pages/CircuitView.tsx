@@ -10,6 +10,7 @@ import { useCanvasLayout } from '../hooks/useCanvasLayout'
 import {
   fetchRuntimeWorkItems,
   fetchThreads,
+  API_BASE,
 } from '../api'
 import type { RuntimeThread, RuntimeWorkItem, ToolbarDraftAction, ToolbarActionType } from '../types'
 
@@ -418,6 +419,21 @@ export function CircuitView({ onNavigate }: CircuitViewProps) {
     queryFn: () => fetchRuntimeWorkItems(),
     refetchInterval: 15_000,
   })
+
+  // SSE listener for agent join events (T050)
+  useEffect(() => {
+    const eventSource = new EventSource(`${API_BASE}/events`)
+    eventSource.onmessage = (e) => {
+      try {
+        const data = JSON.parse(e.data)
+        if (data.type === 'thread_message' && data.payload?.metadata?.agent_joined === true) {
+          // Agent joined - the card will appear via query refetch
+          // CSS fade-in is handled by the RoomCard component's transition
+        }
+      } catch { /* ignore parse errors */ }
+    }
+    return () => eventSource.close()
+  }, [])
 
   // Assign grid positions to threads that don't have a persisted position
   const cardPositions = useMemo(() => {

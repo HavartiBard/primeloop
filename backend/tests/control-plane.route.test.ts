@@ -73,3 +73,130 @@ describe('control-plane HTTP bridge', () => {
     expect(invalid.status).toBe(401)
   })
 })
+
+describe('POST /api/control-plane/goals', () => {
+  it('creates a goal with thread and returns thread_id', async () => {
+    const pool = {
+      query: vi.fn().mockImplementation((sql, params) => {
+        if (sql.includes('INSERT INTO threads')) {
+          return { rows: [{ id: 'thread-123' }] }
+        }
+        if (sql.includes('INSERT INTO thread_messages')) {
+          return { rowCount: 1 }
+        }
+        if (sql.includes('INSERT INTO goals')) {
+          return {
+            rows: [{
+              id: 'goal-456',
+              title: 'Test Goal',
+              intent: 'Test intent',
+              domain_summary: null,
+              priority: 'normal',
+              requested_by: null,
+              owned_by_agent_role: 'prime',
+              status: 'draft',
+              current_summary: '',
+              created_at: new Date().toISOString(),
+            }],
+          }
+        }
+        if (sql.includes('UPDATE goals SET status')) {
+          return {
+            rows: [{
+              id: 'goal-456',
+              title: 'Test Goal',
+              intent: 'Test intent',
+              domain_summary: null,
+              priority: 'normal',
+              requested_by: null,
+              owned_by_agent_role: 'prime',
+              status: 'queued',
+              current_summary: '',
+              created_at: new Date().toISOString(),
+            }],
+          }
+        }
+        if (sql.includes('SELECT * FROM goals WHERE id')) {
+          return {
+            rows: [{
+              id: 'goal-456',
+              title: 'Test Goal',
+              intent: 'Test intent',
+              domain_summary: null,
+              priority: 'normal',
+              requested_by: null,
+              owned_by_agent_role: 'prime',
+              status: 'draft',
+              current_summary: '',
+              created_at: new Date().toISOString(),
+            }],
+          }
+        }
+        return { rows: [] }
+      }),
+    } as unknown as pg.Pool
+
+    const primeQueue = {
+      enqueue: vi.fn().mockResolvedValue(undefined),
+    }
+
+    const app = express()
+    app.use(express.json())
+    app.use('/api/control-plane', createControlPlaneRouter({ pool, primeQueue }))
+
+    const res = await request(app)
+      .post('/api/control-plane/goals')
+      .send({
+        title: 'Test Goal',
+        intent: 'Test intent',
+        priority: 'normal',
+      })
+
+    expect(res.status).toBe(201)
+    expect(res.body.id).toBe('goal-456')
+    expect(res.body.thread_id).toBe('thread-123')
+    expect(primeQueue.enqueue).toHaveBeenCalledWith({
+      type: 'goal.created',
+      payload: {
+        goal_id: 'goal-456',
+        title: 'Test Goal',
+        intent: 'Test intent',
+        thread_id: 'thread-123',
+      },
+    })
+  })
+
+  it('returns 400 when title is missing', async () => {
+    const pool = {} as unknown as pg.Pool
+    const app = express()
+    app.use(express.json())
+    app.use('/api/control-plane', createControlPlaneRouter({ pool }))
+
+    const res = await request(app)
+      .post('/api/control-plane/goals')
+      .send({
+        intent: 'Test intent',
+        priority: 'normal',
+      })
+
+    expect(res.status).toBe(400)
+    expect(res.body.error).toBe('title is required')
+  })
+
+  it('returns 400 when intent is missing', async () => {
+    const pool = {} as unknown as pg.Pool
+    const app = express()
+    app.use(express.json())
+    app.use('/api/control-plane', createControlPlaneRouter({ pool }))
+
+    const res = await request(app)
+      .post('/api/control-plane/goals')
+      .send({
+        title: 'Test Goal',
+        priority: 'normal',
+      })
+
+    expect(res.status).toBe(400)
+    expect(res.body.error).toBe('intent is required')
+  })
+})

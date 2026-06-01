@@ -3,7 +3,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { fetchPrimeSession, fetchPrimeSessions, fetchThreadMessages, sendPrimeMessage } from '../api'
 import { BottomActionToolbar } from './agentCanvas/BottomActionToolbar'
 import { AgentActivityTimeline } from './agentCanvas/AgentActivityTimeline'
-import type { AgentEvent, RegistryAgent, RuntimeAuditLoop, RuntimeDelegation, RuntimeThread, RuntimeWorkItem } from '../types'
+import type { AgentEvent, RegistryAgent, RuntimeAuditLoop, RuntimeDelegation, RuntimeThread, RuntimeWorkItem, ToolbarDraftAction, ToolbarActionType } from '../types'
+import { useToolbarActions } from '../hooks/useToolbarActions'
 
 import {
   deriveChatEventsFromRuntime,
@@ -328,6 +329,9 @@ export function CollaborationRoomsView({
   const [search, setSearch] = useState('')
   const [termExpanded, setTermExpanded] = useState(true)
   const [draftMessage, setDraftMessage] = useState('')
+  const [toolbarDrafts, setToolbarDrafts] = useState<Record<string, ToolbarDraftAction>>({})
+  const [composerDraft, setComposerDraft] = useState<ToolbarDraftAction | null>(null)
+  const { handleOpenDraft, handleCancelDraft } = useToolbarActions(setToolbarDrafts, setComposerDraft)
   const [selectedWorkId, setSelectedWorkId] = useState<string | null>(null)
   const [clockNow, setClockNow] = useState(() => Date.now())
   const [unreadMessages, setUnreadMessages] = useState(0)
@@ -894,8 +898,9 @@ export function CollaborationRoomsView({
               {activeRoomId && (
                 <div className="shrink-0">
                   <BottomActionToolbar
-                    drafts={{}}
-                    onOpenDraft={() => {}}
+                    drafts={toolbarDrafts}
+                    onOpenDraft={handleOpenDraft}
+                    onCancelDraft={handleCancelDraft}
                     compact
                   />
                 </div>

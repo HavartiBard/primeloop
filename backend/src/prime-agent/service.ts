@@ -5,6 +5,8 @@ import { getPrimeConfig, updatePrimeConfig } from './config.js'
 import { handlePrimeEvent } from './event-loop.js'
 import { createConfiguredLlmRouter, type LlmRouter } from './llm-router.js'
 import { createInMemoryPrimeQueue, createPostgresPrimeQueue, type PrimeQueue } from './queue.js'
+import { appendThreadMessage } from '../runtime.js'
+import { getPrimeProfile } from './session.js'
 
 /**
  * Team plan for Prime onboarding.
