@@ -8,6 +8,11 @@ import { broadcastEvent } from '../ws/control-plane-events.js'
 import { decideApproval } from '../approvals.js'
 import { listRecoveryEvents } from '../recovery/service.js'
 import { listLearningRecords } from '../learning/service.js'
+import {
+  authenticateAgentToken,
+  callControlPlaneTool,
+  listControlPlaneToolsForGrant,
+} from '../mcp/service.js'
 
 export function createControlPlaneRouter({
   pool,
@@ -17,6 +22,48 @@ export function createControlPlaneRouter({
   primeQueue?: PrimeQueue
 }) {
   const router = Router()
+
+  // Legacy MCP bridge: GET /api/control-plane/tools
+  router.get('/tools', async (req, res) => {
+    const auth = req.header('authorization')
+    if (!auth?.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'missing bearer token' })
+    }
+
+    try {
+      const token = auth.slice('Bearer '.length).trim()
+      const ctx = await authenticateAgentToken(pool, token)
+      if (!ctx) {
+        return res.status(401).json({ error: 'invalid token' })
+      }
+      const tools = listControlPlaneToolsForGrant([], false)
+      return res.json({ tools })
+    } catch (_err) {
+      return res.status(500).json({ error: 'internal error' })
+    }
+  })
+
+  // Legacy MCP bridge: POST /api/control-plane/tools/:name
+  router.post('/tools/:name', async (req, res) => {
+    const auth = req.header('authorization')
+    if (!auth?.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'missing bearer token' })
+    }
+
+    try {
+      const token = auth.slice('Bearer '.length).trim()
+      const ctx = await authenticateAgentToken(pool, token)
+      if (!ctx) {
+        return res.status(401).json({ error: 'invalid token' })
+      }
+      const args = (req.body?.arguments ?? {}) as Record<string, unknown>
+      const result = await callControlPlaneTool(pool, ctx, req.params.name, args)
+      return res.json({ tool: req.params.name, structuredContent: result })
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'internal error'
+      return res.status(400).json({ error: message })
+    }
+  })
 
   // GET /api/control-plane/goals — list all goals
   router.get('/goals', async (_req, res) => {
