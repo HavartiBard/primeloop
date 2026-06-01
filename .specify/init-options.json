@@ -1,9 +1,10 @@
 {
-  "ai": "pi",
+  "ai": "claude",
+  "ai_skills": true,
   "branch_numbering": "sequential",
-  "context_file": "AGENTS.md",
+  "context_file": "CLAUDE.md",
   "here": true,
-  "integration": "pi",
+  "integration": "claude",
   "script": "sh",
   "speckit_version": "0.8.14.dev0"
 }

@@ -59,14 +59,55 @@ export interface ProfileDraft {
   shipped_defaults: ProfileSectionSet
 }
 
+const DEFAULT_IDENTITY = `Prime is the central orchestrating agent for this control plane. It coordinates specialist agents, routes incoming work, monitors queue health, and surfaces blockers to operators.
+
+Prime does not execute implementation work directly — it delegates to the right agent for the task, tracks outcomes, and escalates when a delegation stalls or fails. Its primary loyalty is to throughput and operator visibility, not to completing tasks itself.`
+
+const DEFAULT_VOICE_TONE = `Communicate directly and precisely. Lead with the key fact; follow with context only when it changes the decision. Prefer one clear sentence over a hedged paragraph.
+
+When reporting status, say what is happening and what is needed. When asking for approval, explain the risk and the alternative. Do not over-explain to operators who are already familiar with the system — save detail for genuinely novel situations.`
+
+const DEFAULT_DECISION_STYLE = `Favor reversible paths. When two approaches are equally valid, choose the one that can be undone. Avoid destructive or external-facing actions without explicit approval.
+
+Escalate ambiguous situations rather than guessing intent. If blocked, surface the blocker immediately rather than waiting or retrying indefinitely. Prefer momentum — a clear handoff to a human is better than a silent stall.
+
+When evaluating delegation targets, match capability to task. Do not assign complex reasoning to small models or route creative work to execution-only agents.`
+
+const DEFAULT_BEHAVIORS = `- Poll the work queue on the fast cron interval and dispatch eligible items to capable agents
+- Monitor agent heartbeats; flag any agent that has not checked in within its expected window
+- Requeue stalled delegations when the assigned agent has gone silent past the timeout threshold
+- Keep a running summary of active delegations visible in the operator thread
+- Notify the operator when a sprint goal is completed or a delegation chain fails
+- Consolidate short bursts of incoming work within the debounce window before dispatching
+- Prefer assigning work to already-warm agents over spinning up new ones unnecessarily`
+
+const DEFAULT_APPROVAL_THRESHOLDS = `Require explicit human approval before:
+- Force-pushing to main or any protected branch
+- Deleting database records, files, or branches outside the designated workspace
+- Sending external communications (Slack messages, emails, GitHub comments, PR descriptions)
+- Spending beyond the configured monthly token budget
+- Creating or destroying infrastructure resources
+- Spawning more than 3 new agents in a single decision cycle
+- Taking any action flagged as irreversible by the executing agent`
+
 export const INITIAL_PROFILE_STATE: ProfileDraft = {
   name: 'Prime',
   view_mode: 'sections',
-  soul:      { identity: '', voice_tone: '', decision_style: '' },
-  operating: { default_behaviors: '', approval_thresholds: '' },
+  soul: {
+    identity:       DEFAULT_IDENTITY,
+    voice_tone:     DEFAULT_VOICE_TONE,
+    decision_style: DEFAULT_DECISION_STYLE,
+  },
+  operating: {
+    default_behaviors:   DEFAULT_BEHAVIORS,
+    approval_thresholds: DEFAULT_APPROVAL_THRESHOLDS,
+  },
   shipped_defaults: {
-    identity: '', voice_tone: '', decision_style: '',
-    default_behaviors: '', approval_thresholds: '',
+    identity:            DEFAULT_IDENTITY,
+    voice_tone:          DEFAULT_VOICE_TONE,
+    decision_style:      DEFAULT_DECISION_STYLE,
+    default_behaviors:   DEFAULT_BEHAVIORS,
+    approval_thresholds: DEFAULT_APPROVAL_THRESHOLDS,
   },
 }
 
@@ -985,6 +1026,16 @@ const ROUTE_LABELS: Record<string, string> = {
   discussion: 'Discussion',
 }
 
+const FALLBACK_MODELS: Record<string, string[]> = {
+  openai:    ['gpt-4o', 'gpt-4o-mini', 'gpt-4.1', 'gpt-4.1-mini', 'o3', 'o3-mini', 'o4-mini'],
+  anthropic: ['claude-opus-4-7', 'claude-sonnet-4-6', 'claude-haiku-4-5-20251001'],
+}
+
+function resolveModelOptions(provider: ProviderDraft): string[] {
+  if (provider.modelOptions && provider.modelOptions.length > 0) return provider.modelOptions
+  return FALLBACK_MODELS[provider.type] ?? []
+}
+
 function RoutingRow({ label, entries, providers, onChange }: {
   label: string
   entries: RoutingEntry[]
@@ -994,18 +1045,19 @@ function RoutingRow({ label, entries, providers, onChange }: {
   const activeProviders = providers.filter((p) => p.active)
   const [modelAssessments, setModelAssessments] = useState<Record<number, ModelCapabilityAssessment>>({})
   const assessTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const addFallback = () => {
-    const first = activeProviders[0]
-    onChange([...entries, { provider_name: first?.name ?? '', model: first?.model ?? '' }])
-  }
-  const update = (i: number, patch: Partial<RoutingEntry>) => {
-    onChange(entries.map((e, idx) => (idx === i ? { ...e, ...patch } : e)))
-  }
-  const remove = (i: number) => onChange(entries.filter((_, idx) => idx !== i))
 
   const defaultEntries: RoutingEntry[] = entries.length > 0
     ? entries
-    : [{ provider_name: activeProviders[0]?.name ?? '', model: activeProviders[0]?.model ?? '' }]
+    : [{ provider_name: activeProviders[0]?.name ?? '', model: activeProviders[0] ? resolveModelOptions(activeProviders[0])[0] ?? activeProviders[0].model ?? '' : '' }]
+
+  const update = (i: number, patch: Partial<RoutingEntry>) => {
+    onChange(defaultEntries.map((e, idx) => (idx === i ? { ...e, ...patch } : e)))
+  }
+  const remove = (i: number) => onChange(defaultEntries.filter((_, idx) => idx !== i))
+  const addFallback = () => {
+    const first = activeProviders[0]
+    onChange([...defaultEntries, { provider_name: first?.name ?? '', model: first ? resolveModelOptions(first)[0] ?? first.model ?? '' : '' }])
+  }
 
   // Assess model capability for each entry when model changes (debounced 300ms)
   const modelsKey = defaultEntries.map((e, i) => `${i}:${e.model}`).join(',')
@@ -1037,14 +1089,14 @@ function RoutingRow({ label, entries, providers, onChange }: {
               <div className="flex gap-2 items-center">
                 {(() => {
                   const selectedProvider = activeProviders.find((p) => p.name === entry.provider_name)
-                  const modelOptions = selectedProvider?.modelOptions ?? []
+                  const modelOptions = selectedProvider ? resolveModelOptions(selectedProvider) : []
                   return (
                     <>
             <select
               value={entry.provider_name}
               onChange={(e) => {
                 const prov = activeProviders.find((p) => p.name === e.target.value)
-                update(i, { provider_name: e.target.value, model: prov?.model ?? entry.model })
+                update(i, { provider_name: e.target.value, model: prov ? resolveModelOptions(prov)[0] ?? prov.model ?? '' : '' })
               }}
               className="flex-1 bg-[var(--panel-subtle)] border border-[var(--border-soft)] rounded px-2 py-1.5 text-xs text-[var(--text)] focus:outline-none focus:border-[var(--sel-bd)]"
             >
