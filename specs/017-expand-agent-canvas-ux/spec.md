@@ -4,7 +4,7 @@
 
 **Created**: 2026-05-25
 
-**Status**: Draft
+**Status**: Done
 
 **Input**: User description: "Expand Agent Control Plane chat and circuit canvas UX using OpenSwarm-inspired patterns: streaming thinking bubbles, tool-call/result bubbles, visible context attachments, approval/delegation cards, spatial pan/zoom circuit canvas, expandable agent/room cards, and bottom-toolbar actions for spawning agents, tool calls, goals, artifacts, and notes."
 

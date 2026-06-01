@@ -4,7 +4,7 @@
 
 **Created**: 2026-05-25
 
-**Status**: Draft
+**Status**: Done
 
 **Input**: User description: "Lets rework the onboarding workflow, analyze the openswarm codebase again for inspiration, but keep the general idea of what we have now. I want to be able to connect my cloud model and local llm providers then choose the provider and model for different functions (base modules) for the prime agent. then the default prime agent configuration should be presented to the user to make adjustments if desired. we should add a placeholder to also configure plugins that the user may want, I think it makes sense since we are using the pi harness to just let them choose from pi plugins they want to use optionally. everything is configured the prime agent is launched and a converation with the prime agent finishes configuring the users setup and it builds a team of agents based on what the user wants to accomplish"
 

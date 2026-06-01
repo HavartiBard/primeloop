@@ -1,5 +1,10 @@
 <!-- SPECKIT START -->
-For additional context about technologies to be used, project structure,
-shell commands, and other important information, read the current plan:
-specs/017-expand-agent-canvas-ux/plan.md
+Completed specs:
+- specs/017-expand-agent-canvas-ux
+- specs/018-prime-onboarding-config
+
+Current active feature slot is reserved for the next initiative:
+- specs/019-next-feature
+
+When 019 is created, read its `plan.md` for technologies, structure, and commands.
 <!-- SPECKIT END -->
