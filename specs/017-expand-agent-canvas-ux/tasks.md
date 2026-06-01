@@ -18,10 +18,10 @@
 
 **Purpose**: Establish shared types, display model, and test scaffolding before story work begins.
 
-- [ ] T001 Review existing surfaces: `web/src/components/CollaborationRoomsView.tsx`, `web/src/components/EventFeed.tsx`, `web/src/pages/CircuitView.tsx`, `web/src/api.ts`, `web/src/types.ts`, `web/src/hooks/useCanvasViewport.ts`, `web/src/components/agentCanvas/`
-- [ ] T002 [P] Create shared display model types for chat events, context attachments, canvas nodes, and toolbar actions in `web/src/types.ts`
-- [ ] T003 [P] Create reusable status and formatting helpers in `web/src/lib/displayStatus.ts`
-- [ ] T004 [P] Add test fixture builders for chat display events, canvas nodes, approvals, delegations, and toolbar actions in `web/tests/fixtures/agentCanvasUx.ts`
+- [x] T001 Review existing surfaces: `web/src/components/CollaborationRoomsView.tsx`, `web/src/components/EventFeed.tsx`, `web/src/pages/CircuitView.tsx`, `web/src/api.ts`, `web/src/types.ts`, `web/src/hooks/useCanvasViewport.ts`, `web/src/components/agentCanvas/`
+- [x] T002 [P] Create shared display model types for chat events, context attachments, canvas nodes, and toolbar actions in `web/src/types.ts`
+- [x] T003 [P] Create reusable status and formatting helpers in `web/src/lib/displayStatus.ts`
+- [x] T004 [P] Add test fixture builders for chat display events, canvas nodes, approvals, delegations, and toolbar actions in `web/tests/fixtures/agentCanvasUx.ts`
 
 ---
 
@@ -31,13 +31,13 @@
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete.
 
-- [ ] T005 Create chat display event mapper skeleton in `web/src/lib/chatDisplayEvents.ts`
-- [ ] T006 Create reusable expandable panel state hook in `web/src/hooks/useExpandableItems.ts`
-- [ ] T007 [P] Create reusable context attachment chip/list component in `web/src/components/agentCanvas/ContextAttachmentList.tsx`
-- [ ] T008 [P] Create reusable status badge component for all ACP states in `web/src/components/agentCanvas/DisplayStatusBadge.tsx`
-- [ ] T009 [P] Create shared accessibility helpers for keyboard labels and live-region text in `web/src/lib/accessibilityText.ts`
-- [ ] T010 Wire exports for new agent canvas UX helpers and components through `web/src/components/agentCanvas/index.ts`
-- [ ] T011 Add foundational unit tests for status mapping and accessibility text in `web/tests/components/agentCanvasFoundations.test.tsx`
+- [x] T005 Create chat display event mapper skeleton in `web/src/lib/chatDisplayEvents.ts`
+- [x] T006 Create reusable expandable panel state hook in `web/src/hooks/useExpandableItems.ts`
+- [x] T007 [P] Create reusable context attachment chip/list component in `web/src/components/agentCanvas/ContextAttachmentList.tsx`
+- [x] T008 [P] Create reusable status badge component for all ACP states in `web/src/components/agentCanvas/DisplayStatusBadge.tsx`
+- [x] T009 [P] Create shared accessibility helpers for keyboard labels and live-region text in `web/src/lib/accessibilityText.ts`
+- [x] T010 Wire exports for new agent canvas UX helpers and components through `web/src/components/agentCanvas/index.ts`
+- [x] T011 Add foundational unit tests for status mapping and accessibility text in `web/tests/components/agentCanvasFoundations.test.tsx`
 
 **Checkpoint**: Foundation ready — user story implementation can begin.
 
