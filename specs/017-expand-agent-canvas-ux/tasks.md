@@ -91,9 +91,9 @@
 - [X] T030 [P] [US2] Add `fetchCanvasLayout()` and `saveCanvasLayout()` API client functions to `web/src/api.ts`
 - [X] T031 [US2] Create `useCanvasLayout` hook (load on mount via react-query, `setPosition(id, x, y)` with 500ms debounced PUT, optimistic update, silent save-failure) in `web/src/hooks/useCanvasLayout.ts`
 - [x] T032 [P] [US2] Add backend route tests for canvas layout GET/PUT in `backend/tests/canvas.route.test.ts`
-- [ ] T033 [US2] Extract circuit graph enrichment and node detail derivation from `web/src/pages/CircuitView.tsx` into `web/src/lib/circuitViewModel.ts`
-- [ ] T034 [P] [US2] Create expandable circuit node card component for all node types in `web/src/components/agentCanvas/CircuitNodeCard.tsx`
-- [ ] T035 [P] [US2] Create canvas controls component (zoom in/out, reset, fit) in `web/src/components/agentCanvas/CircuitCanvasControls.tsx`
+- [x] T033 [US2] Extract circuit graph enrichment and node detail derivation from `web/src/pages/CircuitView.tsx` into `web/src/lib/circuitViewModel.ts`
+- [x] T034 [P] [US2] Create expandable circuit node card component for all node types in `web/src/components/agentCanvas/CircuitNodeCard.tsx`
+- [x] T035 [P] [US2] Create canvas controls component (zoom in/out, reset, fit) in `web/src/components/agentCanvas/CircuitCanvasControls.tsx`
 - [X] T036 [US2] Wire pointer-event handlers, wheel handler, touch handlers, card drag (with `useCanvasLayout.setPosition` on drag-end), and `useCanvasLayout` position loading into `web/src/pages/CircuitView.tsx`; apply `touch-action: none` to the canvas container
 - [X] T037 [US2] Mount `BottomActionToolbar` inside the canvas wrapper div as `position: absolute; bottom: 1rem; left: 50%; transform: translateX(-50%); z-index: 10` in `web/src/pages/CircuitView.tsx`
 - [x] T038 [US2] Integrate selected and expanded node details for agent and room cards in `web/src/pages/CircuitView.tsx`
@@ -135,11 +135,11 @@
 
 ### Implementation for User Story 3 — Toolbar in rooms view
 
-- [ ] T052 [US3] Create focused action composer dialog for spawn-agent, tool-call, capture-artifact, and add-note drafts in `web/src/components/agentCanvas/ToolbarActionComposer.tsx`
-- [ ] T053 [US3] Implement toolbar draft/submit/success/failure/retry/cancel state management in `web/src/hooks/useToolbarActions.ts`
-- [ ] T054 [US3] Mount `BottomActionToolbar` with full action set in rooms/chat view; preserve chat scroll position when opening or cancelling actions in `web/src/components/CollaborationRoomsView.tsx`
-- [ ] T055 [US3] Render created toolbar action results as linked chat events using `web/src/lib/chatDisplayEvents.ts`
-- [ ] T056 [US3] Verify New Goal flow (room appears, Prime streams, agent card join), success/failure/cancellation for all toolbar actions, context preservation, and Prime routing in `web/tests/components/ContextualToolbar.integration.test.tsx`
+- [x] T052 [US3] Create focused action composer dialog for spawn-agent, tool-call, capture-artifact, and add-note drafts in `web/src/components/agentCanvas/ToolbarActionComposer.tsx`
+- [x] T053 [US3] Implement toolbar draft/submit/success/failure/retry/cancel state management in `web/src/hooks/useToolbarActions.ts`
+- [x] T054 [US3] Mount `BottomActionToolbar` with full action set in rooms/chat view; preserve chat scroll position when opening or cancelling actions in `web/src/components/CollaborationRoomsView.tsx`
+- [x] T055 [US3] Render created toolbar action results as linked chat events using `web/src/lib/chatDisplayEvents.ts`
+- [x] T056 [US3] Verify New Goal flow (room appears, Prime streams, agent card join), success/failure/cancellation for all toolbar actions, context preservation, and Prime routing in `web/tests/components/ContextualToolbar.integration.test.tsx`
 
 **Checkpoint**: All user stories are independently functional. New Goal → Room → Prime → agent join works end-to-end.
 
