@@ -2,14 +2,19 @@
   "version": "0.8.14.dev0",
   "integration_state_schema": 1,
   "installed_integrations": [
-    "pi"
+    "pi",
+    "claude"
   ],
   "integration_settings": {
     "pi": {
       "script": "sh",
       "invoke_separator": "."
+    },
+    "claude": {
+      "script": "sh",
+      "invoke_separator": "-"
     }
   },
-  "integration": "pi",
-  "default_integration": "pi"
+  "integration": "claude",
+  "default_integration": "claude"
 }
