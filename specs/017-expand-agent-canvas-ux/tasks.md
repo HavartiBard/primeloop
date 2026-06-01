@@ -78,9 +78,9 @@
 
 ### Tests for User Story 2
 
-- [ ] T023 [P] [US2] Add unit tests for pointer-event pan, scroll-wheel zoom, pinch-to-zoom, and zoom-center in `web/tests/hooks/useCanvasViewport.test.ts`
-- [ ] T024 [P] [US2] Add unit tests for canvas layout hook: load-on-mount, optimistic update, debounced save, and save-failure fallback in `web/tests/hooks/useCanvasLayout.test.ts`
-- [ ] T025 [P] [US2] Add interaction tests for pan, zoom, card drag, keyboard selection, card expansion, empty state, toolbar placement, and error state in `web/tests/pages/CircuitView.interactions.test.tsx`
+- [x] T023 [P] [US2] Add unit tests for pointer-event pan, scroll-wheel zoom, pinch-to-zoom, and zoom-center in `web/tests/hooks/useCanvasViewport.test.ts`
+- [x] T024 [P] [US2] Add unit tests for canvas layout hook: load-on-mount, optimistic update, debounced save, and save-failure fallback in `web/tests/hooks/useCanvasLayout.test.ts`
+- [x] T025 [P] [US2] Add interaction tests for pan, zoom, card drag, keyboard selection, card expansion, empty state, toolbar placement, and error state in `web/tests/pages/CircuitView.interactions.test.tsx`
 
 ### Implementation for User Story 2
 
@@ -90,15 +90,15 @@
 - [X] T029 [P] [US2] Create `GET /api/canvas/layout` and `PUT /api/canvas/layout` routes in `backend/src/routes/canvas.ts`; mount under `/api/canvas` in `backend/src/app.ts`
 - [X] T030 [P] [US2] Add `fetchCanvasLayout()` and `saveCanvasLayout()` API client functions to `web/src/api.ts`
 - [X] T031 [US2] Create `useCanvasLayout` hook (load on mount via react-query, `setPosition(id, x, y)` with 500ms debounced PUT, optimistic update, silent save-failure) in `web/src/hooks/useCanvasLayout.ts`
-- [ ] T032 [P] [US2] Add backend route tests for canvas layout GET/PUT in `backend/tests/canvas.route.test.ts`
+- [x] T032 [P] [US2] Add backend route tests for canvas layout GET/PUT in `backend/tests/canvas.route.test.ts`
 - [ ] T033 [US2] Extract circuit graph enrichment and node detail derivation from `web/src/pages/CircuitView.tsx` into `web/src/lib/circuitViewModel.ts`
 - [ ] T034 [P] [US2] Create expandable circuit node card component for all node types in `web/src/components/agentCanvas/CircuitNodeCard.tsx`
 - [ ] T035 [P] [US2] Create canvas controls component (zoom in/out, reset, fit) in `web/src/components/agentCanvas/CircuitCanvasControls.tsx`
 - [X] T036 [US2] Wire pointer-event handlers, wheel handler, touch handlers, card drag (with `useCanvasLayout.setPosition` on drag-end), and `useCanvasLayout` position loading into `web/src/pages/CircuitView.tsx`; apply `touch-action: none` to the canvas container
 - [X] T037 [US2] Mount `BottomActionToolbar` inside the canvas wrapper div as `position: absolute; bottom: 1rem; left: 50%; transform: translateX(-50%); z-index: 10` in `web/src/pages/CircuitView.tsx`
-- [ ] T038 [US2] Integrate selected and expanded node details for agent and room cards in `web/src/pages/CircuitView.tsx`
-- [ ] T039 [US2] Add empty, loading, error, crowded, and overflow states for the spatial circuit canvas in `web/src/pages/CircuitView.tsx`
-- [ ] T040 [US2] Verify pan, zoom, card drag, position restore, toolbar placement, keyboard navigation, and readable labels in `web/tests/pages/CircuitView.interactions.test.tsx`
+- [x] T038 [US2] Integrate selected and expanded node details for agent and room cards in `web/src/pages/CircuitView.tsx`
+- [x] T039 [US2] Add empty, loading, error, crowded, and overflow states for the spatial circuit canvas in `web/src/pages/CircuitView.tsx`
+- [x] T040 [US2] Verify pan, zoom, card drag, position restore, toolbar placement, keyboard navigation, and readable labels in `web/tests/pages/CircuitView.interactions.test.tsx`
 
 **Checkpoint**: User Stories 1 and 2 are independently functional. Canvas is pannable, zoomable, drag-repositionable, and toolbar is visible inside viewport.
 
