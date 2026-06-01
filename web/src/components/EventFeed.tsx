@@ -1,6 +1,7 @@
 import type { AgentEvent } from '../types'
 import { DisplayStatusBadge } from './agentCanvas/DisplayStatusBadge'
 import { ContextAttachmentList } from './agentCanvas/ContextAttachmentList'
+import { AgentActivityTimeline } from "./agentCanvas/AgentActivityTimeline"
 
 const TYPE_COLORS: Record<string, string> = {
   'run.started': 'border-green-500',
@@ -37,7 +38,7 @@ export function EventFeed({ events, connected }: Props) {
         <div className="text-sm text-red-400 mb-2">● Disconnected — reconnecting…</div>
       )}
       {events.length === 0 && connected && (
-        <div className="text-sm text-gray-500">No events yet — waiting for agent activity</div>
+        <AgentActivityTimeline events={[]} />
       )}
       {events.map((e) => {
         const status = EVENT_TYPE_STATUS[e.type] || 'neutral'

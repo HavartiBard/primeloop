@@ -1,57 +1,40 @@
-// ─────────────────────────────────────────────────────────────────────────────
-// Context Attachment List (spec 017)
-// Display list of context attachments with availability indicators
-// ─────────────────────────────────────────────────────────────────────────────
+// ContextAttachmentList.tsx - Reusable context attachment chip/list component
 
 import React from 'react'
-import type { ContextAttachment } from '../../types'
-import { getStatusColorClasses, getStatusDotClass } from '../../lib/displayStatus'
-import { getContextAttachmentLabel } from '../../lib/accessibilityText'
+import { ContextAttachment } from '../../types'
 
-/**
- * Props for ContextAttachmentList
- */
-export interface ContextAttachmentListProps {
-  /** List of attachments */
+interface ContextAttachmentListProps {
   attachments: ContextAttachment[]
-  /** Show expand affordance */
-  showExpand?: boolean
-  /** On attachment click handler */
-  onAttachmentClick?: (attachment: ContextAttachment) => void
-  /** Max attachments to show before truncation */
   maxVisible?: number
+  showPreview?: boolean
+  onOpen?: (attachment: ContextAttachment) => void
 }
 
-/**
- * Context Attachment List Component
- */
 export function ContextAttachmentList({
   attachments,
-  showExpand = false,
-  onAttachmentClick,
   maxVisible = 3,
-}: ContextAttachmentListProps) {
-  if (attachments.length === 0) return null
+  showPreview = true,
+  onOpen,
+}: ContextAttachmentListProps): React.ReactNode {
+  if (!attachments || attachments.length === 0) {
+    return null
+  }
 
   const visibleAttachments = attachments.slice(0, maxVisible)
   const remainingCount = attachments.length - maxVisible
 
   return (
-    <div
-      className="flex flex-wrap gap-2 mt-2"
-      aria-label={`Context attachments: ${attachments.length} items`}
-    >
+    <div className="flex flex-wrap gap-2 mt-2">
       {visibleAttachments.map((attachment, index) => (
-        <AttachmentChip
-          key={`${attachment.id || 'att'}-${index}`}
+        <ContextAttachmentChip
+          key={`${attachment.id}-${index}`}
           attachment={attachment}
-          onClick={() => onAttachmentClick?.(attachment)}
-          showExpand={showExpand}
+          showPreview={showPreview}
+          onClick={() => onOpen?.(attachment)}
         />
       ))}
-
       {remainingCount > 0 && (
-        <span className="text-xs text-[var(--muted)] px-2 py-1 rounded bg-[var(--panel-subtle)]">
+        <span className="text-sm text-gray-500 dark:text-gray-400">
           +{remainingCount} more
         </span>
       )}
@@ -59,67 +42,56 @@ export function ContextAttachmentList({
   )
 }
 
-/**
- * Individual attachment chip component
- */
-function AttachmentChip({
-  attachment,
-  onClick,
-  showExpand,
-}: {
+interface ContextAttachmentChipProps {
   attachment: ContextAttachment
+  showPreview: boolean
   onClick?: () => void
-  showExpand?: boolean
-}) {
-  const isUnavailable =
-    attachment.availability === 'restricted' ||
-    attachment.availability === 'deleted' ||
-    attachment.availability === 'too_large' ||
-    attachment.availability === 'error'
+}
+
+function ContextAttachmentChip({ attachment, showPreview, onClick }: ContextAttachmentChipProps): React.ReactNode {
+  const { name, type, availability, previewSummary } = attachment
+
+  // Availability styling
+  const availabilityClasses: Record<string, string> = {
+    available: 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-200',
+    restricted: 'bg-amber-100 text-amber-800 dark:bg-amber-900/30 dark:text-amber-300',
+    deleted: 'bg-gray-200 text-gray-500 dark:bg-gray-800 dark:text-gray-400',
+    too_large: 'bg-orange-100 text-orange-800 dark:bg-orange-900/30 dark:text-orange-300',
+    loading: 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-300 animate-pulse',
+    error: 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300',
+  }
+
+  const availabilityClass = availabilityClasses[availability] || availabilityClasses.available
+
+  // Type icon
+  const typeIcons: Record<string, string> = {
+    file: '📄',
+    artifact: '📦',
+    goal: '🎯',
+    work_item: '📋',
+    message: '💬',
+    tool_result: '⚙️',
+    note: '📝',
+    link: '🔗',
+    other: '📎',
+  }
+
+  const typeIcon = typeIcons[type] || typeIcons.other
 
   return (
     <button
       type="button"
       onClick={onClick}
-      className={`flex items-center gap-1.5 px-2 py-1 rounded text-xs border transition-colors
-        ${isUnavailable
-          ? 'border-[var(--s-blk-bd)] bg-[var(--s-blk-bg)]/10 text-[var(--s-blk-tx)]'
-          : getStatusColorClasses(attachment.availability === 'loading' ? 'pending' : 'success')}
-        hover:bg-opacity-20 focus:outline-none focus:ring-2 focus:ring-[var(--sel-bd)]
-      `}
-      aria-label={getContextAttachmentLabel(attachment.name, attachment.type, attachment.availability)}
+      className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-sm font-medium transition-colors hover:bg-gray-200 dark:hover:bg-gray-600 ${availabilityClass}`}
+      aria-label={`Attachment: ${name}, type: ${type}, status: ${availability}`}
     >
-      <span className={getStatusDotClass(attachment.availability === 'loading' ? 'pending' : 'success')}>
-        {getAvailabilityIcon(attachment.availability)}
-      </span>
-      <span className="font-medium truncate max-w-[120px]">{attachment.name}</span>
-      <span className="text-[var(--muted)] uppercase text-[10px]">{attachment.type}</span>
-
-      {showExpand && (
-        <span className="ml-1 text-[10px] opacity-75">▼</span>
+      <span>{typeIcon}</span>
+      <span className="truncate max-w-[120px]">{name}</span>
+      {showPreview && previewSummary && (
+        <span className="text-xs opacity-75 truncate max-w-[80px]">({previewSummary})</span>
       )}
     </button>
   )
 }
 
-/**
- * Get availability icon
- */
-function getAvailabilityIcon(availability: ContextAttachment['availability']): string {
-  switch (availability) {
-    case 'available':
-      return '✓'
-    case 'restricted':
-      return '🔒'
-    case 'deleted':
-      return '✖'
-    case 'too_large':
-      return '⚡'
-    case 'loading':
-      return '⟳'
-    case 'error':
-      return '⚠'
-    default:
-      return '?'
-  }
-}
+export default ContextAttachmentList

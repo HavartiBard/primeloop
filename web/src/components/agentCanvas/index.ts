@@ -29,3 +29,42 @@ export type { BottomActionToolbarProps } from './BottomActionToolbar'
 
 export { ToolbarActionComposer } from './ToolbarActionComposer'
 export type { ToolbarActionComposerProps } from './ToolbarActionComposer'
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Utility exports
+// ─────────────────────────────────────────────────────────────────────────────
+
+export { ChatDisplayEvent, ContextAttachment, UserAction, DisplayStatus, ChatEventKind } from '../../types'
+export {
+  getStatusLabel,
+  getStatusColorClass,
+  getStatusIcon,
+  isStatusActive,
+  isStatusTerminal,
+  formatDurationSince,
+  deriveDisplayStatusFromKind,
+  getStatusA11yText,
+} from '../../lib/displayStatus'
+
+export {
+  getChatEventA11yText,
+  getExpandButtonA11yText,
+  getCardA11yText,
+  getActionA11yText,
+  getToolbarA11yText,
+  getTimelineA11yText,
+  getLiveRegionAnnouncement,
+  KEYBOARD_HINTS,
+  getFocusManagementText,
+} from '../../lib/accessibilityText'
+
+export {
+  deriveChatEventsFromRuntime,
+  mapThreadMessageToChatEvent,
+  mapPrimeSessionToThinkingEvent,
+  mapRuntimeEventToChatEvents,
+  mapApprovalToChatEvent,
+  mapDelegationToChatEvent,
+  mapWorkItemToChatEvent,
+  deriveContextAttachmentsFromEvent,
+} from '../../lib/chatDisplayEvents'

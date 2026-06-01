@@ -1,212 +1,109 @@
+// accessibilityText.ts - Shared accessibility helpers for keyboard labels and live-region text
+
+import { DisplayStatus, ChatEventKind } from '../types'
+import { getStatusLabel, isStatusActive, isStatusTerminal } from './displayStatus'
+
 // ─────────────────────────────────────────────────────────────────────────────
-// Accessibility Text Helpers (spec 017)
-// Expanded Canvas UX - Keyboard navigation and ARIA labels
+// Status accessibility text
 // ─────────────────────────────────────────────────────────────────────────────
 
-import type { ChatEventKind, DisplayStatus, ToolbarActionType } from '../types'
-
-/**
- * Get accessible label for chat event kind
- */
-export function getChatEventKindLabel(kind: ChatEventKind): string {
-  switch (kind) {
-    case 'message':
-      return 'Message'
-    case 'thinking':
-      return 'Thinking update'
-    case 'tool_call':
-      return 'Tool call'
-    case 'tool_result':
-      return 'Tool result'
-    case 'context_attachment':
-      return 'Context attachment'
-    case 'approval':
-      return 'Approval request'
-    case 'delegation':
-      return 'Delegation'
-    case 'goal':
-      return 'Goal update'
-    case 'artifact':
-      return 'Artifact reference'
-    case 'note':
-      return 'Note'
-    case 'system':
-      return 'System message'
-    default:
-      return kind
-  }
-}
-
-/**
- * Get accessible label for display status
- */
-export function getStatusLabel(status: DisplayStatus): string {
-  switch (status) {
-    case 'pending':
-      return 'Pending'
-    case 'streaming':
-      return 'Streaming'
-    case 'running':
-      return 'Running'
-    case 'success':
-      return 'Success'
-    case 'failed':
-      return 'Failed'
-    case 'cancelled':
-      return 'Cancelled'
-    case 'timeout':
-      return 'Timed out'
-    case 'blocked':
-      return 'Blocked'
-    case 'resolved':
-      return 'Resolved'
-    case 'unavailable':
-      return 'Unavailable'
-    default:
-      return status
-  }
-}
-
-/**
- * Get keyboard shortcut description for toolbar action
- */
-export function getToolbarActionShortcut(actionType: ToolbarActionType): string {
-  switch (actionType) {
-    case 'spawn_agent':
-      return 'S'
-    case 'tool_call':
-      return 'T'
-    case 'create_goal':
-      return 'G'
-    case 'capture_artifact':
-      return 'A'
-    case 'add_note':
-      return 'N'
-    default:
-      return ''
-  }
-}
-
-/**
- * Get accessible label for toolbar action
- */
-export function getToolbarActionLabel(actionType: ToolbarActionType): string {
-  switch (actionType) {
-    case 'spawn_agent':
-      return 'Spawn agent'
-    case 'tool_call':
-      return 'Request tool call'
-    case 'create_goal':
-      return 'Create goal'
-    case 'capture_artifact':
-      return 'Capture artifact'
-    case 'add_note':
-      return 'Add note'
-    default:
-      return actionType
-  }
-}
-
-/**
- * Get expanded state label for screen readers
- */
-export function getExpandedStateLabel(isExpanded: boolean): string {
-  return isExpanded ? 'Expanded' : 'Collapsed'
-}
-
-/**
- * Get keyboard navigation instructions for timeline
- */
-export function getTimelineKeyboardHelp(): string {
-  return 'Use arrow keys to navigate between events. Enter or Space to expand/collapse. Escape to collapse all.'
-}
-
-/**
- * Get keyboard navigation instructions for canvas
- */
-export function getCanvasKeyboardHelp(): string {
-  return 'Use arrow keys to pan, +/- to zoom, 0 to reset, F to fit. Click nodes to select. Enter to expand details.'
-}
-
-/**
- * Generate live region announcement text for chat event update
- */
-export function generateLiveRegionUpdate(
-  kind: ChatEventKind,
-  status: DisplayStatus,
-  actorLabel: string,
-): string {
-  const kindLabel = getChatEventKindLabel(kind)
-  const statusLabel = getStatusLabel(status)
-  return `${actorLabel} - ${kindLabel} ${statusLabel}`
-}
-
-/**
- * Generate label for expand/collapse button
- */
-export function getExpandButtonLabel(isExpanded: boolean, title: string): string {
-  return isExpanded ? `Collapse ${title}` : `Expand ${title}`
-}
-
-/**
- * Generate label for toolbar action button
- */
-export function getToolbarActionButtonLabel(actionType: ToolbarActionType): string {
-  const label = getToolbarActionLabel(actionType)
-  const shortcut = getToolbarActionShortcut(actionType)
-  if (shortcut) {
-    return `${label} (${shortcut})`
-  }
+export function getStatusA11yText(status: DisplayStatus): string {
+  const label = getStatusLabel(status)
+  if (isStatusActive(status)) return `${label}, active`
+  if (isStatusTerminal(status)) return `${label}, complete`
   return label
 }
 
-/**
- * Generate ARIA label for circuit node
- */
-export function getCircuitNodeLabel(node: {
-  id: string
-  type: string
-  title: string
-  status: string
+// ─────────────────────────────────────────────────────────────────────────────
+// Chat event accessibility text
+// ─────────────────────────────────────────────────────────────────────────────
+
+export function getChatEventA11yText(event: {
+  kind: ChatEventKind
+  actorLabel: string
+  summary: string
+  status: DisplayStatus
 }): string {
-  const { type, title, status } = node
-  const typeLabel = type.charAt(0).toUpperCase() + type.slice(1)
-  return `${typeLabel}: ${title}, Status: ${status}`
+  const statusText = getStatusA11yText(event.status)
+  return `${event.kind}, from ${event.actorLabel}. ${statusText}. ${event.summary}`
 }
 
-/**
- * Generate ARIA label for context attachment
- */
-export function getContextAttachmentLabel(
-  name: string,
-  type: string,
-  availability: string,
-): string {
-  return `${name} (${type}) - ${availability}`
+// ─────────────────────────────────────────────────────────────────────────────
+// Expandable section accessibility text
+// ─────────────────────────────────────────────────────────────────────────────
+
+export function getExpandButtonA11yText(isExpanded: boolean, label: string): string {
+  return isExpanded ? `Collapse ${label}` : `Expand ${label}`
 }
 
-/**
- * Generate label for canvas controls
- */
-export function getCanvasControlLabel(action: 'zoomIn' | 'zoomOut' | 'reset' | 'fit'): string {
-  switch (action) {
-    case 'zoomIn':
-      return 'Zoom in'
-    case 'zoomOut':
-      return 'Zoom out'
-    case 'reset':
-      return 'Reset view'
-    case 'fit':
-      return 'Fit to view'
-  }
+// ─────────────────────────────────────────────────────────────────────────────
+// Card accessibility text
+// ─────────────────────────────────────────────────────────────────────────────
+
+export function getCardA11yText(title: string, status: DisplayStatus): string {
+  const statusText = getStatusA11yText(status)
+  return `${title}, ${statusText}`
 }
 
-/**
- * Generate label for node expansion control
- */
-export function getNodeExpansionControlLabel(
-  isExpanded: boolean,
-  title: string,
-): string {
-  return isExpanded ? `Hide details for ${title}` : `Show details for ${title}`
+// ─────────────────────────────────────────────────────────────────────────────
+// Button accessibility text
+// ─────────────────────────────────────────────────────────────────────────────
+
+export function getActionA11yText(action: {
+  label: string
+  type: string
+  disabled?: boolean
+}): string {
+  const base = action.label
+  if (action.disabled) return `${base}, disabled`
+  return base
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Toolbar accessibility text
+// ─────────────────────────────────────────────────────────────────────────────
+
+export function getToolbarA11yText(actions: Array<{ label: string; type: string }>): string {
+  const actionNames = actions.map(a => a.label).join(', ')
+  return `Toolbar actions: ${actionNames}`
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Timeline accessibility text
+// ─────────────────────────────────────────────────────────────────────────────
+
+export function getTimelineA11yText(totalEvents: number, currentEventIndex: number): string {
+  return `Timeline with ${totalEvents} events. Currently focused on event ${currentEventIndex + 1} of ${totalEvents}.`
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Live region announcement text
+// ─────────────────────────────────────────────────────────────────────────────
+
+export function getLiveRegionAnnouncement(event: {
+  kind: ChatEventKind
+  actorLabel: string
+  summary: string
+  status: DisplayStatus
+}): string {
+  return `${event.actorLabel} ${event.kind}: ${event.summary}. Status: ${getStatusLabel(event.status)}.`
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Keyboard navigation hints
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const KEYBOARD_HINTS = {
+  expand: 'Press Enter or Space to expand/collapse',
+  navigate: 'Use Up/Down arrows to navigate events',
+  focusToolbar: 'Press Tab to move to toolbar actions',
+  close: 'Press Escape to close modals or collapse expanded items',
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Focus management text
+// ─────────────────────────────────────────────────────────────────────────────
+
+export function getFocusManagementText(componentName: string): string {
+  return `${componentName} focused. Use arrow keys to navigate, Enter to activate.`
 }
