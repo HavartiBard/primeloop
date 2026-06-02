@@ -1,17 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { fetchPrimeSession, fetchPrimeSessions, fetchThreadMessages, sendPrimeMessage } from '../api'
+import { fetchPrimeSessions, fetchThreadMessages, sendPrimeMessage } from '../api'
 import { BottomActionToolbar } from './agentCanvas/BottomActionToolbar'
-import { AgentActivityTimeline } from './agentCanvas/AgentActivityTimeline'
-import type { AgentEvent, RegistryAgent, RuntimeAuditLoop, RuntimeDelegation, RuntimeThread, RuntimeWorkItem, ToolbarDraftAction, ToolbarActionType } from '../types'
+import type { AgentEvent, RegistryAgent, RuntimeAuditLoop, RuntimeDelegation, RuntimeThread, RuntimeWorkItem, ToolbarDraftAction } from '../types'
 import { useToolbarActions } from '../hooks/useToolbarActions'
-
-import {
-  deriveChatEventsFromRuntime,
-  mapThreadMessageToChatEvent,
-  mapPrimeSessionToThinkingEvent,
-  mapRuntimeEventToChatEvents,
-} from "../lib/chatDisplayEvents"
+import type { ChatDraft } from '../types/composer'
 type AgentHealth = {
   agent: string
   last_seen: string
@@ -134,28 +127,26 @@ function participantDot(agent: string, healthByName: Map<string, AgentHealth>): 
   return 'bg-[var(--muted)]'
 }
 
-function primePhaseLabel(step?: string, status?: string): string {
-  if (status && status !== 'running') return 'finalizing'
-  if (step === 'assembling_context') return 'gathering context'
-  if (step === 'deciding') return 'thinking'
-  if (step === 'dispatching') return 'taking action'
-  if (step === 'completed') return 'responding'
-  if (step === 'failed') return 'reporting'
-  return 'processing'
-}
-
-function summarizeModuleRun(detail?: string): string {
-  if (!detail) return 'completed without detail'
-  return truncate(detail, 84)
-}
-
 type TerminalLine = {
   key: string
   speaker: string
   command: string
   detail?: string
+  occurredAt: string
   tone?: 'info' | 'success' | 'warning' | 'error'
+  kind: 'thinking' | 'turn' | 'tool' | 'result' | 'error'
 }
+
+type ChatTimelineEntry =
+  | { kind: 'message'; key: string; occurredAt: string; speaker: string; text: string; at: string }
+  | {
+      kind: 'artifact'
+      key: string
+      occurredAt: string
+      summary: string
+      live: boolean
+      lines: TerminalLine[]
+    }
 
 function asText(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined
@@ -174,10 +165,25 @@ function asActionSummary(payload: Record<string, unknown>): string | undefined {
 }
 
 function toneClass(tone?: TerminalLine['tone']): string {
-  if (tone === 'error') return 'text-[#f85149]'
-  if (tone === 'warning') return 'text-[#d29922]'
-  if (tone === 'success') return 'text-[#3fb950]'
-  return 'text-[#79c0ff]'
+  if (tone === 'error') return 'text-rose-300'
+  if (tone === 'warning') return 'text-amber-300'
+  if (tone === 'success') return 'text-emerald-300'
+  return 'text-cyan-300'
+}
+
+function artifactRailClass(tone?: TerminalLine['tone']): string {
+  if (tone === 'error') return 'bg-rose-400/90'
+  if (tone === 'warning') return 'bg-amber-400/90'
+  if (tone === 'success') return 'bg-emerald-400/90'
+  return 'bg-cyan-400/90'
+}
+
+function artifactLabel(line: TerminalLine): string {
+  if (line.kind === 'thinking') return 'Thinking'
+  if (line.kind === 'tool') return 'Tool'
+  if (line.kind === 'result') return 'Update'
+  if (line.kind === 'error') return 'Error'
+  return 'Turn'
 }
 
 function eventToTerminalLine(event: AgentEvent): TerminalLine | null {
@@ -189,9 +195,11 @@ function eventToTerminalLine(event: AgentEvent): TerminalLine | null {
       return {
         key: event.id,
         speaker: 'prime',
-        command: `turn start ${sessionId ?? ''}`.trim(),
+        command: 'turn started',
         detail: `trigger=${asText(payload.trigger_type) ?? 'prime.message'}`,
+        occurredAt: event.created_at,
         tone: 'info',
+        kind: 'turn',
       }
     case 'prime.turn.step': {
       const status = asText(payload.status) ?? 'completed'
@@ -200,9 +208,11 @@ function eventToTerminalLine(event: AgentEvent): TerminalLine | null {
       return {
         key: event.id,
         speaker: 'prime',
-        command: `${status === 'started' ? 'begin' : status} ${moduleId}${mode === 'shadow' ? ' [shadow]' : ''}`,
-        detail: asText(payload.detail),
-        tone: status === 'failed' ? 'error' : status === 'started' ? 'info' : 'success',
+        command: `${moduleId}${mode === 'shadow' ? ' [shadow]' : ''}`,
+        detail: [status, asText(payload.detail)].filter(Boolean).join(' · '),
+        occurredAt: event.created_at,
+        tone: status === 'failed' ? 'error' : status === 'started' ? 'warning' : 'success',
+        kind: status === 'failed' ? 'error' : status === 'started' ? 'tool' : 'result',
       }
     }
     case 'prime.turn.reasoning':
@@ -211,7 +221,9 @@ function eventToTerminalLine(event: AgentEvent): TerminalLine | null {
         speaker: 'prime',
         command: 'reasoning',
         detail: asText(payload.reasoning) ?? 'reasoning unavailable',
+        occurredAt: event.created_at,
         tone: 'info',
+        kind: 'thinking',
       }
     case 'prime.turn.actions':
       return {
@@ -219,7 +231,9 @@ function eventToTerminalLine(event: AgentEvent): TerminalLine | null {
         speaker: 'prime',
         command: 'actions',
         detail: asActionSummary(payload),
+        occurredAt: event.created_at,
         tone: 'warning',
+        kind: 'tool',
       }
     case 'prime.turn.completed': {
       const detail = [
@@ -229,18 +243,22 @@ function eventToTerminalLine(event: AgentEvent): TerminalLine | null {
       return {
         key: event.id,
         speaker: 'prime',
-        command: `turn complete ${sessionId ?? ''}`.trim(),
+        command: 'turn complete',
         detail,
+        occurredAt: event.created_at,
         tone: 'success',
+        kind: 'result',
       }
     }
     case 'prime.turn.failed':
       return {
         key: event.id,
         speaker: 'prime',
-        command: `turn failed ${sessionId ?? ''}`.trim(),
+        command: 'turn failed',
         detail: asText(payload.error) ?? 'unknown error',
+        occurredAt: event.created_at,
         tone: 'error',
+        kind: 'error',
       }
     default:
       return null
@@ -327,7 +345,6 @@ export function CollaborationRoomsView({
   const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null)
   const [filter, setFilter] = useState<FilterTab>('active')
   const [search, setSearch] = useState('')
-  const [termExpanded, setTermExpanded] = useState(true)
   const [draftMessage, setDraftMessage] = useState('')
   const [toolbarDrafts, setToolbarDrafts] = useState<Record<string, ToolbarDraftAction>>({})
   const [composerDraft, setComposerDraft] = useState<ToolbarDraftAction | null>(null)
@@ -335,7 +352,19 @@ export function CollaborationRoomsView({
   const [selectedWorkId, setSelectedWorkId] = useState<string | null>(null)
   const [clockNow, setClockNow] = useState(() => Date.now())
   const [unreadMessages, setUnreadMessages] = useState(0)
+  // Composer state for ACP chat input enhancements
+  const [composerState, setComposerState] = useState<ChatDraft>({
+    text: '',
+    modelId: null,
+    mode: 'agent',
+    attachments: [],
+    companionPrompt: null,
+    tools: { webSearch: false, shell: true, imageProcessing: false },
+    validationState: 'valid',
+    sendState: 'idle',
+  })
   const [followBottom, setFollowBottom] = useState(true)
+  const [expandedArtifactIds, setExpandedArtifactIds] = useState<Record<string, boolean>>({})
   const chatScrollRef = useRef<HTMLDivElement | null>(null)
   const chatInputRef = useRef<HTMLInputElement | null>(null)
   const displayStartRef = useRef<{ ts: number; roomId: string | null }>({ ts: 0, roomId: null })
@@ -417,17 +446,21 @@ export function CollaborationRoomsView({
     refetchInterval: runningPrimeSessions.length > 0 ? 1_000 : 3_000,
   })
 
-  const selectedWork = selectedRoom
-    ? selectedRoom.workItems.find((item) => item.id === selectedWorkId)
-    : undefined
-
   const displayMessages = rawMessages.length >= 1
     ? rawMessages.map(msg => ({
         speaker: msg.sender || msg.role,
         text: msg.content,
         at: formatShortTime(msg.created_at),
+        occurredAt: msg.created_at,
+        key: msg.id,
+        sessionId: typeof msg.metadata?.['session_id'] === 'string' ? msg.metadata['session_id'] : undefined,
       }))
-    : selectedRoom?.messages ?? []
+    : (selectedRoom?.messages ?? []).map((msg, index) => ({
+        ...msg,
+        occurredAt: `${Date.now() + index}`,
+        key: `${selectedRoom?.id ?? 'room'}-${index}`,
+        sessionId: undefined,
+      }))
 
   useEffect(() => {
     lastMessageCountRef.current = 0
@@ -537,27 +570,6 @@ export function CollaborationRoomsView({
     : []
   const visiblePrimeSessions = runningPrimeSessions.length > 0 ? runningPrimeSessions : finalizingPrimeSessions
   useEffect(() => {
-    const node = chatScrollRef.current
-    if (!node) return
-
-    if (!followBottom) {
-      const currentCount = displayMessages.length
-      const previousCount = lastMessageCountRef.current
-      if (currentCount > previousCount) {
-        setUnreadMessages((count) => count + (currentCount - previousCount))
-      }
-      lastMessageCountRef.current = currentCount
-      return
-    }
-
-    requestAnimationFrame(() => {
-      node.scrollTop = node.scrollHeight
-      setUnreadMessages(0)
-      lastMessageCountRef.current = displayMessages.length
-    })
-  }, [displayMessages.length, followBottom, activeRoomId, visiblePrimeSessions.length])
-
-  useEffect(() => {
     if (visiblePrimeSessions.length === 0 || !activeRoomId) {
       displayStartRef.current = { ts: 0, roomId: null }
       return
@@ -581,34 +593,6 @@ export function CollaborationRoomsView({
     || selectedRoom.delegations.some((delegation) => delegation.status === 'queued' || delegation.status === 'running')
   )
 
-  // Derive chat display events from runtime records for AgentActivityTimeline
-  const liveActivityEvents = useMemo(() => {
-    if (!selectedRoom) return []
-    return deriveChatEventsFromRuntime(
-      selectedRoom.messages.map(m => ({
-        id: m.messageId || '',
-        thread_id: selectedRoom.id,
-        role: m.speaker === primeName ? 'assistant' : 'user',
-        sender: m.speaker,
-        content: m.text,
-        metadata: {},
-        created_at: m.at,
-      })),
-      visiblePrimeSessions.map(s => ({
-        id: s.id,
-        status: s.status,
-        error: s.error,
-        reasoning_summary: s.reasoning_summary,
-        started_at: s.started_at || '',
-      })),
-      events.filter(e => e.thread_id === selectedRoom.id),
-      [], // approvals
-      selectedRoom.delegations,
-      selectedRoom.workItems
-    ).events
-  }, [selectedRoom, visiblePrimeSessions, events])
-  const processingOwners = Array.from(new Set(runningPrimeWork.map((item) => item.owner_label || primeName))).filter(Boolean)
-  const processingLabel = processingOwners.length > 0 ? processingOwners.join(', ') : primeName
   const processingSummary = runningPrimeWork.length > 0
     ? runningPrimeWork.slice(0, 2).map((item) => item.title).join(' · ')
     : 'thinking through the latest request'
@@ -616,48 +600,106 @@ export function CollaborationRoomsView({
     ? formatElapsed(Math.max(0, clockNow - displayStartRef.current.ts))
     : '0s'
   const processingTimeLabel = formatShortTime(primaryRunningSession?.started_at)
-  const processingVerb = primePhaseLabel(primaryRunningSession?.last_step, primaryRunningSession?.status)
-  const selectedWorkSession = selectedFocus?.sourceSessionId
-    ? roomPrimeSessions.find((session) => session.id === selectedFocus.sourceSessionId)
-    : selectedFocus?.messageId
-      ? roomPrimeSessions.find((session) => session.trigger_payload?.['message_id'] === selectedFocus.messageId)
-      : undefined
-  const { data: selectedWorkSessionDetail } = useQuery({
-    queryKey: ['prime-agent-session', selectedWorkSession?.id],
-    queryFn: () => fetchPrimeSession(selectedWorkSession!.id),
-    enabled: Boolean(selectedWorkSession?.id),
-    refetchInterval: selectedWorkSession?.status === 'running' ? 2_000 : false,
-  })
-  const inspectedPrimeSession = selectedWorkSessionDetail ?? selectedWorkSession
-  const selectedWorkResponse = selectedWorkSession
-    ? rawMessages.find((message) => message.metadata?.['session_id'] === selectedWorkSession.id)
-    : undefined
+  const processingVerb = primaryRunningSession?.status && primaryRunningSession.status !== 'running'
+    ? 'finalizing'
+    : primaryRunningSession?.last_step === 'deciding'
+      ? 'thinking'
+      : primaryRunningSession?.last_step === 'dispatching'
+        ? 'taking action'
+        : 'processing'
+  const activeArtifactSession = latestPrimeSession ?? null
+
   const roomTerminalLines = useMemo(() => {
-    if (!activeRoomId) return []
+    if (!activeRoomId || !activeArtifactSession) return []
     return events
       .filter((event) => {
         if (!event.type.startsWith('prime.turn.')) return false
         const threadId = typeof event.payload?.['thread_id'] === 'string' ? event.payload['thread_id'] : null
-        if (threadId) return threadId === activeRoomId
+        if (threadId && threadId !== activeRoomId) return false
         const sessionId = typeof event.payload?.['session_id'] === 'string' ? event.payload['session_id'] : null
-        if (!sessionId) return false
-        return visiblePrimeSessions.some((session) => session.id === sessionId)
-          || inspectedPrimeSession?.id === sessionId
+        return sessionId === activeArtifactSession.id
       })
       .map(eventToTerminalLine)
       .filter((line): line is TerminalLine => Boolean(line))
-      .slice()
-      .reverse()
-  }, [activeRoomId, events, inspectedPrimeSession?.id, visiblePrimeSessions])
+      .sort((a, b) => a.occurredAt.localeCompare(b.occurredAt))
+  }, [activeRoomId, activeArtifactSession, events])
+
+  const chatTimelineEntries = useMemo<ChatTimelineEntry[]>(() => {
+    const messageEntries: ChatTimelineEntry[] = displayMessages.map((msg) => ({
+      kind: 'message' as const,
+      key: `msg:${msg.key}`,
+      occurredAt: msg.occurredAt,
+      speaker: msg.speaker,
+      text: msg.text,
+      at: msg.at,
+    }))
+
+    if (!activeArtifactSession || roomTerminalLines.length === 0) return messageEntries
+
+    const latestLine = roomTerminalLines[roomTerminalLines.length - 1]
+    const artifactEntry: ChatTimelineEntry = {
+      kind: 'artifact',
+      key: `artifact-session:${activeArtifactSession.id}`,
+      occurredAt: activeArtifactSession.started_at || latestLine.occurredAt,
+      summary: latestLine.detail ? `${latestLine.command} · ${truncate(latestLine.detail, 88)}` : latestLine.command,
+      live: activeArtifactSession.status === 'running',
+      lines: roomTerminalLines,
+    }
+
+    const responseIndex = displayMessages.findIndex((msg) => msg.sessionId === activeArtifactSession.id)
+    if (responseIndex >= 0) {
+      return [
+        ...messageEntries.slice(0, responseIndex),
+        artifactEntry,
+        ...messageEntries.slice(responseIndex),
+      ]
+    }
+
+    return [...messageEntries, artifactEntry]
+  }, [activeArtifactSession, displayMessages, roomTerminalLines])
+
+  useEffect(() => {
+    const node = chatScrollRef.current
+    if (!node) return
+
+    if (!followBottom) {
+      const currentCount = chatTimelineEntries.length
+      const previousCount = lastMessageCountRef.current
+      if (currentCount > previousCount) {
+        setUnreadMessages((count) => count + (currentCount - previousCount))
+      }
+      lastMessageCountRef.current = currentCount
+      return
+    }
+
+    requestAnimationFrame(() => {
+      node.scrollTop = node.scrollHeight
+      setUnreadMessages(0)
+      lastMessageCountRef.current = chatTimelineEntries.length
+    })
+  }, [chatTimelineEntries.length, followBottom, activeRoomId, visiblePrimeSessions.length])
+
   const sendMessage = useMutation({
     mutationFn: async () => {
       if (!activeRoomId) throw new Error('No active room')
-      const content = draftMessage.trim()
-      if (!content) throw new Error('Message is empty')
-      return sendPrimeMessage(activeRoomId, { content, sender: 'james' })
+      const content = composerState.text.trim()
+      if (!content && composerState.attachments.length === 0 && !composerState.companionPrompt) {
+        throw new Error('At least one of text, attachment, or companion prompt is required.')
+      }
+      // TODO: Map composerState to message payload with modelId, mode, tools
+      return sendPrimeMessage(activeRoomId, { content: composerState.text, sender: 'james' })
     },
     onSuccess: async () => {
-      setDraftMessage('')
+      setComposerState({
+        text: '',
+        modelId: null,
+        mode: 'agent',
+        attachments: [],
+        companionPrompt: null,
+        tools: { webSearch: false, shell: true, imageProcessing: false },
+        validationState: 'valid',
+        sendState: 'idle',
+      })
       setFollowBottom(true)
       setUnreadMessages(0)
       await Promise.all([
@@ -672,7 +714,7 @@ export function CollaborationRoomsView({
       requestAnimationFrame(() => chatInputRef.current?.focus())
     },
   })
-  const canSendMessage = !!activeRoomId && draftMessage.trim().length > 0 && !sendMessage.isPending
+  const canSendMessage = !!activeRoomId && (composerState.text.trim().length > 0 || composerState.attachments.length > 0 || composerState.companionPrompt !== null) && !sendMessage.isPending
 
   function submitMessage() {
     if (!canSendMessage) return
@@ -681,7 +723,6 @@ export function CollaborationRoomsView({
 
   function selectWork(id: string) {
     setSelectedWorkId(id)
-    setTermExpanded(true)
   }
 
   function handleChatScroll() {
@@ -698,6 +739,10 @@ export function CollaborationRoomsView({
     node.scrollTop = node.scrollHeight
     setUnreadMessages(0)
     setFollowBottom(true)
+  }
+
+  function toggleArtifact(key: string) {
+    setExpandedArtifactIds((current) => ({ ...current, [key]: !current[key] }))
   }
 
   function renderWorkRows(rows: WorkFocus[], empty: string) {
@@ -858,63 +903,84 @@ export function CollaborationRoomsView({
                       {unreadMessages} new message{unreadMessages === 1 ? '' : 's'}
                     </button>
                   )}
-                  {displayMessages.map((msg, i) => (
-                    <div
-                      key={`${selectedRoom.id}-${i}`}
-                      className="grid gap-2.5 rounded px-1.5 py-0.5"
-                      style={{ gridTemplateColumns: '92px 132px 1fr' }}
-                    >
-                      <span className="whitespace-nowrap text-[var(--terminal-time)]">{msg.at}</span>
-                      <span className={`whitespace-nowrap font-semibold ${speakerCls(msg.speaker)}`}>{speakerGlyph(msg.speaker)} {msg.speaker}</span>
-                      <span className={msg.speaker === 'system' ? 'text-[var(--s-blk-tx)]' : 'text-[var(--text)]'}>{msg.text}</span>
-                    </div>
-                  ))}
-                  {visiblePrimeSessions.length > 0 && (
-                    <div className="mt-1 grid animate-pulse gap-2.5 rounded border border-emerald-400/20 bg-emerald-400/5 px-1.5 py-1 text-[var(--terminal-working)]" style={{ gridTemplateColumns: '92px 132px 1fr' }}>
-                      <span className="whitespace-nowrap">{processingTimeLabel}</span>
-                      <span className="whitespace-nowrap font-semibold">
-                        {speakerGlyph(processingLabel)} {processingLabel}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => runningPrimeWork[0] && selectWork(runningPrimeWork[0].id)}
-                        className="min-w-0 truncate text-left text-[var(--terminal-working)] underline-offset-4 hover:underline"
-                      >
-                        <span className="uppercase tracking-wide">{processingVerb}</span>
-                        <span className="mx-1 text-[var(--terminal-working)]">({processingElapsed})</span>
-                        <span className="mx-1 inline-flex w-5 justify-start">
-                          <span className="animate-bounce [animation-delay:-0.2s]">.</span>
-                          <span className="animate-bounce [animation-delay:-0.1s]">.</span>
-                          <span className="animate-bounce">.</span>
-                        </span>
-                        {processingSummary}
-                      </button>
+                  {chatTimelineEntries.map((entry) => {
+                    if (entry.kind === 'message') {
+                      return (
+                        <div
+                          key={entry.key}
+                          className="grid gap-2.5 rounded px-1.5 py-0.5"
+                          style={{ gridTemplateColumns: '92px 132px 1fr' }}
+                        >
+                          <span className="whitespace-nowrap text-[var(--terminal-time)]">{entry.at}</span>
+                          <span className={`whitespace-nowrap font-semibold ${speakerCls(entry.speaker)}`}>{speakerGlyph(entry.speaker)} {entry.speaker}</span>
+                          <span className={entry.speaker === 'system' ? 'text-[var(--s-blk-tx)]' : 'text-[var(--text)]'}>{entry.text}</span>
+                        </div>
+                      )
+                    }
+
+                    const expanded = expandedArtifactIds[entry.key] === true
+                    const activeLine = entry.lines[entry.lines.length - 1]
+                    const integrityError = entry.lines.some((line) => /approval_id|foreign key|foreign-key|_fkey\b/i.test(`${line.command} ${line.detail ?? ''}`))
+                    return (
+                      <div key={entry.key} className="ml-[92px] pl-[22px]">
+                        <div className={`relative rounded-md border px-3 py-2 text-xs ${entry.live ? 'border-emerald-400/15 bg-emerald-400/5 text-emerald-200' : 'border-white/6 bg-white/3 text-[var(--muted)]'}`}>
+                          <span className={`absolute left-0 top-2.5 h-2 w-2 -translate-x-[13px] rounded-full ${entry.live ? 'bg-emerald-400 animate-pulse' : artifactRailClass(activeLine?.tone)}`} />
+                          <span className={`absolute left-0 top-3 bottom-3 -translate-x-[10px] w-px ${entry.live ? 'bg-emerald-400/50' : `${artifactRailClass(activeLine?.tone)} opacity-50`}`} />
+                          <button
+                            type="button"
+                            onClick={() => toggleArtifact(entry.key)}
+                            className="flex w-full items-start gap-3 text-left"
+                          >
+                            <span className={`min-w-[52px] whitespace-nowrap text-[10px] uppercase tracking-[0.18em] ${entry.live ? 'text-emerald-300/80' : 'text-[var(--terminal-time)]'}`}>
+                              {entry.live ? 'Live' : 'Turn'}
+                            </span>
+                            <span className={`min-w-0 flex-1 ${entry.live ? 'text-emerald-200' : toneClass(activeLine?.tone)}`}>
+                              <span className="font-semibold">{entry.live ? processingVerb : activeLine?.command}</span>
+                              <span className={`ml-2 ${entry.live ? 'text-emerald-300/70' : 'text-[var(--muted)]'}`}>
+                                {entry.live ? `(${processingElapsed}) ${processingSummary}` : entry.summary}
+                              </span>
+                              {integrityError && <span className="ml-2 rounded-full border border-rose-400/30 bg-rose-400/10 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-rose-200">integrity</span>}
+                            </span>
+                            <span className={`text-[10px] ${entry.live ? 'text-emerald-300/70' : 'text-[var(--muted)]'}`}>{expanded ? '▼' : '▶'}</span>
+                          </button>
+                          {expanded && (
+                            <div className="mt-2 space-y-1.5">
+                              {entry.lines.map((line) => (
+                                <div key={line.key} className="rounded border border-white/8 bg-black/20 px-2.5 py-2 text-[11px] leading-relaxed text-[var(--text)]">
+                                  <div className="flex items-start gap-2">
+                                    <span className={`mt-0.5 inline-block h-1.5 w-1.5 rounded-full ${artifactRailClass(line.tone)}`} />
+                                    <div className="min-w-0 flex-1">
+                                      <div className={`${toneClass(line.tone)} font-semibold`}>{line.command}</div>
+                                      {line.detail && <div className="mt-1 whitespace-pre-wrap break-words text-[var(--text)]">{line.detail}</div>}
+                                    </div>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )
+                  })}
+                  {!chatTimelineEntries.length && !hasLiveActivity && (
+                    <div className="grid gap-2.5 rounded px-1.5 py-0.5" style={{ gridTemplateColumns: '92px 132px 1fr' }}>
+                      <span className="whitespace-nowrap text-[var(--terminal-time)]">--:--</span>
+                      <span className={`whitespace-nowrap font-semibold ${speakerCls(primeName)}`}>{speakerGlyph(primeName)} {primeName}</span>
+                      <span className="text-[var(--text)]">Use this room to kick off the first task, incident, or repo workflow.</span>
                     </div>
                   )}
                 </div>
               </div>
-
-              {/* Bottom Action Toolbar */}
-              {activeRoomId && (
-                <div className="shrink-0">
-                  <BottomActionToolbar
-                    drafts={toolbarDrafts}
-                    onOpenDraft={handleOpenDraft}
-                    onCancelDraft={handleCancelDraft}
-                    compact
-                  />
-                </div>
-              )}
 
               {/* Chat input */}
               <div className="flex shrink-0 items-center gap-2 border-t border-[var(--border-soft)] bg-[var(--panel)] px-4 py-3">
                 <input
                   ref={chatInputRef}
                   className="flex-1 rounded border border-[var(--border-soft)] bg-[var(--panel-subtle)] px-3 py-2 font-mono text-sm text-[var(--text)] outline-none placeholder:text-[var(--muted)] focus:border-[var(--sel-bd)]"
-                  placeholder="$ message room or @agent…"
-                  value={draftMessage}
+                  placeholder="<prime>..."
+                  value={composerState.text}
                   disabled={!activeRoomId || sendMessage.isPending}
-                  onChange={(e) => setDraftMessage(e.target.value)}
+                  onChange={(e) => setComposerState(prev => ({ ...prev, text: e.target.value }))}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' && !e.shiftKey) {
                       e.preventDefault()
@@ -930,129 +996,91 @@ export function CollaborationRoomsView({
                 >
                   {sendMessage.isPending ? 'Sending…' : 'Send ↵'}
                 </button>
-              </div>
+                {/* Model selector */}
+                <select
+                  value={composerState.modelId || ''}
+                  onChange={(e) => setComposerState(prev => ({ ...prev, modelId: e.target.value || null }))}
+                  disabled={!activeRoomId || sendMessage.isPending}
+                  className="rounded border border-[var(--border-soft)] bg-[var(--panel-subtle)] px-2 py-1 font-mono text-xs text-[var(--text)] outline-none focus:border-[var(--sel-bd)]"
+                >
+                  <option value="">Select model…</option>
+                  <option value="claude-3-5-sonnet-20241022">Claude 3.5 Sonnet</option>
+                  <option value="claude-3-opus-20240229">Claude 3 Opus</option>
+                  <option value="gpt-4o">GPT-4o</option>
+                  <option value="gpt-4-turbo">GPT-4 Turbo</option>
+                </select>
+                {/* Mode toggle */}
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setComposerState(prev => ({ ...prev, mode: 'planning' }))}
+                    disabled={!activeRoomId || sendMessage.isPending}
+                    className={`rounded px-2 py-1 font-mono text-[10px] uppercase tracking-wide transition ${
+                      composerState.mode === 'planning'
+                        ? 'border border-[var(--sel-bd)] bg-[var(--sel-bg)] text-blue-400'
+                        : 'border border-[var(--border-soft)] bg-[var(--panel-subtle)] text-[var(--muted)] hover:bg-[var(--panel-strong)]'
+                    }`}
+                  >
+                    Planning
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setComposerState(prev => ({ ...prev, mode: 'agent' }))}
+                    disabled={!activeRoomId || sendMessage.isPending}
+                    className={`rounded px-2 py-1 font-mono text-[10px] uppercase tracking-wide transition ${
+                      composerState.mode === 'agent'
+                        ? 'border border-[var(--sel-bd)] bg-[var(--sel-bg)] text-blue-400'
+                        : 'border border-[var(--border-soft)] bg-[var(--panel-subtle)] text-[var(--muted)] hover:bg-[var(--panel-strong)]'
+                    }`}
+                  >
+                    Agent
+                  </button>
+                </div>
+                {/* Tool toggles */}
+                <div className="flex items-center gap-1">
+                  <button
+                    type="button"
+                    onClick={() => setComposerState(prev => ({ ...prev, tools: { ...prev.tools, webSearch: !prev.tools.webSearch } }))}
+                    disabled={!activeRoomId || sendMessage.isPending}
+                    className={`rounded px-2 py-1 font-mono text-[10px] uppercase tracking-wide transition ${
+                      composerState.tools.webSearch
+                        ? 'border border-[var(--sel-bd)] bg-[var(--sel-bg)] text-blue-400'
+                        : 'border border-[var(--border-soft)] bg-[var(--panel-subtle)] text-[var(--muted)] hover:bg-[var(--panel-strong)]'
+                    }`}
+                  >
+                    Web
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setComposerState(prev => ({ ...prev, tools: { ...prev.tools, shell: !prev.tools.shell } }))}
+                    disabled={!activeRoomId || sendMessage.isPending}
+                    className={`rounded px-2 py-1 font-mono text-[10px] uppercase tracking-wide transition ${
+                      composerState.tools.shell
+                        ? 'border border-[var(--sel-bd)] bg-[var(--sel-bg)] text-blue-400'
+                        : 'border border-[var(--border-soft)] bg-[var(--panel-subtle)] text-[var(--muted)] hover:bg-[var(--panel-strong)]'
+                    }`}
+                  >
+                    Shell
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setComposerState(prev => ({ ...prev, tools: { ...prev.tools, imageProcessing: !prev.tools.imageProcessing } }))}
+                    disabled={!activeRoomId || sendMessage.isPending}
+                    className={`rounded px-2 py-1 font-mono text-[10px] uppercase tracking-wide transition ${
+                      composerState.tools.imageProcessing
+                        ? 'border border-[var(--sel-bd)] bg-[var(--sel-bg)] text-blue-400'
+                        : 'border border-[var(--border-soft)] bg-[var(--panel-subtle)] text-[var(--muted)] hover:bg-[var(--panel-strong)]'
+                    }`}
+                  >
+                    Image
+                  </button>
+                </div>
               {sendMessage.isError && (
                 <div className="shrink-0 border-t border-[var(--s-blk-bd)] bg-[var(--s-blk-bg)] px-4 py-2 font-mono text-xs text-[var(--s-blk-tx)]">
                   {(sendMessage.error as Error).message}
                 </div>
               )}
 
-              {/* Terminal pane */}
-              <div
-                className="shrink-0 overflow-hidden transition-[height] duration-200"
-                style={{ height: termExpanded ? 200 : 36, background: '#090b0e', borderTop: '1px solid rgba(255,255,255,0.08)' }}
-              >
-                <div
-                  className="flex cursor-pointer select-none items-center gap-2.5 px-3.5 py-2"
-                  onClick={() => setTermExpanded((v) => !v)}
-                >
-                  <div className="flex gap-1.5">
-                    <span className="h-2.5 w-2.5 rounded-full bg-[#ff5f57]" />
-                    <span className="h-2.5 w-2.5 rounded-full bg-[#febc2e]" />
-                    <span className="h-2.5 w-2.5 rounded-full bg-[#28c840]" />
-                  </div>
-                  <span className="font-mono text-[11px] uppercase tracking-widest text-[#6e7681]">
-                    Agent activity — {selectedRoom.participants[0] ?? primeName}
-                  </span>
-                  <span className="ml-auto text-[11px] text-[#6e7681]">{termExpanded ? '▲' : '▼'}</span>
-                </div>
-
-                {termExpanded && (
-                  <div className="h-[calc(100%-36px)] overflow-y-auto px-3.5 pb-2 font-mono text-[13px] leading-relaxed">
-                    {selectedFocus ? (
-                      <>
-                        <div className="flex gap-2.5"><span className="text-[#58a6ff]">{selectedFocus.owner} $</span><span className="text-[#79c0ff]">inspect selected work</span></div>
-                        <div className="pl-4 text-[#c9d1d9]">{selectedFocus.title}</div>
-                        <div className="pl-4 text-[#8b949e]">status={selectedFocus.status} lane={selectedFocus.lane} kind={selectedFocus.kind}</div>
-                        {selectedFocus.actionType === 'hard_failure_investigation' && (
-                          <div className="pl-4 text-[#d29922]">historical failure investigation linked to the source Prime session below</div>
-                        )}
-                        {inspectedPrimeSession && (
-                          <>
-                            <div className="mt-2 flex gap-2.5"><span className="text-[#58a6ff]">prime $</span><span className="text-[#79c0ff]">session {inspectedPrimeSession.status}</span></div>
-                            <div className="pl-4 text-[#8b949e]">step={inspectedPrimeSession.last_step ?? 'n/a'} model={inspectedPrimeSession.model_used ?? 'pending'}</div>
-                            {inspectedPrimeSession.workspace_revision && (
-                              <div className="pl-4 text-[#8b949e]">workspace revision: {inspectedPrimeSession.workspace_revision.slice(0, 12)}</div>
-                            )}
-                            {inspectedPrimeSession.workspace_root && (
-                              <div className="pl-4 text-[#8b949e]">workspace root: {inspectedPrimeSession.workspace_root}</div>
-                            )}
-                            {Object.keys(inspectedPrimeSession.prompt_templates ?? {}).length > 0 && (
-                              <>
-                                <div className="pl-4 text-[#79c0ff]">templates used:</div>
-                                <div className="pl-8 text-[#8b949e]">
-                                  {Object.entries(inspectedPrimeSession.prompt_templates)
-                                    .map(([name, filePath]) => `${name}=${filePath}`)
-                                    .join(' | ')}
-                                </div>
-                              </>
-                            )}
-                            {inspectedPrimeSession.module_runs && inspectedPrimeSession.module_runs.length > 0 && (
-                              <>
-                                <div className="pl-4 text-[#79c0ff]">module runs:</div>
-                                {inspectedPrimeSession.module_runs.map((run) => (
-                                  <div key={run.id} className="pl-8 text-[#8b949e]">
-                                    [{String(run.run_index).padStart(2, '0')}] {run.stage}/{run.module_id}@{run.version} → {run.status} ({formatShortTime(run.completed_at)}) {summarizeModuleRun(run.detail)}
-                                  </div>
-                                ))}
-                              </>
-                            )}
-                            {inspectedPrimeSession.reasoning_summary && (
-                              <div className="pl-4 text-[#c9d1d9]">reasoning: {inspectedPrimeSession.reasoning_summary}</div>
-                            )}
-                            {inspectedPrimeSession.actions_taken.length > 0 && (
-                              <div className="pl-4 text-[#c9d1d9]">
-                                actions: {inspectedPrimeSession.actions_taken.map((action) => typeof action === 'object' && action !== null && 'type' in action ? String(action.type) : 'action').join(', ')}
-                              </div>
-                            )}
-                            {inspectedPrimeSession.error && (
-                              <div className="pl-4 text-[#f85149]">error: {inspectedPrimeSession.error}</div>
-                            )}
-                            {selectedWorkResponse && (
-                              <div className="pl-4 text-[#c9d1d9]">response: {selectedWorkResponse.content}</div>
-                            )}
-                          </>
-                        )}
-                        {roomTerminalLines.length > 0 && (
-                          <>
-                            <div className="mt-2 flex gap-2.5"><span className="text-[#58a6ff]">prime $</span><span className="text-[#79c0ff]">live turn log</span></div>
-                            {roomTerminalLines.map((line) => (
-                              <div key={line.key} className="pl-4">
-                                <span className="text-[#58a6ff]">prime $ </span>
-                                <span className={toneClass(line.tone)}>{line.command}</span>
-                                {line.detail && <span className="text-[#c9d1d9]">  {line.detail}</span>}
-                              </div>
-                            ))}
-                          </>
-                        )}
-                        <div className="mt-1.5 flex gap-2.5"><span className="text-[#58a6ff]">{selectedFocus.owner} $</span><span className="text-[#d29922]">▌</span></div>
-                      </>
-                    ) : roomTerminalLines.length > 0 ? (
-                      <>
-                        {roomTerminalLines.map((line) => (
-                          <div key={line.key} className="flex gap-2.5">
-                            <span className="text-[#58a6ff]">{line.speaker} $</span>
-                            <span className={toneClass(line.tone)}>{line.command}</span>
-                            {line.detail && <span className="text-[#c9d1d9]">{line.detail}</span>}
-                          </div>
-                        ))}
-                        <div className="mt-1.5 flex gap-2.5"><span className="text-[#58a6ff]">prime $</span><span className="text-[#d29922]">▌</span></div>
-                      </>
-                    ) : hasLiveActivity ? (
-                      <>
-                        <AgentActivityTimeline events={liveActivityEvents} />
-                      </>
-                    ) : (
-                      <>
-                        <div className="flex gap-2.5"><span className="text-[#58a6ff]">{primeName} $</span><span className="text-[#79c0ff]">await first instruction</span></div>
-                        <div className="pl-4 text-[#c9d1d9]">Use this room to kick off the first task, incident, or repo workflow.</div>
-                        <div className="pl-4 text-[#c9d1d9]">Once you send a message, this room becomes the live coordination thread.</div>
-                        <div className="mt-1.5 flex gap-2.5"><span className="text-[#58a6ff]">{primeName} $</span><span className="text-[#d29922]">▌</span></div>
-                      </>
-                    )}
-                  </div>
-                )}
-              </div>
             </div>
 
             {/* Right data column */}
@@ -1117,6 +1145,19 @@ export function CollaborationRoomsView({
 
             </div>
           </div>
+
+          {/* Bottom Action Toolbar Pane */}
+          {activeRoomId && (
+            <div className="shrink-0 border-t border-[var(--border-soft)] bg-[var(--panel)] px-4 py-2">
+              <BottomActionToolbar
+                drafts={toolbarDrafts}
+                onOpenDraft={handleOpenDraft}
+                onCancelDraft={handleCancelDraft}
+                compact
+                inline
+              />
+            </div>
+          )}
         </div>
       ) : (
         <div className="flex flex-1 items-center justify-center text-[var(--muted)]">

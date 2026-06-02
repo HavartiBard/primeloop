@@ -548,7 +548,10 @@ async function dispatchRequestApproval(
   const newKeywords = extractKeywords(normalizedAction)
 
   const { rows: existingApprovals } = await pool.query(
-    `SELECT approval_id, action, run_id, status, created_at::text
+    `SELECT id AS approval_id,
+            COALESCE(action_summary, action) AS action,
+            COALESCE(work_item_id, run_id) AS run_id,
+            status, created_at::text
      FROM approvals
      WHERE status = 'pending'
      ORDER BY created_at DESC

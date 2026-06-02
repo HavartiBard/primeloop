@@ -169,9 +169,12 @@ export async function detectLoopWarnings(
       [agentId, limit],
     ),
     pool.query<ApprovalRecord>(
-      `SELECT approval_id, run_id, action, status, created_at::text
+      `SELECT id AS approval_id,
+              COALESCE(work_item_id, run_id) AS run_id,
+              COALESCE(action_summary, action) AS action,
+              status, created_at::text
        FROM approvals
-       WHERE run_id IN (
+       WHERE COALESCE(work_item_id, run_id) IN (
          SELECT id
          FROM delegations
          WHERE from_agent_id = $1 OR to_agent_id = $1
@@ -353,17 +356,23 @@ export async function getLoopWarningDrilldown(
       : Promise.resolve({ rows: [] as DelegationRecord[] }),
     approvalIds.length > 0
       ? pool.query<ApprovalRecord>(
-          `SELECT approval_id, run_id, action, status, created_at::text
+          `SELECT id AS approval_id,
+                  COALESCE(work_item_id, run_id) AS run_id,
+                  COALESCE(action_summary, action) AS action,
+                  status, created_at::text
            FROM approvals
-           WHERE approval_id = ANY($1::text[])
+           WHERE id = ANY($1::text[])
            ORDER BY created_at DESC`,
           [approvalIds],
         )
       : delegationIds.length > 0
         ? pool.query<ApprovalRecord>(
-            `SELECT approval_id, run_id, action, status, created_at::text
+            `SELECT id AS approval_id,
+                    COALESCE(work_item_id, run_id) AS run_id,
+                    COALESCE(action_summary, action) AS action,
+                    status, created_at::text
              FROM approvals
-             WHERE run_id::text = ANY($1::text[])
+             WHERE COALESCE(work_item_id, run_id)::text = ANY($1::text[])
              ORDER BY created_at DESC`,
             [delegationIds],
           )

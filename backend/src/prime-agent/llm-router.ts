@@ -394,7 +394,7 @@ export async function buildPrimeSystemPrompt(context: PrimeContext, pool: pg.Poo
   const templates = await loadPrimeWorkspaceTemplates(pool)
 
   const { rows: pendingApprovals } = await pool.query(
-    `SELECT approval_id, action, created_at::text
+    `SELECT id AS approval_id, COALESCE(action_summary, action) AS action, created_at::text
      FROM approvals
      WHERE status = 'pending'
      ORDER BY created_at DESC
@@ -512,9 +512,11 @@ async function callProvider(
   if (!provider) throw new Error(`provider not found: ${route.provider_id}`)
 
   const apiKey = await getProviderApiKey(pool, route.provider_id)
-  if (!apiKey && provider.type === 'anthropic') {
+  if (!apiKey && (provider.type === 'anthropic' || provider.type === 'openai')) {
     throw new Error(`provider ${route.provider_id} has no API key configured`)
   }
+
+  const openAiCompatibleApiKey = apiKey ?? (provider.type === 'openai' ? null : 'not-required')
 
   const systemPrompt = await buildPrimeSystemPrompt(context, pool)
   const userMessage = await buildPrimeTriggerMessage(context, pool)
@@ -530,7 +532,7 @@ async function callProvider(
   }
   return callOpenAI(
     normalizeOpenAiBaseUrl(provider.base_url),
-    apiKey ?? 'not-required',
+    openAiCompatibleApiKey,
     model,
     systemPrompt,
     userMessage,
@@ -694,7 +696,7 @@ async function callAnthropic(
 
 async function callOpenAI(
   baseURL: string,
-  apiKey: string,
+  apiKey: string | null,
   model: string,
   systemPrompt: string,
   userMessage: string,
@@ -702,7 +704,7 @@ async function callOpenAI(
   timeoutMs: number,
   isUserFacing: boolean,
 ): Promise<PrimeDecision> {
-  const client = new OpenAI({ apiKey, baseURL: baseURL || undefined, timeout: timeoutMs })
+  const client = new OpenAI({ apiKey: apiKey ?? undefined, baseURL: baseURL || undefined, timeout: timeoutMs })
   const response = await withProviderTimeout(client.chat.completions.create({
     model,
     response_format: {

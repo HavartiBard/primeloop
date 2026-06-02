@@ -136,24 +136,25 @@ export function mapRuntimeEventToChatEvents(event: RuntimeEvent): ChatDisplayEve
   const events: ChatDisplayEvent[] = []
 
   if (event.event_type === 'tool_call') {
-    // Tool call event
+    // Tool call event → render as artifact
     events.push({
-      id: `tool_call:${event.id}`,
-      kind: 'tool_call',
+      id: `artifact:${event.id}`,
+      kind: 'artifact',
       actorLabel: event.actor || 'unknown',
       status: deriveDisplayStatusForToolCall(event.payload),
       occurredAt: event.created_at,
       summary: (event.payload as Record<string, unknown>)?.summary?.toString() || 'Tool call',
+      details: (event.payload as Record<string, unknown>)?.tool_name?.toString(),
       source: { type: 'runtime_event', id: event.id },
       attachments: [],
     })
   }
 
   if (event.event_type === 'tool_result') {
-    // Tool result event
+    // Tool result event → render as artifact
     events.push({
-      id: `tool_result:${event.id}`,
-      kind: 'tool_result',
+      id: `artifact:${event.id}`,
+      kind: 'artifact',
       actorLabel: event.actor || 'unknown',
       status: deriveDisplayStatusForToolCall(event.payload),
       occurredAt: event.created_at,
@@ -219,7 +220,7 @@ export function mapWorkItemToChatEvent(workItem: RuntimeWorkItem): ChatDisplayEv
     id: `work_item:${workItem.id}`,
     kind,
     actorLabel: workItem.owner_label || 'unknown',
-    status: 'running',
+    status: workItem.status === 'blocked' ? 'failed' : workItem.status === 'active' ? 'running' : 'success',
     occurredAt: workItem.created_at,
     summary: workItem.title,
     details: workItem.description ?? undefined,

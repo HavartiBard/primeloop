@@ -26,6 +26,8 @@ export interface BottomActionToolbarProps {
   compact?: boolean
   /** When true, renders with absolute positioning scoped inside the parent canvas container */
   contained?: boolean
+  /** When true, renders as a normal in-flow pane */
+  inline?: boolean
 }
 
 /**
@@ -38,6 +40,7 @@ export function BottomActionToolbar({
   onSubmitDraft,
   compact = false,
   contained = false,
+  inline = false,
 }: BottomActionToolbarProps) {
   const actionTypes: ToolbarActionType[] = [
     'spawn_agent',
@@ -61,11 +64,15 @@ export function BottomActionToolbar({
       }
     : undefined
 
+  const containerClass = inline
+    ? 'bg-[var(--panel)]'
+    : contained
+      ? ''
+      : 'fixed bottom-0 left-0 right-0 bg-[var(--panel)] border-t border-[var(--border-soft)] shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.1)] z-50'
+
   return (
     <div
-      className={contained
-        ? ''
-        : 'fixed bottom-0 left-0 right-0 bg-[var(--panel)] border-t border-[var(--border-soft)] shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.1)] z-50'}
+      className={containerClass}
       style={containerStyle}
       role="toolbar"
       aria-label="Action toolbar"
