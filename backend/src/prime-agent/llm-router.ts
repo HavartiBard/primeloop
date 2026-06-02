@@ -524,13 +524,31 @@ async function callProvider(
   const timeoutMs = normalizeProviderTimeout(provider.timeout_ms)
   const isUserFacing = context.trigger.type === 'prime.message'
 
+  // Attach provider/model to any error thrown (e.g. timeout) so the
+  // failure session record can surface which endpoint was being attempted.
+  const baseUrl = provider.base_url ?? ''
+  const providerHint = baseUrl ? `${provider.type} (${baseUrl})` : provider.type
+
+  function tagError(err: unknown): never {
+    const message = err instanceof Error ? err.message : String(err)
+    const tagged = new Error(`[${providerHint}, model: ${model}] ${message}`)
+    if (err instanceof Error) tagged.stack = err.stack
+    throw tagged
+  }
+
   if (provider.type === 'anthropic') {
-    return callAnthropic(apiKey ?? '', model, systemPrompt, userMessage, provider.type, timeoutMs, isUserFacing)
+    const decision = await callAnthropic(apiKey ?? '', model, systemPrompt, userMessage, provider.type, timeoutMs, isUserFacing).catch(tagError)
+    if (!decision.provider_used) decision.provider_used = provider.type
+    if (!decision.model_used) decision.model_used = model
+    return decision
   }
   if (provider.type === 'llamacpp') {
-    return callLlamaCpp(pool, provider.base_url, model, systemPrompt, userMessage, provider.type, timeoutMs, isUserFacing)
+    const decision = await callLlamaCpp(pool, provider.base_url, model, systemPrompt, userMessage, provider.type, timeoutMs, isUserFacing).catch(tagError)
+    if (!decision.provider_used) decision.provider_used = providerHint
+    if (!decision.model_used) decision.model_used = model
+    return decision
   }
-  return callOpenAI(
+  const decision = await callOpenAI(
     normalizeOpenAiBaseUrl(provider.base_url),
     openAiCompatibleApiKey,
     model,
@@ -538,8 +556,11 @@ async function callProvider(
     userMessage,
     provider.type,
     timeoutMs,
-    isUserFacing
-  )
+    isUserFacing,
+  ).catch(tagError)
+  if (!decision.provider_used) decision.provider_used = providerHint
+  if (!decision.model_used) decision.model_used = model
+  return decision
 }
 
 async function callLlamaCpp(
