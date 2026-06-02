@@ -308,6 +308,12 @@ export async function fetchPrimeSession(id: string): Promise<PrimeSession> {
   return res.json() as Promise<PrimeSession>
 }
 
+export async function abortPrimeSession(id: string): Promise<{ aborted: boolean; signal_sent: boolean }> {
+  const res = await fetch(`${API_BASE}/prime-agent/sessions/${id}/abort`, { method: 'POST' })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json() as Promise<{ aborted: boolean; signal_sent: boolean }>
+}
+
 export async function fetchPrimeModules(): Promise<PrimeModuleConfig[]> {
   const res = await fetch(`${API_BASE}/prime-agent/modules`)
   if (!res.ok) throw new Error(`HTTP ${res.status}`)

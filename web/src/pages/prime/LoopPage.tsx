@@ -1,6 +1,6 @@
-import { useMemo, useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { fetchPrimeLoopSessions } from '../../api'
+import { useMemo, useState, useCallback } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { abortPrimeSession, fetchPrimeLoopSessions } from '../../api'
 import type { PrimeSession } from '../../types'
 import { useLoopStatus } from '../../hooks/useLoopStatus'
 
@@ -227,8 +227,22 @@ function LiveSessionBanner({ session, label, elapsedSeconds }: {
   elapsedSeconds: number | null
 }) {
   const [open, setOpen] = useState(false)
+  const [killing, setKilling] = useState(false)
+  const qc = useQueryClient()
   const elapsed = elapsedSeconds ?? Math.floor((Date.now() - new Date(session.started_at).getTime()) / 1000)
   const elapsedStr = `${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, '0')}`
+
+  const kill = useCallback(async (e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (killing) return
+    setKilling(true)
+    try {
+      await abortPrimeSession(session.id)
+      await qc.invalidateQueries({ queryKey: ['prime-loop-status-sessions'] })
+      await qc.invalidateQueries({ queryKey: ['prime-loop-sessions'] })
+    } catch { /* chip will update on next poll */ }
+    finally { setKilling(false) }
+  }, [session.id, killing, qc])
 
   return (
     <div className="rounded-xl border border-indigo-400/40 bg-indigo-400/6">
@@ -247,7 +261,16 @@ function LiveSessionBanner({ session, label, elapsedSeconds }: {
           <span className="font-mono text-[10px] text-indigo-300/50">{session.last_step}</span>
         )}
         <span className="ml-auto font-mono tabular-nums text-indigo-300/60">{elapsedStr}</span>
-        <span className="text-indigo-300/40 ml-1">{open ? '▲' : '▼'}</span>
+        <button
+          type="button"
+          onClick={kill}
+          disabled={killing}
+          title="Kill this session"
+          className="ml-2 rounded px-1.5 py-0.5 text-[11px] font-semibold text-indigo-300/60 hover:text-rose-400 hover:bg-rose-400/10 transition disabled:opacity-40"
+        >
+          {killing ? '…' : 'Kill'}
+        </button>
+        <span className="text-indigo-300/40">{open ? '▲' : '▼'}</span>
       </button>
       {open && (
         <div className="border-t border-indigo-400/20 px-4 pb-3">

@@ -208,7 +208,7 @@ export interface PrimeDecision {
 }
 
 export interface LlmRouter {
-  decide(context: PrimeContext): Promise<PrimeDecision>
+  decide(context: PrimeContext, signal?: AbortSignal): Promise<PrimeDecision>
 }
 
 export function validatePrimeDecision(value: unknown, options?: { isUserFacing?: boolean }): PrimeDecision {
@@ -456,7 +456,7 @@ export async function buildPrimeTriggerMessage(context: PrimeContext, pool: pg.P
 
 export function createConfiguredLlmRouter(pool: pg.Pool): LlmRouter {
   return {
-    async decide(context: PrimeContext): Promise<PrimeDecision> {
+    async decide(context: PrimeContext, signal?: AbortSignal): Promise<PrimeDecision> {
       const config = await getPrimeConfig(pool)
 
       // Use model_preferences (with auto-migration from legacy provider_routing)
@@ -473,8 +473,9 @@ export function createConfiguredLlmRouter(pool: pg.Pool): LlmRouter {
       let lastError: Error = new Error('no providers tried')
 
       for (const route of resolvedRoutes) {
+        if (signal?.aborted) throw new Error('Session aborted by operator')
         try {
-          return await callProvider(pool, route, context)
+          return await callProvider(pool, route, context, signal)
         } catch (err) {
           lastError = err instanceof Error ? err : new Error(String(err))
         }
@@ -503,6 +504,7 @@ async function callProvider(
   pool: pg.Pool,
   route: PrimeConfigRoute,
   context: PrimeContext,
+  signal?: AbortSignal,
 ): Promise<PrimeDecision> {
   const { rows } = await pool.query(
     'SELECT type, base_url, model, timeout_ms FROM providers WHERE id = $1',
@@ -537,13 +539,13 @@ async function callProvider(
   }
 
   if (provider.type === 'anthropic') {
-    const decision = await callAnthropic(apiKey ?? '', model, systemPrompt, userMessage, provider.type, timeoutMs, isUserFacing).catch(tagError)
+    const decision = await callAnthropic(apiKey ?? '', model, systemPrompt, userMessage, provider.type, timeoutMs, isUserFacing, signal).catch(tagError)
     if (!decision.provider_used) decision.provider_used = provider.type
     if (!decision.model_used) decision.model_used = model
     return decision
   }
   if (provider.type === 'llamacpp') {
-    const decision = await callLlamaCpp(pool, provider.base_url, model, systemPrompt, userMessage, provider.type, timeoutMs, isUserFacing).catch(tagError)
+    const decision = await callLlamaCpp(pool, provider.base_url, model, systemPrompt, userMessage, provider.type, timeoutMs, isUserFacing, signal).catch(tagError)
     if (!decision.provider_used) decision.provider_used = providerHint
     if (!decision.model_used) decision.model_used = model
     return decision
@@ -557,6 +559,7 @@ async function callProvider(
     provider.type,
     timeoutMs,
     isUserFacing,
+    signal,
   ).catch(tagError)
   if (!decision.provider_used) decision.provider_used = providerHint
   if (!decision.model_used) decision.model_used = model
@@ -572,11 +575,13 @@ async function callLlamaCpp(
   providerType: string,
   timeoutMs: number,
   isUserFacing: boolean,
+  signal?: AbortSignal,
 ): Promise<PrimeDecision> {
   const templates = await loadPrimeWorkspaceTemplates(pool)
   const response = await fetchWithTimeout(`${baseURL.trim().replace(/\/+$/, '')}/completion`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
+    externalSignal: signal,
     body: JSON.stringify({
       model,
       prompt: buildCompactLlamaCppPrompt(templates.templates.llamacpp, systemPrompt, userMessage),
@@ -697,6 +702,7 @@ async function callAnthropic(
   providerType: string,
   timeoutMs: number,
   isUserFacing: boolean,
+  signal?: AbortSignal,
 ): Promise<PrimeDecision> {
   const client = new Anthropic({ apiKey, timeout: timeoutMs })
   const response = await withProviderTimeout(client.messages.create({
@@ -704,7 +710,7 @@ async function callAnthropic(
     max_tokens: 1024,
     system: systemPrompt,
     messages: [{ role: 'user', content: userMessage }],
-  }), timeoutMs)
+  }, { signal }), timeoutMs)
 
   const text = response.content.find((b) => b.type === 'text')?.text ?? ''
   const tokenCount = (response.usage?.input_tokens ?? 0) + (response.usage?.output_tokens ?? 0)
@@ -724,6 +730,7 @@ async function callOpenAI(
   providerType: string,
   timeoutMs: number,
   isUserFacing: boolean,
+  signal?: AbortSignal,
 ): Promise<PrimeDecision> {
   const client = new OpenAI({ apiKey: apiKey ?? undefined, baseURL: baseURL || undefined, timeout: timeoutMs })
   const response = await withProviderTimeout(client.chat.completions.create({
@@ -758,7 +765,7 @@ async function callOpenAI(
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userMessage },
     ],
-  }), timeoutMs)
+  }, { signal }), timeoutMs)
 
   const text = response.choices[0]?.message?.content ?? ''
   const tokenCount = response.usage?.total_tokens ?? 0
@@ -784,17 +791,21 @@ async function withProviderTimeout<T>(operation: Promise<T>, timeoutMs: number):
   }
 }
 
-async function fetchWithTimeout(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
+async function fetchWithTimeout(url: string, init: RequestInit & { externalSignal?: AbortSignal }, timeoutMs: number): Promise<Response> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
+  // Also abort if the external session signal fires (operator kill)
+  const { externalSignal, ...fetchInit } = init
+  externalSignal?.addEventListener('abort', () => controller.abort())
 
   try {
     return await fetch(url, {
-      ...init,
+      ...fetchInit,
       signal: controller.signal,
     })
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') {
+      if (externalSignal?.aborted) throw new Error('Session aborted by operator')
       throw new Error(`prime-agent: provider timed out after ${timeoutMs}ms`)
     }
     throw error

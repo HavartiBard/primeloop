@@ -36,6 +36,16 @@ export interface PrimeEventHandleResult {
 
 const STALE_DUPLICATE_MESSAGE_SESSION_MS = 5 * 60 * 1000
 
+// Per-session AbortControllers — lets the abort API cancel in-flight LLM calls.
+const _sessionAbortControllers = new Map<string, AbortController>()
+
+export function abortPrimeSession(sessionId: string): boolean {
+  const controller = _sessionAbortControllers.get(sessionId)
+  if (!controller) return false
+  controller.abort()
+  return true
+}
+
 async function updateLastStep(pool: pg.Pool, sessionId: string, step: string): Promise<void> {
   await pool.query(
     `UPDATE prime_agent_sessions SET last_step = $2 WHERE id = $1`,
@@ -204,12 +214,29 @@ export async function handlePrimeEvent(
     ...triggerMetadata,
   })
 
+  // Per-session AbortController — allows the abort API to cancel the LLM call.
+  const abortController = new AbortController()
+  _sessionAbortControllers.set(session.id, abortController)
+
+  // Inject abort signal into the router so LLM calls can be cancelled.
+  const depsWithSignal: PrimeEventLoopDeps = {
+    ...deps,
+    router: {
+      ...deps.router,
+      decide: (ctx) => deps.router.decide(ctx, abortController.signal),
+    },
+  }
+
   // Hard cap: a session must complete within 3 minutes. This prevents a hung
   // LLM call from leaving a session stuck as 'running' indefinitely.
   const SESSION_TIMEOUT_MS = 3 * 60 * 1000
-  const sessionTimeoutPromise = new Promise<never>((_, reject) =>
-    setTimeout(() => reject(new Error(`Session timed out after ${SESSION_TIMEOUT_MS / 1000}s`)), SESSION_TIMEOUT_MS)
-  )
+  const sessionTimeoutPromise = new Promise<never>((_, reject) => {
+    const t = setTimeout(() => reject(new Error(`Session timed out after ${SESSION_TIMEOUT_MS / 1000}s`)), SESSION_TIMEOUT_MS)
+    abortController.signal.addEventListener('abort', () => {
+      clearTimeout(t)
+      reject(new Error('Session aborted by operator'))
+    })
+  })
 
   try {
     await Promise.race([
@@ -219,11 +246,11 @@ export async function handlePrimeEvent(
           const stageShadowModules = shadowModules.filter((entry) => entry.module.stage === stage)
 
           for (const configured of stageActiveModules) {
-            await runConfiguredModule(pool, deps, state, configured, 'active')
+            await runConfiguredModule(pool, depsWithSignal, state, configured, 'active')
           }
 
           for (const configured of stageShadowModules) {
-            await runConfiguredModule(pool, deps, state, configured, 'shadow')
+            await runConfiguredModule(pool, depsWithSignal, state, configured, 'shadow')
           }
         }
       })(),
@@ -282,6 +309,7 @@ export async function handlePrimeEvent(
       })
     }
 
+    _sessionAbortControllers.delete(session.id)
     await updateLastStep(pool, session.id, 'completed')
     const completed = await completePrimeSession(pool, session.id, {
       reasoning_summary: decision.reasoning,
@@ -332,6 +360,7 @@ export async function handlePrimeEvent(
       actions,
     }
   } catch (error) {
+    _sessionAbortControllers.delete(session.id)
     await savePrimeSessionModuleRuns(pool, session.id, state.moduleRuns)
     await updateLastStep(pool, session.id, 'failed')
     const message = error instanceof Error ? error.message : String(error)

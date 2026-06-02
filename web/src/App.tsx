@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, useCallback } from 'react'
 import { useQuery, QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ActivitySquare, Bot, BookOpen, CalendarClock, CircuitBoard, MessageSquare, PuzzleIcon, Server, Settings as SettingsIcon, Sliders } from 'lucide-react'
 import { Sidebar } from './components/Sidebar'
@@ -15,7 +15,8 @@ import { LoopPage } from './pages/prime/LoopPage'
 import { useApprovals } from './hooks/useApprovals'
 import { useSetupStatus } from './hooks/useSetupStatus.js'
 import { Setup } from './pages/Setup.js'
-import { fetchPrimeProfile } from './api'
+import { abortPrimeSession, fetchPrimeProfile } from './api'
+import { useQueryClient } from '@tanstack/react-query'
 import { useLoopStatus } from './hooks/useLoopStatus'
 
 const queryClient = new QueryClient()
@@ -43,7 +44,20 @@ const PRIME_NAV: NavItem[] = [
 const ALL_NAV = [...NAV, ...PRIME_NAV]
 
 function LoopChip({ status }: { status: ReturnType<typeof useLoopStatus> }) {
-  const { phase, label, elapsedSeconds, secondsLeft } = status
+  const { phase, label, elapsedSeconds, secondsLeft, currentSession } = status
+  const [killing, setKilling] = useState(false)
+  const qc = useQueryClient()
+
+  const kill = useCallback(async (e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (!currentSession || killing) return
+    setKilling(true)
+    try {
+      await abortPrimeSession(currentSession.id)
+      await qc.invalidateQueries({ queryKey: ['prime-loop-status-sessions'] })
+    } catch { /* swallow — chip will update on next poll */ }
+    finally { setKilling(false) }
+  }, [currentSession, killing, qc])
 
   const dot =
     phase === 'running' ? (
@@ -77,6 +91,17 @@ function LoopChip({ status }: { status: ReturnType<typeof useLoopStatus> }) {
           ? `${Math.floor(elapsedSeconds / 60)}:${String(elapsedSeconds % 60).padStart(2, '0')}`
           : label}
       </span>
+      {phase === 'running' && currentSession && (
+        <button
+          type="button"
+          onClick={kill}
+          disabled={killing}
+          title="Kill this session"
+          className="ml-1 rounded px-1 text-[11px] text-indigo-300/60 hover:text-rose-400 hover:bg-rose-400/10 transition disabled:opacity-40"
+        >
+          {killing ? '…' : '✕'}
+        </button>
+      )}
     </div>
   )
 }
