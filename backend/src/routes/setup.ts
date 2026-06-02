@@ -604,7 +604,9 @@ export function createSetupRouter({
 
       await pool.query(
         `UPDATE prime_agent_config
-         SET provider_routing=$1, cost_controls=$2, enabled=$3, setup_complete=true,
+         SET provider_routing=$1, cost_controls=$2,
+             enabled = CASE WHEN $3 THEN true ELSE enabled END,
+             setup_complete=true,
              cron_fast_interval_seconds = $4, cron_slow_interval_seconds = $5, debounce_window_ms = $6,
              model_preferences = CASE WHEN $7::jsonb = '{}'::jsonb THEN model_preferences ELSE $7::jsonb END,
              updated_at = now()
