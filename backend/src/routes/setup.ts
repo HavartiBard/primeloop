@@ -386,7 +386,12 @@ export function createSetupRouter({
     }
 
     if (!Array.isArray(body?.providers) || !body?.routing || !body?.rules || (!body.profile && !body.persona)) {
-      return res.status(400).json({ error: 'providers, routing, rules, and (profile or persona) are required' })
+      const missingFields: string[] = []
+      if (!Array.isArray(body?.providers) || (body?.providers as unknown[] | undefined)?.length === 0) missingFields.push('providers (at least one must be active)')
+      if (!body?.routing) missingFields.push('routing')
+      if (!body?.rules) missingFields.push('rules')
+      if (!body?.profile && !body?.persona) missingFields.push('profile / persona')
+      return res.status(400).json({ error: `Missing required fields: ${missingFields.join(', ')}` })
     }
 
     try {
@@ -455,8 +460,10 @@ export function createSetupRouter({
         ? validateFunctionAssignments(functionAssignments as PrimeFunctionAssignment[])
         : null
       if (body.launch === true && assignmentReadiness && !assignmentReadiness.ready) {
+        const reasons = assignmentReadiness.blocking_reasons ?? []
+        const detail = reasons.length > 0 ? `: ${reasons.join('; ')}` : ''
         return res.status(400).json({
-          error: 'Prime function assignments are not launch-ready',
+          error: `Prime function assignments are not launch-ready${detail}`,
           launch_readiness: assignmentReadiness,
         })
       }
