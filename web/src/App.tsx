@@ -36,9 +36,13 @@ function useLoopCountdown() {
 
   const nextTickMs = useMemo(() => {
     if (!sessions) return null
-    const last = sessions.find((s) => s.trigger_type === 'cron_fast')
-    if (!last?.completed_at) return null
-    return new Date(last.completed_at).getTime() + intervalMs
+    const cronSessions = sessions.filter((s) => s.trigger_type === 'cron_fast')
+    // Prefer a completed session for accurate baseline; fall back to started_at
+    // of the most recent one (handles in-flight or stuck sessions gracefully)
+    const last = cronSessions.find((s) => s.completed_at) ?? cronSessions[0]
+    if (!last) return null
+    const base = last.completed_at ?? last.started_at
+    return new Date(base).getTime() + intervalMs
   }, [sessions, intervalMs])
 
   const [secondsLeft, setSecondsLeft] = useState<number | null>(null)
