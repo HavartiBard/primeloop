@@ -460,6 +460,50 @@ function stepProgress(state: WizardState, step: Step): number {
   return clamp01(score)
 }
 
+/** Returns a short blocking reason for the current step, or null if OK to advance. */
+function getStepBlocker(state: WizardState, step: Step): string | null {
+  if (step === 1) {
+    if (!state.providers.some((p) => p.active)) return 'Add at least one provider to continue'
+    const active = state.providers.filter((p) => p.active)
+    const incomplete = active.filter((p) => !p.model?.trim())
+    if (incomplete.length > 0) return `Select a model for: ${incomplete.map((p) => p.name).join(', ')}`
+  }
+  if (step === 2) {
+    const missing = (['planning', 'dispatching', 'discussion'] as const).filter(
+      (key) => !state.routing[key].some((e) => e.provider_name.trim() && e.model.trim())
+    )
+    if (missing.length > 0) return `Configure routing for: ${missing.join(', ')}`
+  }
+  if (step === 3) {
+    if (!state.profile.name.trim()) return 'Enter a name for the agent'
+    if (!state.profile.soul.identity.trim()) return 'Fill in the Identity section'
+  }
+  if (step === 4) {
+    if (state.rules.presets.length === 0 && !state.rules.custom.trim())
+      return 'Select at least one standing rule, or enter a custom rule'
+  }
+  return null
+}
+
+/** Returns issues per section for the launch review screen. */
+function getLaunchIssues(state: WizardState): Record<string, string> {
+  const issues: Record<string, string> = {}
+  if (!state.providers.some((p) => p.active)) {
+    issues.providers = 'No active providers'
+  } else {
+    const missing = state.providers.filter((p) => p.active && !p.model?.trim())
+    if (missing.length > 0) issues.providers = `Missing model: ${missing.map((p) => p.name).join(', ')}`
+  }
+  const missingRoutes = (['planning', 'dispatching', 'discussion'] as const).filter(
+    (key) => !state.routing[key].some((e) => e.provider_name.trim() && e.model.trim())
+  )
+  if (missingRoutes.length > 0) issues.routing = `Not configured: ${missingRoutes.join(', ')}`
+  if (!state.profile.name.trim()) issues.personality = 'Agent name is required'
+  else if (!state.profile.soul.identity.trim()) issues.personality = 'Identity section is empty'
+  if (state.rules.presets.length === 0 && !state.rules.custom.trim()) issues.rules = 'No rules configured'
+  return issues
+}
+
 const SOUL_SECTION_KEYS: (keyof ProfileSectionSet)[] = ['identity', 'voice_tone', 'decision_style']
 
 function ProviderLogo({ draft }: { draft: ProviderDraft }) {
@@ -1651,71 +1695,79 @@ function StepIntro() {
 
 
 
-function StepLaunch({ state, onSubmit, submitting, error, onGoToStep }: {
+function SectionCard({ label, issue, onEdit, children }: {
+  label: string
+  issue?: string
+  onEdit: () => void
+  children: React.ReactNode
+}) {
+  const hasIssue = Boolean(issue)
+  return (
+    <div className={`rounded-lg border p-3 ${hasIssue ? 'border-amber-400/50 bg-amber-400/5' : 'border-[var(--border-soft)] bg-[var(--panel-subtle)]'}`}>
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-medium text-[var(--text)]">{label}</span>
+          {hasIssue && <span className="text-[10px] font-semibold text-amber-400 uppercase tracking-wide">Action needed</span>}
+        </div>
+        <button type="button" onClick={onEdit} className="text-xs text-blue-400 hover:underline">Edit</button>
+      </div>
+      {children}
+    </div>
+  )
+}
+
+function StepLaunch({ state, onSubmit, submitting, error, sectionIssues, onGoToStep }: {
   state: WizardState
   onSubmit: (launch: boolean) => void
   submitting: boolean
   error: string | null
+  sectionIssues: Record<string, string>
   onGoToStep: (step: Step) => void
 }) {
   const activeProviders = state.providers.filter((p) => p.active)
+  const hasIssues = Object.keys(sectionIssues).length > 0
 
   return (
     <div className="space-y-4">
       {/* Providers summary */}
-      <div className="rounded-lg border border-[var(--border-soft)] bg-[var(--panel-subtle)] p-3">
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-xs font-medium text-[var(--text)]">Providers</span>
-          <button type="button" onClick={() => onGoToStep(1)} className="text-xs text-blue-400 hover:underline">Edit</button>
-        </div>
+      <SectionCard label="Providers" issue={sectionIssues.providers} onEdit={() => onGoToStep(1)}>
         {activeProviders.length === 0
           ? <p className="text-xs text-[var(--s-att-tx)]">No providers configured</p>
           : activeProviders.map((p) => (
               <div key={p.name} className="text-xs text-[var(--muted)] font-mono">{p.name} ({p.type}) · {p.model || '—'}</div>
             ))
         }
-      </div>
+      </SectionCard>
 
       {/* Routing summary */}
-      <div className="rounded-lg border border-[var(--border-soft)] bg-[var(--panel-subtle)] p-3">
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-xs font-medium text-[var(--text)]">Routing</span>
-          <button type="button" onClick={() => onGoToStep(2)} className="text-xs text-blue-400 hover:underline">Edit</button>
-        </div>
+      <SectionCard label="Routing" issue={sectionIssues.routing} onEdit={() => onGoToStep(2)}>
         {(['planning', 'dispatching', 'discussion'] as const).map((key) => {
           const entries = state.routing[key]
-          if (entries.length === 0) return null
+          const configured = entries.some((e) => e.provider_name.trim() && e.model.trim())
           return (
-            <div key={key} className="text-xs text-[var(--muted)]">
-              <span className="capitalize">{key}</span>: {entries.map((e) => `${e.provider_name} / ${e.model}`).join(' → ')}
+            <div key={key} className={`text-xs ${configured ? 'text-[var(--muted)]' : 'text-amber-400'}`}>
+              <span className="capitalize">{key}</span>:{' '}
+              {configured ? entries.map((e) => `${e.provider_name} / ${e.model}`).join(' → ') : 'not configured'}
             </div>
           )
         })}
         {state.costControls.monthlyTokenBudget > 0 && (
           <div className="text-xs text-[var(--muted)]">Budget: {state.costControls.monthlyTokenBudget.toLocaleString()} tokens/month</div>
         )}
-      </div>
+      </SectionCard>
 
       {/* Personality summary */}
-      <div className="rounded-lg border border-[var(--border-soft)] bg-[var(--panel-subtle)] p-3">
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-xs font-medium text-[var(--text)]">Personality</span>
-          <button type="button" onClick={() => onGoToStep(3)} className="text-xs text-blue-400 hover:underline">Edit</button>
-        </div>
+      <SectionCard label="Personality" issue={sectionIssues.personality} onEdit={() => onGoToStep(3)}>
         <div className="text-xs text-[var(--muted)] space-y-0.5">
-          <div>Name: <span className="text-[var(--text)]">{state.profile.name || '—'}</span></div>
-          <div>Voice & Tone: <span className="text-[var(--text)]">{(state.profile.soul.voice_tone?.slice(0, 80) || '—')}{state.profile.soul.voice_tone?.length > 80 ? '…' : ''}</span></div>
+          <div>Name: <span className={state.profile.name ? 'text-[var(--text)]' : 'text-amber-400'}>{state.profile.name || 'not set'}</span></div>
+          <div>Identity: <span className={state.profile.soul.identity.trim() ? 'text-[var(--text)]' : 'text-amber-400'}>{state.profile.soul.identity.trim() ? `${state.profile.soul.identity.slice(0, 60)}${state.profile.soul.identity.length > 60 ? '…' : ''}` : 'empty'}</span></div>
         </div>
-      </div>
+      </SectionCard>
 
       {/* Rules summary */}
-      <div className="rounded-lg border border-[var(--border-soft)] bg-[var(--panel-subtle)] p-3">
-        <div className="flex items-center justify-between mb-2">
-          <span className="text-xs font-medium text-[var(--text)]">Standing Rules</span>
-          <button type="button" onClick={() => onGoToStep(4)} className="text-xs text-blue-400 hover:underline">Edit</button>
-        </div>
+      <SectionCard label="Standing Rules" issue={sectionIssues.rules} onEdit={() => onGoToStep(4)}>
         {state.rules.presets.length === 0 && !state.rules.custom
-          ? <p className="text-xs text-[var(--muted)]">None configured</p>
+          ? <p className="text-xs text-amber-400">No rules configured — select at least one</p>
           : (
             <div className="text-xs text-[var(--muted)] space-y-0.5">
               {state.rules.presets.map((k) => {
@@ -1726,7 +1778,7 @@ function StepLaunch({ state, onSubmit, submitting, error, onGoToStep }: {
             </div>
           )
         }
-      </div>
+      </SectionCard>
 
       {/* Plugins summary */}
       <div className="rounded-lg border border-[var(--border-soft)] bg-[var(--panel-subtle)] p-3">
@@ -1775,8 +1827,19 @@ function StepLaunch({ state, onSubmit, submitting, error, onGoToStep }: {
         </div>
       )}
 
+      {hasIssues && (
+        <div className="rounded-lg border border-amber-400/30 bg-amber-400/8 px-3 py-2">
+          <p className="text-xs font-medium text-amber-300">Fix the highlighted sections before launching:</p>
+          <ul className="mt-1 space-y-0.5">
+            {Object.entries(sectionIssues).map(([section, msg]) => (
+              <li key={section} className="text-xs text-amber-400">• {msg}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
       <div className="flex gap-3">
-        <button onClick={() => onSubmit(true)} disabled={submitting} className={BTN_PRIMARY}>
+        <button onClick={() => onSubmit(true)} disabled={submitting || hasIssues} className={BTN_PRIMARY}>
           {submitting ? 'Launching…' : 'Launch Prime Agent'}
         </button>
         <button onClick={() => onSubmit(false)} disabled={submitting} className={BTN_SECONDARY}>
@@ -1903,7 +1966,8 @@ export function Setup({ onSkip }: { onSkip?: () => void }) {
   const progress = (STEPS.map((_, index) => stepProgress(state, index as Step)))
   const progressSteps = STEPS.slice(1)
 
-  const canAdvance = step === 1 ? state.providers.some((p) => p.active) : true
+  const stepBlocker = getStepBlocker(state, step)
+  const canAdvance = !stepBlocker
 
   async function handleSubmit(launch: boolean) {
     setSubmitting(true)
@@ -2080,6 +2144,7 @@ export function Setup({ onSkip }: { onSkip?: () => void }) {
               onSubmit={handleSubmit}
               submitting={submitting}
               error={submitError}
+              sectionIssues={getLaunchIssues(state)}
               onGoToStep={(s) => setStep(s)}
             />
           )}
@@ -2109,14 +2174,19 @@ export function Setup({ onSkip }: { onSkip?: () => void }) {
               </button>
             )}
             {step < STEPS.length - 1 && (
-              <button
-                type="button"
-                onClick={() => setStep((s) => (s + 1) as Step)}
-                disabled={!canAdvance}
-                className={BTN_PRIMARY}
-              >
-                Next →
-              </button>
+              <div className="flex flex-col items-end gap-1">
+                {stepBlocker && (
+                  <p className="text-[11px] text-amber-400">{stepBlocker}</p>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setStep((s) => (s + 1) as Step)}
+                  disabled={!canAdvance}
+                  className={BTN_PRIMARY}
+                >
+                  Next →
+                </button>
+              </div>
             )}
           </div>
         </div>
