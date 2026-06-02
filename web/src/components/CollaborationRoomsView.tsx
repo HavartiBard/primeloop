@@ -1,8 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { fetchPrimeSessions, fetchThreadMessages, sendPrimeMessage } from '../api'
+import { Globe, Menu, Paperclip, TerminalSquare, Wand2 } from 'lucide-react'
+import { fetchPrimeSessions, fetchProviders, fetchSetupProviderModels, fetchThreadMessages, sendPrimeMessage } from '../api'
 import { BottomActionToolbar } from './agentCanvas/BottomActionToolbar'
-import type { AgentEvent, RegistryAgent, RuntimeAuditLoop, RuntimeDelegation, RuntimeThread, RuntimeWorkItem, ToolbarDraftAction } from '../types'
+import type { AgentEvent, Provider, RegistryAgent, RuntimeAuditLoop, RuntimeDelegation, RuntimeThread, RuntimeWorkItem, ToolbarDraftAction } from '../types'
 import { useToolbarActions } from '../hooks/useToolbarActions'
 import type { ChatDraft } from '../types/composer'
 type AgentHealth = {
@@ -365,9 +367,21 @@ export function CollaborationRoomsView({
   })
   const [followBottom, setFollowBottom] = useState(true)
   const [expandedArtifactIds, setExpandedArtifactIds] = useState<Record<string, boolean>>({})
+  const [showComposerMenu, setShowComposerMenu] = useState(false)
+  const [showCompanionPrompt, setShowCompanionPrompt] = useState(false)
+  const [showModelMenu, setShowModelMenu] = useState(false)
+  const [modelSearch, setModelSearch] = useState('')
+  const [providerModels, setProviderModels] = useState<Record<string, string[]>>({})
+  const [modelMenuPosition, setModelMenuPosition] = useState<{ top: number; left: number; width: number }>({ top: 0, left: 0, width: 260 })
+  const [composerToast, setComposerToast] = useState<string | null>(null)
   const chatScrollRef = useRef<HTMLDivElement | null>(null)
   const chatInputRef = useRef<HTMLInputElement | null>(null)
-  const displayStartRef = useRef<{ ts: number; roomId: string | null }>({ ts: 0, roomId: null })
+  const modelButtonRef = useRef<HTMLButtonElement | null>(null)
+  const modelMenuRef = useRef<HTMLDivElement | null>(null)
+  const companionPromptRef = useRef<HTMLInputElement | null>(null)
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const imageInputRef = useRef<HTMLInputElement | null>(null)
+  const displayStartRef = useRef<{ ts: 0 | number; roomId: string | null }>({ ts: 0, roomId: null })
   const lastMessageCountRef = useRef(0)
 
   const rooms = useMemo<RoomView[]>(() => {
@@ -421,7 +435,120 @@ export function CollaborationRoomsView({
       list = list.filter((r) => r.title.toLowerCase().includes(q) || r.lane.toLowerCase().includes(q))
     }
     return list
-  }, [rooms, filter, search])
+  }, [filter, rooms, search])
+
+  const { data: providers = [] } = useQuery<Provider[]>({
+    queryKey: ['providers'],
+    queryFn: fetchProviders,
+  })
+
+  useEffect(() => {
+    let cancelled = false
+    async function loadProviderModels() {
+      const next: Record<string, string[]> = {}
+      await Promise.all(providers.map(async (provider) => {
+        const configured = typeof provider.model === 'string' && provider.model.trim() ? [provider.model.trim()] : []
+        next[provider.id] = configured
+        try {
+          const result = await fetchSetupProviderModels({
+            type: provider.type,
+            base_url: provider.base_url,
+            ...(provider.api_key ? { api_key: provider.api_key } : {}),
+          })
+          if (Array.isArray(result.models) && result.models.length > 0) {
+            next[provider.id] = Array.from(new Set([...configured, ...result.models]))
+          }
+        } catch {
+          // fall back to configured provider.model only
+        }
+      }))
+      if (!cancelled) setProviderModels(next)
+    }
+    if (providers.length > 0) loadProviderModels()
+    return () => { cancelled = true }
+  }, [providers])
+
+  const availableModelOptions = useMemo(() => {
+    const opts = providers.flatMap((provider) => {
+      const models = providerModels[provider.id] ?? (provider.model ? [provider.model] : [])
+      return models.filter(Boolean).map((model) => ({
+        id: model,
+        label: model,
+        providerName: provider.name,
+        providerId: provider.id,
+      }))
+    })
+    const deduped = new Map<string, { id: string; label: string; providerName: string; providerId: string }>()
+    for (const option of opts) {
+      if (!deduped.has(option.id)) deduped.set(option.id, option)
+    }
+    return Array.from(deduped.values())
+  }, [providerModels, providers])
+
+  const filteredModelOptions = useMemo(() => {
+    const q = modelSearch.trim().toLowerCase()
+    if (!q) return availableModelOptions
+    return availableModelOptions.filter((option) => option.label.toLowerCase().includes(q) || option.providerName.toLowerCase().includes(q))
+  }, [availableModelOptions, modelSearch])
+
+  const currentModelLabel = useMemo(() => {
+    const found = availableModelOptions.find((option) => option.id === composerState.modelId)
+    if (!found) return 'Current model'
+    return found.label
+  }, [availableModelOptions, composerState.modelId])
+
+  useEffect(() => {
+    if (!composerState.modelId && availableModelOptions.length > 0) {
+      setComposerState((prev) => (prev.modelId ? prev : { ...prev, modelId: availableModelOptions[0].id }))
+    }
+  }, [availableModelOptions, composerState.modelId])
+
+  useEffect(() => {
+    if (!showModelMenu) setModelSearch('')
+  }, [showModelMenu])
+
+  useEffect(() => {
+    if (!showModelMenu) return
+    const updatePosition = () => {
+      const rect = modelButtonRef.current?.getBoundingClientRect()
+      if (!rect) return
+      const width = Math.max(260, rect.width + 120)
+      const estimatedHeight = 320
+      setModelMenuPosition({
+        top: Math.max(12, rect.top - estimatedHeight - 8),
+        left: Math.max(12, rect.right - width),
+        width,
+      })
+    }
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as Node
+      if (modelButtonRef.current?.contains(target) || modelMenuRef.current?.contains(target)) return
+      setShowModelMenu(false)
+    }
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setShowModelMenu(false)
+    }
+    updatePosition()
+    requestAnimationFrame(() => {
+      modelMenuRef.current?.animate(
+        [
+          { opacity: 0, transform: 'translateY(-6px) scale(0.98)' },
+          { opacity: 1, transform: 'translateY(0) scale(1)' },
+        ],
+        { duration: 140, easing: 'ease-out' },
+      )
+    })
+    window.addEventListener('resize', updatePosition)
+    window.addEventListener('scroll', updatePosition, true)
+    document.addEventListener('mousedown', handlePointerDown)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      window.removeEventListener('resize', updatePosition)
+      window.removeEventListener('scroll', updatePosition, true)
+      document.removeEventListener('mousedown', handlePointerDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [showModelMenu])
 
   const selectedRoom = filteredRooms.find((r) => r.id === selectedRoomId) ?? filteredRooms[0]
   const activeRoomId = selectedRoom?.id ?? null
@@ -700,6 +827,9 @@ export function CollaborationRoomsView({
         validationState: 'valid',
         sendState: 'idle',
       })
+      setShowCompanionPrompt(false)
+      setShowComposerMenu(false)
+      setShowModelMenu(false)
       setFollowBottom(true)
       setUnreadMessages(0)
       await Promise.all([
@@ -719,6 +849,41 @@ export function CollaborationRoomsView({
   function submitMessage() {
     if (!canSendMessage) return
     sendMessage.mutate()
+  }
+
+  function appendAttachments(files: FileList | null, type: 'file' | 'image') {
+    if (!files || files.length === 0) return
+    const next = Array.from(files).map((file, index) => ({
+      id: `${type}-${Date.now()}-${index}`,
+      name: file.name,
+      type,
+      mimeType: file.type || (type === 'image' ? 'image/*' : 'application/octet-stream'),
+      size: file.size,
+      uploadState: 'uploaded' as const,
+    }))
+    setComposerState((prev) => ({ ...prev, attachments: [...prev.attachments, ...next] }))
+  }
+
+  function removeAttachment(id: string) {
+    setComposerState((prev) => ({ ...prev, attachments: prev.attachments.filter((attachment) => attachment.id !== id) }))
+  }
+
+  function toggleCompanionPrompt() {
+    setShowComposerMenu(false)
+    setShowCompanionPrompt((current) => {
+      const next = !current
+      if (next) {
+        requestAnimationFrame(() => companionPromptRef.current?.focus())
+      } else {
+        setComposerState((prev) => ({ ...prev, companionPrompt: null }))
+      }
+      return next
+    })
+  }
+
+  function showComposerToastMessage(message: string) {
+    setComposerToast(message)
+    window.setTimeout(() => setComposerToast((current) => (current === message ? null : current)), 1400)
   }
 
   function selectWork(id: string) {
@@ -973,108 +1138,257 @@ export function CollaborationRoomsView({
               </div>
 
               {/* Chat input */}
-              <div className="flex shrink-0 items-center gap-2 border-t border-[var(--border-soft)] bg-[var(--panel)] px-4 py-3">
-                <input
-                  ref={chatInputRef}
-                  className="flex-1 rounded border border-[var(--border-soft)] bg-[var(--panel-subtle)] px-3 py-2 font-mono text-sm text-[var(--text)] outline-none placeholder:text-[var(--muted)] focus:border-[var(--sel-bd)]"
-                  placeholder="<prime>..."
-                  value={composerState.text}
-                  disabled={!activeRoomId || sendMessage.isPending}
-                  onChange={(e) => setComposerState(prev => ({ ...prev, text: e.target.value }))}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' && !e.shiftKey) {
-                      e.preventDefault()
-                      submitMessage()
-                    }
-                  }}
-                />
-                <button
-                  type="button"
-                  disabled={!canSendMessage}
-                  onClick={submitMessage}
-                  className="shrink-0 rounded border border-[var(--sel-bd)] bg-[var(--sel-bg)] px-4 py-2 font-mono text-xs uppercase tracking-wide text-blue-400 transition hover:bg-blue-500/20 disabled:cursor-not-allowed disabled:opacity-45"
-                >
-                  {sendMessage.isPending ? 'Sending…' : 'Send ↵'}
-                </button>
-                {/* Model selector */}
-                <select
-                  value={composerState.modelId || ''}
-                  onChange={(e) => setComposerState(prev => ({ ...prev, modelId: e.target.value || null }))}
-                  disabled={!activeRoomId || sendMessage.isPending}
-                  className="rounded border border-[var(--border-soft)] bg-[var(--panel-subtle)] px-2 py-1 font-mono text-xs text-[var(--text)] outline-none focus:border-[var(--sel-bd)]"
-                >
-                  <option value="">Select model…</option>
-                  <option value="claude-3-5-sonnet-20241022">Claude 3.5 Sonnet</option>
-                  <option value="claude-3-opus-20240229">Claude 3 Opus</option>
-                  <option value="gpt-4o">GPT-4o</option>
-                  <option value="gpt-4-turbo">GPT-4 Turbo</option>
-                </select>
-                {/* Mode toggle */}
-                <div className="flex items-center gap-1">
-                  <button
-                    type="button"
-                    onClick={() => setComposerState(prev => ({ ...prev, mode: 'planning' }))}
-                    disabled={!activeRoomId || sendMessage.isPending}
-                    className={`rounded px-2 py-1 font-mono text-[10px] uppercase tracking-wide transition ${
-                      composerState.mode === 'planning'
-                        ? 'border border-[var(--sel-bd)] bg-[var(--sel-bg)] text-blue-400'
-                        : 'border border-[var(--border-soft)] bg-[var(--panel-subtle)] text-[var(--muted)] hover:bg-[var(--panel-strong)]'
-                    }`}
-                  >
-                    Planning
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setComposerState(prev => ({ ...prev, mode: 'agent' }))}
-                    disabled={!activeRoomId || sendMessage.isPending}
-                    className={`rounded px-2 py-1 font-mono text-[10px] uppercase tracking-wide transition ${
-                      composerState.mode === 'agent'
-                        ? 'border border-[var(--sel-bd)] bg-[var(--sel-bg)] text-blue-400'
-                        : 'border border-[var(--border-soft)] bg-[var(--panel-subtle)] text-[var(--muted)] hover:bg-[var(--panel-strong)]'
-                    }`}
-                  >
-                    Agent
-                  </button>
+              <div className="shrink-0 border-t border-[var(--border-soft)] bg-[var(--panel)] px-4 py-3">
+                <div className="rounded-xl border border-[var(--border-soft)] bg-[var(--panel-subtle)] px-3 py-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,0.03)]">
+                  <div className="relative">
+                    <input
+                      ref={chatInputRef}
+                      className="w-full bg-transparent px-0 py-1 font-mono text-sm text-[var(--text)] outline-none placeholder:text-[var(--muted)]"
+                      placeholder="Message this room..."
+                      value={composerState.text}
+                      disabled={!activeRoomId || sendMessage.isPending}
+                      onChange={(e) => setComposerState(prev => ({ ...prev, text: e.target.value }))}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault()
+                          submitMessage()
+                        }
+                      }}
+                    />
+                    <div className={`absolute right-0 top-0 z-10 origin-top-right transition-all duration-200 ${composerState.text.trim().length > 0 && !showModelMenu ? 'translate-y-[-2px] scale-95 opacity-28 hover:opacity-100' : 'translate-y-0 scale-100 opacity-55 hover:opacity-100'}`}>
+                      <button
+                        ref={modelButtonRef}
+                        type="button"
+                        onClick={() => setShowModelMenu((current) => !current)}
+                        disabled={!activeRoomId || sendMessage.isPending}
+                        className="inline-flex max-w-[260px] items-center gap-1 rounded border border-transparent bg-transparent px-1.5 py-0.5 font-mono text-[11px] font-medium text-[color:color-mix(in_srgb,var(--text)_72%,transparent)] transition duration-200 hover:border-[var(--border-soft)] hover:bg-white/5 hover:text-white disabled:cursor-not-allowed disabled:opacity-45"
+                        title="Switch model"
+                      >
+                        <span className="truncate">{currentModelLabel}</span>
+                        <span className={`text-[10px] opacity-60 transition ${showModelMenu ? 'rotate-180' : ''}`}>⌃</span>
+                      </button>
+                      {showModelMenu && activeRoomId && !sendMessage.isPending && createPortal(
+                        <div
+                          ref={modelMenuRef}
+                          className="fixed z-[80] overflow-hidden rounded-xl border border-[var(--border-soft)] bg-[color:color-mix(in_srgb,var(--panel)_90%,black)] p-1.5 shadow-[0_18px_48px_rgba(0,0,0,0.42)] backdrop-blur-sm"
+                          style={{ top: modelMenuPosition.top, left: modelMenuPosition.left, width: modelMenuPosition.width }}
+                        >
+                          <div className="mb-1.5 flex items-center gap-2">
+                            <input
+                              value={modelSearch}
+                              onChange={(e) => setModelSearch(e.target.value)}
+                              placeholder="Search models..."
+                              className="w-full rounded-md border border-[var(--border-soft)] bg-[var(--bg)] px-2 py-1.5 font-mono text-[11px] text-[var(--text)] outline-none placeholder:text-[var(--muted)] focus:border-[var(--sel-bd)]"
+                            />
+                          </div>
+                          <div className="max-h-64 overflow-y-auto">
+                            {filteredModelOptions.length > 0 ? filteredModelOptions.map((option) => (
+                              <button
+                                key={`${option.providerId}:${option.id}`}
+                                type="button"
+                                onClick={() => {
+                                  setComposerState((prev) => ({ ...prev, modelId: option.id }))
+                                  setShowModelMenu(false)
+                                }}
+                                className={`flex w-full items-center justify-between rounded-md px-2.5 py-2 text-left font-mono text-[11px] transition hover:bg-white/6 ${composerState.modelId === option.id ? 'bg-sky-400/10 text-sky-100 ring-1 ring-sky-400/25' : 'text-[color:color-mix(in_srgb,var(--text)_94%,white_10%)]'}`}
+                              >
+                                <span className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_132px] items-center gap-x-3">
+                                  <span className="truncate pr-1 text-[color:color-mix(in_srgb,var(--text)_96%,white_12%)]">{option.label}</span>
+                                  <span className="truncate pl-2 text-right text-[color:color-mix(in_srgb,var(--text)_80%,white_12%)]">{option.providerName}</span>
+                                </span>
+                                {composerState.modelId === option.id && <span className="ml-3 text-sky-200">✓</span>}
+                              </button>
+                            )) : (
+                              <div className="px-2.5 py-3 font-mono text-[11px] text-[var(--muted)]">No matching configured models.</div>
+                            )}
+                          </div>
+                        </div>,
+                        document.body,
+                      )}
+                    </div>
+                  </div>
+
+                  {(showCompanionPrompt || composerState.companionPrompt !== null) && (
+                    <div className="mt-2 border-t border-[var(--border-soft)] pt-2">
+                      <input
+                        ref={companionPromptRef}
+                        value={composerState.companionPrompt ?? ''}
+                        onChange={(e) => setComposerState((prev) => ({ ...prev, companionPrompt: e.target.value || null }))}
+                        placeholder="Companion prompt…"
+                        disabled={!activeRoomId || sendMessage.isPending}
+                        className="w-full rounded-lg border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-2 font-mono text-[11px] text-[var(--text)] outline-none placeholder:text-[var(--muted)] focus:border-[var(--sel-bd)]"
+                      />
+                    </div>
+                  )}
+
+                  {composerState.attachments.length > 0 && (
+                    <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                      {composerState.attachments.map((attachment) => (
+                        <span
+                          key={attachment.id}
+                          className="inline-flex items-center gap-1 rounded-full border border-[var(--border-soft)] bg-[var(--panel)] px-2 py-1 font-mono text-[10px] text-[var(--text)]"
+                        >
+                          <span className="truncate max-w-[140px]">{attachment.name}</span>
+                          <button
+                            type="button"
+                            onClick={() => removeAttachment(attachment.id)}
+                            className="text-[var(--muted)] transition hover:text-[var(--text)]"
+                            aria-label={`Remove ${attachment.name}`}
+                          >
+                            ×
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="mt-2 flex flex-wrap items-center gap-1 pt-1.5">
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      multiple
+                      className="hidden"
+                      onChange={(e) => {
+                        appendAttachments(e.target.files, 'file')
+                        e.currentTarget.value = ''
+                      }}
+                    />
+                    <input
+                      ref={imageInputRef}
+                      type="file"
+                      accept="image/*"
+                      multiple
+                      className="hidden"
+                      onChange={(e) => {
+                        appendAttachments(e.target.files, 'image')
+                        e.currentTarget.value = ''
+                      }}
+                    />
+                    <div className="relative">
+                      <button
+                        type="button"
+                        onClick={() => setShowComposerMenu((current) => !current)}
+                        disabled={!activeRoomId || sendMessage.isPending}
+                        className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-[var(--border-soft)] bg-[var(--panel)] text-[var(--muted)] transition hover:bg-[var(--panel-strong)] hover:text-[var(--text)] disabled:cursor-not-allowed disabled:opacity-45"
+                        aria-label="Composer actions"
+                        title="Composer actions"
+                      >
+                        <Menu size={14} />
+                      </button>
+                      {showComposerMenu && activeRoomId && !sendMessage.isPending && (
+                        <div className="absolute bottom-9 left-0 z-20 min-w-[170px] rounded-xl border border-[var(--border-soft)] bg-[var(--panel)] p-1 shadow-lg shadow-black/20">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setShowComposerMenu(false)
+                              fileInputRef.current?.click()
+                            }}
+                            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left font-mono text-[11px] text-[var(--text)] transition hover:bg-[var(--panel-strong)]"
+                          >
+                            <Paperclip size={14} />
+                            <span>Attach files</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setShowComposerMenu(false)
+                              imageInputRef.current?.click()
+                            }}
+                            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left font-mono text-[11px] text-[var(--text)] transition hover:bg-[var(--panel-strong)]"
+                          >
+                            <Paperclip size={14} />
+                            <span>Attach image</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={toggleCompanionPrompt}
+                            className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left font-mono text-[11px] text-[var(--text)] transition hover:bg-[var(--panel-strong)]"
+                          >
+                            <Wand2 size={14} />
+                            <span>{showCompanionPrompt || composerState.companionPrompt !== null ? 'Hide prompt' : 'Add prompt'}</span>
+                          </button>
+                        </div>
+                      )}
+                    </div>
+
+
+                    <div className="flex flex-wrap items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const next = !composerState.tools.webSearch
+                          setComposerState(prev => ({ ...prev, tools: { ...prev.tools, webSearch: next } }))
+                          showComposerToastMessage(`Web search ${next ? 'On' : 'Off'}`)
+                        }}
+                        disabled={!activeRoomId || sendMessage.isPending}
+                        className={`inline-flex h-8 w-8 items-center justify-center rounded-full border transition ${
+                          composerState.tools.webSearch
+                            ? 'border-[var(--sel-bd)] bg-[var(--sel-bg)] text-blue-400'
+                            : 'border-[var(--border-soft)] bg-[var(--panel)] text-[var(--muted)] hover:bg-[var(--panel-strong)]'
+                        }`}
+                        aria-label="Toggle web search"
+                        title="Web search"
+                      >
+                        <Globe size={16} />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const next = !composerState.tools.shell
+                          setComposerState(prev => ({ ...prev, tools: { ...prev.tools, shell: next } }))
+                          showComposerToastMessage(`Shell ${next ? 'On' : 'Off'}`)
+                        }}
+                        disabled={!activeRoomId || sendMessage.isPending}
+                        className={`inline-flex h-8 w-8 items-center justify-center rounded-full border transition ${
+                          composerState.tools.shell
+                            ? 'border-[var(--sel-bd)] bg-[var(--sel-bg)] text-blue-400'
+                            : 'border-[var(--border-soft)] bg-[var(--panel)] text-[var(--muted)] hover:bg-[var(--panel-strong)]'
+                        }`}
+                        aria-label="Toggle shell"
+                        title="Shell"
+                      >
+                        <TerminalSquare size={16} />
+                      </button>
+                    </div>
+
+                    <div className="ml-auto flex shrink-0 items-center gap-1 rounded-xl border border-[var(--border-soft)] bg-[var(--panel)] p-0.5">
+                      <button
+                        type="button"
+                        onClick={() => setComposerState(prev => ({ ...prev, mode: 'planning' }))}
+                        disabled={!activeRoomId || sendMessage.isPending}
+                        className={`rounded-lg px-2 py-2 font-mono text-[10px] uppercase tracking-wide transition ${
+                          composerState.mode === 'planning'
+                            ? 'bg-[var(--sel-bg)] text-blue-400'
+                            : 'text-[var(--muted)] hover:bg-[var(--panel-strong)]'
+                        }`}
+                      >
+                        Plan
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setComposerState(prev => ({ ...prev, mode: 'agent' }))}
+                        disabled={!activeRoomId || sendMessage.isPending}
+                        className={`rounded-lg px-2 py-2 font-mono text-[10px] uppercase tracking-wide transition ${
+                          composerState.mode === 'agent'
+                            ? 'bg-[var(--sel-bg)] text-blue-400'
+                            : 'text-[var(--muted)] hover:bg-[var(--panel-strong)]'
+                        }`}
+                      >
+                        Agent
+                      </button>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={!canSendMessage}
+                      onClick={submitMessage}
+                      className="shrink-0 rounded-xl border border-[var(--sel-bd)] bg-[var(--sel-bg)] px-3 py-2 font-mono text-[11px] uppercase tracking-wide text-blue-400 transition hover:bg-blue-500/20 disabled:cursor-not-allowed disabled:opacity-45"
+                      aria-label="Send message"
+                    >
+                      {sendMessage.isPending ? '…' : '↗'}
+                    </button>
+                  </div>
                 </div>
-                {/* Tool toggles */}
-                <div className="flex items-center gap-1">
-                  <button
-                    type="button"
-                    onClick={() => setComposerState(prev => ({ ...prev, tools: { ...prev.tools, webSearch: !prev.tools.webSearch } }))}
-                    disabled={!activeRoomId || sendMessage.isPending}
-                    className={`rounded px-2 py-1 font-mono text-[10px] uppercase tracking-wide transition ${
-                      composerState.tools.webSearch
-                        ? 'border border-[var(--sel-bd)] bg-[var(--sel-bg)] text-blue-400'
-                        : 'border border-[var(--border-soft)] bg-[var(--panel-subtle)] text-[var(--muted)] hover:bg-[var(--panel-strong)]'
-                    }`}
-                  >
-                    Web
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setComposerState(prev => ({ ...prev, tools: { ...prev.tools, shell: !prev.tools.shell } }))}
-                    disabled={!activeRoomId || sendMessage.isPending}
-                    className={`rounded px-2 py-1 font-mono text-[10px] uppercase tracking-wide transition ${
-                      composerState.tools.shell
-                        ? 'border border-[var(--sel-bd)] bg-[var(--sel-bg)] text-blue-400'
-                        : 'border border-[var(--border-soft)] bg-[var(--panel-subtle)] text-[var(--muted)] hover:bg-[var(--panel-strong)]'
-                    }`}
-                  >
-                    Shell
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setComposerState(prev => ({ ...prev, tools: { ...prev.tools, imageProcessing: !prev.tools.imageProcessing } }))}
-                    disabled={!activeRoomId || sendMessage.isPending}
-                    className={`rounded px-2 py-1 font-mono text-[10px] uppercase tracking-wide transition ${
-                      composerState.tools.imageProcessing
-                        ? 'border border-[var(--sel-bd)] bg-[var(--sel-bg)] text-blue-400'
-                        : 'border border-[var(--border-soft)] bg-[var(--panel-subtle)] text-[var(--muted)] hover:bg-[var(--panel-strong)]'
-                    }`}
-                  >
-                    Image
-                  </button>
-                </div>
+              </div>
               {sendMessage.isError && (
                 <div className="shrink-0 border-t border-[var(--s-blk-bd)] bg-[var(--s-blk-bg)] px-4 py-2 font-mono text-xs text-[var(--s-blk-tx)]">
                   {(sendMessage.error as Error).message}
@@ -1162,6 +1476,15 @@ export function CollaborationRoomsView({
       ) : (
         <div className="flex flex-1 items-center justify-center text-[var(--muted)]">
           <span className="font-mono text-xs uppercase tracking-widest">select a room</span>
+        </div>
+      )}
+
+      {composerToast && (
+        <div className="pointer-events-none fixed bottom-5 right-5 z-50">
+          <div className="relative flex h-11 w-52 items-center overflow-hidden rounded-xl border border-cyan-400/40 bg-slate-950/90 px-3 py-2 font-mono text-[11px] uppercase tracking-[0.18em] text-cyan-300 shadow-[0_0_18px_rgba(34,211,238,0.25)] animate-[pulse_1.1s_ease-in-out_2]">
+            <span className="absolute inset-0 bg-[linear-gradient(90deg,transparent_0%,rgba(34,211,238,0.12)_45%,transparent_100%)] animate-[pulse_0.9s_ease-in-out_2]" />
+            <span className="relative block w-full text-center">{composerToast}</span>
+          </div>
         </div>
       )}
     </div>

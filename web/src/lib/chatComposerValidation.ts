@@ -1,6 +1,6 @@
 // Composer validation helpers for ACP chat input
 
-import type { ChatDraft, ModelOption } from '../types/composer';
+import type { ChatDraft, ModelOption, ToolConfig } from '../types/composer'
 
 /**
  * Validate that at least one of: text, attachment, or companion prompt is present

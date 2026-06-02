@@ -1,6 +1,6 @@
 // Composer payload mapping helpers for ACP message submission
 
-import type { ChatDraft } from '../types/composer';
+import type { ChatDraft, ToolConfig } from '../types/composer'
 
 export interface SendRequest {
   text: string;
