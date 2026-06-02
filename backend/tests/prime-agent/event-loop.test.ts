@@ -91,6 +91,11 @@ const pool = {
     if (sql.includes('routing_outcomes')) return { rows: [{ count: 0 }], rowCount: 1 }
     if (sql.includes('INSERT INTO routing_outcomes')) return { rows: [], rowCount: 1 }
     if (sql.includes('INSERT INTO routing_requests')) return { rows: [], rowCount: 1 }
+    // isCronQuiescent queries — return non-zero work items so cron.fast proceeds normally in tests
+    if (sql.includes('FROM work_items')) return { rows: [{ n: '1' }], rowCount: 1 }
+    if (sql.includes('FROM delegations')) return { rows: [{ n: '0' }], rowCount: 1 }
+    if (sql.includes('FROM prime_agent_sessions')) return { rows: [{ completed_at: null }], rowCount: 1 }
+    if (sql.includes('FROM runtime_events')) return { rows: [{ n: '1' }], rowCount: 1 }
     return { rows: [], rowCount: 0 }
   }),
 } as unknown as pg.Pool

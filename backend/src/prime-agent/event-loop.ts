@@ -52,6 +52,66 @@ async function emitPrimeEvent(
   await deps.publishEvent(type, payload)
 }
 
+/**
+ * Returns true if there is no actionable work for a cron.fast tick:
+ *   1. No active/pending work items exist, OR
+ *   2. Every active/pending work item already has an in-flight delegation, AND
+ *      no fleet.delegation completed/failed events have arrived since the last
+ *      cron_fast prime session completed.
+ *
+ * When quiescent, the cron.fast tick skips the LLM entirely.
+ */
+async function isCronQuiescent(pool: pg.Pool): Promise<boolean> {
+  // 1. Are there any active/pending work items?
+  const { rows: [itemCount] } = await pool.query<{ n: string }>(
+    `SELECT COUNT(*)::text AS n FROM work_items WHERE status IN ('active', 'pending')`
+  )
+  if (parseInt(itemCount.n, 10) === 0) {
+    return true
+  }
+
+  // 2. Do all active/pending work items have an in-flight delegation?
+  const { rows: [uncoveredCount] } = await pool.query<{ n: string }>(
+    `SELECT COUNT(*)::text AS n
+     FROM work_items wi
+     WHERE wi.status IN ('active', 'pending')
+       AND NOT EXISTS (
+         SELECT 1 FROM delegations d
+         WHERE d.work_item_id = wi.id
+           AND d.status IN ('queued', 'running', 'pending')
+       )`
+  )
+  if (parseInt(uncoveredCount.n, 10) > 0) {
+    // At least one item has no in-flight delegation — prime may need to act.
+    return false
+  }
+
+  // 3. All items are covered. Only wake if a delegation event arrived since the
+  //    last completed cron_fast session — otherwise there is nothing new to react to.
+  const { rows: [lastSession] } = await pool.query<{ completed_at: string | null }>(
+    `SELECT completed_at
+     FROM prime_agent_sessions
+     WHERE trigger_type = 'cron_fast'
+       AND status IN ('completed', 'escalated')
+     ORDER BY completed_at DESC
+     LIMIT 1`
+  )
+  const since = lastSession?.completed_at ?? null
+
+  const { rows: [newEvents] } = await pool.query<{ n: string }>(
+    since
+      ? `SELECT COUNT(*)::text AS n
+         FROM runtime_events
+         WHERE event_type IN ('delegation.completed', 'delegation.failed')
+           AND created_at > $1`
+      : `SELECT COUNT(*)::text AS n
+         FROM runtime_events
+         WHERE event_type IN ('delegation.completed', 'delegation.failed')`,
+    since ? [since] : []
+  )
+  return parseInt(newEvents.n, 10) === 0
+}
+
 export async function handlePrimeEvent(
   pool: pg.Pool,
   event: PrimeEvent,
@@ -77,6 +137,37 @@ export async function handlePrimeEvent(
         reasoning: 'Duplicate Prime message suppressed because it is already being processed.',
         actions: [],
       },
+      actions: [],
+    }
+  }
+
+  if (event.type === 'cron.fast' && await isCronQuiescent(pool).catch(() => false)) {
+    await emitPrimeEvent(deps, 'prime.cron.skipped', {
+      reason: 'quiescent',
+      triggered_at: event.payload.triggered_at,
+      source: event.payload.source ?? 'cron',
+    })
+    // Create a minimal completed session so the last-run timestamp advances
+    // and condition 3 above has a fresh baseline next tick.
+    const skippedSession = await startPrimeSession(pool, {
+      trigger_type: 'cron_fast',
+      trigger_payload: event.payload,
+      workspace_root: '',
+      workspace_revision: '',
+      prompt_templates: {},
+    })
+    const completed = await completePrimeSession(pool, skippedSession.id, {
+      reasoning_summary: 'Skipped: no actionable work (quiescent)',
+      actions_taken: [],
+      token_count: 0,
+    })
+    const noopDecision: PrimeDecision = {
+      reasoning: 'Skipped: no actionable work (quiescent)',
+      actions: [],
+    }
+    return {
+      session: completed ?? skippedSession,
+      decision: noopDecision,
       actions: [],
     }
   }
