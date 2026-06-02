@@ -439,6 +439,9 @@ CREATE TABLE IF NOT EXISTS prime_agent_config (
   provider_routing JSONB NOT NULL DEFAULT '{}',
   cost_controls JSONB NOT NULL DEFAULT '{}',
   git_store JSONB NOT NULL DEFAULT '{}',
+  config JSONB DEFAULT '{}',
+  setup_complete BOOLEAN NOT NULL DEFAULT false,
+  model_preferences JSONB NOT NULL DEFAULT '{}',
   status TEXT NOT NULL DEFAULT 'stopped',
   last_started_at TIMESTAMPTZ,
   last_error TEXT,
@@ -571,6 +574,9 @@ ALTER TABLE prime_agent_modules
   ADD COLUMN IF NOT EXISTS config JSONB NOT NULL DEFAULT '{}';
 
 ALTER TABLE agents
+  ADD COLUMN IF NOT EXISTS config JSONB DEFAULT '{}';
+
+ALTER TABLE prime_agent_config
   ADD COLUMN IF NOT EXISTS config JSONB DEFAULT '{}';
 
     ALTER TABLE prime_agent_config
