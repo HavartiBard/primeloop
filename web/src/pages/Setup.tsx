@@ -188,11 +188,11 @@ export const BTN_SECONDARY =
 // ─── Preset rules (shared between StepRules and StepLaunch) ──────────────────
 
 export const PRESET_RULES = [
-  { key: 'test_before_delegate', label: 'Always run tests before delegating work to agents' },
-  { key: 'no_force_push', label: 'Never force-push to main or protected branches' },
-  { key: 'small_prs', label: 'Prefer small, reviewable pull requests over large ones' },
-  { key: 'confirm_destructive', label: 'Ask before taking destructive or irreversible actions' },
-  { key: 'humans_in_loop', label: 'Keep humans in the loop on external communications' },
+  { key: 'test_before_delegate', label: 'Always run tests before delegating work to agents', description: 'Runs the project test suite before handing off a coding task. Prevents agents shipping broken code.' },
+  { key: 'no_force_push', label: 'Never force-push to main or protected branches', description: 'Protects production history. Agents must use PRs or non-destructive rebases.' },
+  { key: 'small_prs', label: 'Prefer small, reviewable pull requests over large ones', description: 'Keeps code review tractable. Agents split large changes into focused increments.' },
+  { key: 'confirm_destructive', label: 'Ask before taking destructive or irreversible actions', description: 'Any action that deletes data, drops tables, or can\'t be undone requires explicit human approval.' },
+  { key: 'humans_in_loop', label: 'Keep humans in the loop on external communications', description: 'Agents draft emails, messages, and notifications but don\'t send without review.' },
 ]
 
 // ─── validateAssignments ─────────────────────────────────────────────────────
@@ -465,6 +465,8 @@ function getStepBlocker(state: WizardState, step: Step): string | null {
   if (step === 1) {
     if (!state.providers.some((p) => p.active)) return 'Add at least one provider to continue'
     const active = state.providers.filter((p) => p.active)
+    const errored = active.filter((p) => p.connectStatus === 'error')
+    if (errored.length > 0) return `Fix connection error on: ${errored.map((p) => p.name).join(', ')}`
     const incomplete = active.filter((p) => !p.model?.trim())
     if (incomplete.length > 0) return `Select a model for: ${incomplete.map((p) => p.name).join(', ')}`
   }
@@ -537,6 +539,12 @@ function ProviderLogo({ draft }: { draft: ProviderDraft }) {
       )}
     </div>
   )
+}
+
+const LOCAL_TYPE_DEFAULTS: Record<string, string> = {
+  ollama:  'http://localhost:11434',
+  litellm: 'http://localhost:4000',
+  openai:  'http://localhost:8000/v1',
 }
 
 // ─── Step components ────────────────────────────────────────────────────────
@@ -816,7 +824,7 @@ function ProviderCard({ draft, onChange, onToggle, onConnect, onDeviceAuth }: {
                     type="button"
                     onClick={() => onChange({
                       type: 'ollama',
-                      base_url: draft.type === 'ollama' ? draft.base_url : 'http://localhost:11434',
+                      base_url: Object.values(LOCAL_TYPE_DEFAULTS).includes(draft.base_url) ? LOCAL_TYPE_DEFAULTS.ollama : draft.base_url,
                       modelOptions: [],
                       connectStatus: 'idle',
                       connectError: undefined,
@@ -833,7 +841,7 @@ function ProviderCard({ draft, onChange, onToggle, onConnect, onDeviceAuth }: {
                     type="button"
                     onClick={() => onChange({
                       type: 'litellm',
-                      base_url: draft.type === 'litellm' ? draft.base_url : 'http://localhost:4000/v1',
+                      base_url: Object.values(LOCAL_TYPE_DEFAULTS).includes(draft.base_url) ? LOCAL_TYPE_DEFAULTS.litellm : draft.base_url,
                       modelOptions: [],
                       connectStatus: 'idle',
                       connectError: undefined,
@@ -1070,6 +1078,12 @@ const ROUTE_LABELS: Record<string, string> = {
   discussion: 'Discussion',
 }
 
+const ROUTE_DESCRIPTIONS: Record<string, string> = {
+  planning: 'Used when Prime decides what to do next. Needs strong reasoning — use your most capable model.',
+  dispatching: 'Used when Prime selects and tasks a specialist agent. Needs reliable instruction-following.',
+  discussion: 'Used in chat with you. A faster or cheaper model is fine here.',
+}
+
 const FALLBACK_MODELS: Record<string, string[]> = {
   openai:    ['gpt-4o', 'gpt-4o-mini', 'gpt-4.1', 'gpt-4.1-mini', 'o3', 'o3-mini', 'o4-mini'],
   anthropic: ['claude-opus-4-7', 'claude-sonnet-4-6', 'claude-haiku-4-5-20251001'],
@@ -1197,6 +1211,18 @@ function StepRouting({ state, onChange }: { state: WizardState; onChange: (s: Wi
     onChange({ ...state, routing: { ...state.routing, [key]: entries } })
   }
 
+  useEffect(() => {
+    const allEmpty = (['planning', 'dispatching', 'discussion'] as const).every(
+      (k) => state.routing[k].length === 0
+    )
+    if (!allEmpty) return
+    const best = state.providers.find((p) => p.active && p.connectStatus === 'connected')
+    if (!best) return
+    const model = resolveModelOptions(best)[0] ?? best.model ?? ''
+    const entry = { provider_name: best.name, model }
+    onChange({ ...state, routing: { planning: [entry], dispatching: [entry], discussion: [entry] } })
+  }, []) // intentionally empty dep array — run once on mount only
+
   return (
     <div className="space-y-4">
       <p className="text-xs text-[var(--muted)]">
@@ -1204,13 +1230,18 @@ function StepRouting({ state, onChange }: { state: WizardState; onChange: (s: Wi
       </p>
       <div className="space-y-4">
         {(['planning', 'dispatching', 'discussion'] as const).map((key) => (
-          <RoutingRow
-            key={key}
-            label={ROUTE_LABELS[key]}
-            entries={state.routing[key]}
-            providers={state.providers}
-            onChange={(entries) => updateRoute(key, entries)}
-          />
+          <div key={key} className="space-y-1">
+            <div className="flex items-baseline gap-2">
+              <span className="text-xs font-medium text-[var(--text)]">{ROUTE_LABELS[key]}</span>
+              <span className="text-[10px] text-[var(--muted)]">{ROUTE_DESCRIPTIONS[key]}</span>
+            </div>
+            <RoutingRow
+              label={ROUTE_LABELS[key]}
+              entries={state.routing[key]}
+              providers={state.providers}
+              onChange={(entries) => updateRoute(key, entries)}
+            />
+          </div>
         ))}
       </div>
       <div>
@@ -1474,7 +1505,10 @@ function StepRules({ state, onChange }: { state: WizardState; onChange: (s: Wiza
               }`}>
                 {on && '✓'}
               </span>
-              <span className={`text-xs ${on ? 'text-[var(--text)]' : 'text-[var(--muted)]'}`}>{rule.label}</span>
+              <span className={`text-xs ${on ? 'text-[var(--text)]' : 'text-[var(--muted)]'}`}>
+                {rule.label}
+                {rule.description && <span className="mt-0.5 block text-[10px] text-[var(--muted)]">{rule.description}</span>}
+              </span>
             </button>
           )
         })}
@@ -2116,7 +2150,7 @@ export function Setup({ onSkip }: { onSkip?: () => void }) {
                     : 'text-[var(--muted)]'
                 }`}
               >
-                {label}
+                {stepIndex < step && progress[stepIndex] >= 1.0 ? `✓ ${label}` : label}
               </button>
             )})}
           </div>
