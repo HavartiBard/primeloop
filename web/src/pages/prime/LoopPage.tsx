@@ -118,6 +118,31 @@ function ModelBreakdown({ session }: { session: PrimeSession }) {
 
 // ── Tick detail (completed sessions) ─────────────────────────────────────
 
+function PipelineRuns({ session }: { session: PrimeSession }) {
+  const runs = session.module_runs ?? []
+  if (runs.length === 0) return null
+  const hadLlm = runs.some(r => LLM_STAGES.has(r.module_id.split('.')[0]))
+  const textCls = hadLlm ? 'text-emerald-300' : 'text-sky-300'
+  return (
+    <div>
+      <div className="mb-1.5 text-[10px] font-bold uppercase tracking-widest text-[var(--muted)]">Pipeline</div>
+      <div className="flex flex-col gap-1">
+        {runs.map((r) => (
+          <div key={r.id} className="flex items-start gap-2 text-[11px]">
+            <span className="flex-shrink-0 mt-0.5">
+              {r.status === 'failed'
+                ? <span className="text-amber-400">✕</span>
+                : <span className={textCls}>✓</span>}
+            </span>
+            <span className={`font-mono ${r.status === 'failed' ? 'text-amber-300' : 'text-[var(--muted)]'}`}>{r.module_id}</span>
+            {r.detail && <span className="text-[var(--muted)] truncate">{r.detail}</span>}
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 function TickDetail({ session }: { session: PrimeSession }) {
   const actions = Array.isArray(session.actions_taken) ? session.actions_taken as Array<{ type?: string; reason?: string }> : []
   const failedModules = (session.module_runs ?? []).filter((r) => r.status === 'failed')
@@ -126,35 +151,36 @@ function TickDetail({ session }: { session: PrimeSession }) {
     <div className="mt-2 rounded-lg border border-[var(--border-soft)] bg-[var(--panel)] p-3 flex flex-col gap-3 text-xs">
       <div className="flex flex-wrap gap-x-4 gap-y-1 text-[var(--muted)]">
         <span>{new Date(session.started_at).toLocaleString()}</span>
-        {session.last_step && <span>Last step: <span className="font-mono text-[var(--text)]">{session.last_step}</span></span>}
+        {session.model_used && <span className="font-mono">{session.model_used}</span>}
+        {session.provider_used && <span className="opacity-60">via {session.provider_used}</span>}
       </div>
+
+      {/* Failure banner */}
       {isFailed && (
         <div className="rounded-md border border-amber-400/30 bg-amber-400/8 px-3 py-2 flex flex-col gap-1.5">
           <div className="text-[10px] font-bold uppercase tracking-widest text-amber-400">Failure detail</div>
           {session.error && <div className="font-mono text-[11px] text-amber-300 break-all">{session.error}</div>}
           {session.reasoning_summary && session.reasoning_summary !== session.error && <div className="text-[11px] text-amber-200/80 leading-relaxed">{session.reasoning_summary}</div>}
-          {failedModules.length > 0 && (
-            <div className="mt-1 flex flex-col gap-1">
-              {failedModules.map((m) => (
-                <div key={m.id} className="rounded bg-amber-400/10 px-2 py-1 text-[11px]">
-                  <span className="font-semibold text-amber-300">{m.module_id}</span>
-                  {m.detail && <span className="ml-2 text-amber-200/70">{m.detail}</span>}
-                </div>
-              ))}
-            </div>
-          )}
-          {!session.error && !session.reasoning_summary && failedModules.length === 0 && (
-            <div className="text-[11px] text-amber-200/60">No error detail. Check backend logs for session {session.id}.</div>
+          {failedModules.length === 0 && !session.error && !session.reasoning_summary && (
+            <div className="text-[11px] text-amber-200/60">No error detail recorded. Check backend logs for session {session.id}.</div>
           )}
         </div>
       )}
+
+      {/* Pipeline run history */}
+      <PipelineRuns session={session} />
+
+      {/* Reasoning */}
       {!isFailed && session.reasoning_summary && (
         <div>
           <div className="mb-1 text-[10px] font-bold uppercase tracking-widest text-[var(--muted)]">Reasoning</div>
           <div className="text-[var(--text)] leading-relaxed">{session.reasoning_summary}</div>
         </div>
       )}
+
       <ModelBreakdown session={session} />
+
+      {/* Actions */}
       {actions.length > 0 && (
         <div>
           <div className="mb-1 text-[10px] font-bold uppercase tracking-widest text-[var(--muted)]">Actions ({actions.length})</div>

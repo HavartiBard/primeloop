@@ -570,6 +570,9 @@ ALTER TABLE prime_agent_module_runs
 ALTER TABLE prime_agent_modules
   ADD COLUMN IF NOT EXISTS config JSONB NOT NULL DEFAULT '{}';
 
+ALTER TABLE agents
+  ADD COLUMN IF NOT EXISTS config JSONB DEFAULT '{}';
+
     ALTER TABLE prime_agent_config
       ADD COLUMN IF NOT EXISTS setup_complete BOOLEAN NOT NULL DEFAULT false;
 
