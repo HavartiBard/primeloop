@@ -297,6 +297,11 @@ export async function fetchPrimeSessions(limit = 50): Promise<PrimeSession[]> {
   return res.json() as Promise<PrimeSession[]>
 }
 
+export async function fetchPrimeLoopSessions(limit = 500): Promise<PrimeSession[]> {
+  const sessions = await fetchPrimeSessions(limit)
+  return sessions.filter((s) => s.trigger_type === 'cron_fast')
+}
+
 export async function fetchPrimeSession(id: string): Promise<PrimeSession> {
   const res = await fetch(`${API_BASE}/prime-agent/sessions/${id}`)
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
