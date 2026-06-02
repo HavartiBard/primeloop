@@ -205,16 +205,17 @@ interface LiveStepEvent {
   module_id: string; stage: string; status: string; detail?: string; mode?: string
 }
 
-function LiveSessionBanner({ session, label, elapsedSeconds, wsEvents }: {
+function LiveTickRow({ session, label, isLlmPhase, elapsedSeconds, wsEvents }: {
   session: PrimeSession
   label: string
+  isLlmPhase: boolean
   elapsedSeconds: number | null
   wsEvents: AgentEvent[]
 }) {
   const [open, setOpen] = useState(true)
   const [killing, setKilling] = useState(false)
   const qc = useQueryClient()
-  const isLlm = isLlmStep(session.last_step)
+  const isLlm = isLlmPhase
 
   // Poll session detail while running — gives us historical module_runs that
   // fired before this page was opened (WS only has events since connect time)
@@ -302,38 +303,37 @@ function LiveSessionBanner({ session, label, elapsedSeconds, wsEvents }: {
     finally { setKilling(false) }
   }, [session.id, killing, qc])
 
-  const borderCls = isLlm ? 'border-emerald-400/40 bg-emerald-400/5' : 'border-sky-400/40 bg-sky-400/5'
   const dotCls = isLlm ? 'bg-emerald-400' : 'bg-sky-400'
   const textCls = isLlm ? 'text-emerald-300' : 'text-sky-300'
   const mutedCls = isLlm ? 'text-emerald-300/60' : 'text-sky-300/60'
+  const rowBg = isLlm ? 'bg-emerald-400/5' : 'bg-sky-400/5'
 
   return (
-    <div className={`rounded-xl border ${borderCls}`}>
-      {/* Header row */}
-      <button type="button" onClick={() => setOpen((v) => !v)} className="w-full flex items-center gap-3 px-4 py-3 text-left text-xs">
+    <div className={rowBg}>
+      {/* Row header — same layout as completed tick rows */}
+      <button type="button" onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center gap-3 px-4 py-2.5 text-left text-xs hover:brightness-110 transition">
         <span className="relative flex h-2 w-2 flex-shrink-0">
           <span className={`absolute inline-flex h-full w-full animate-ping rounded-full ${dotCls} opacity-60`} />
           <span className={`relative inline-flex h-2 w-2 rounded-full ${dotCls}`} />
         </span>
-        <span className={`font-semibold ${textCls}`}>Live</span>
-        <span className={`font-medium ${textCls}`}>{label}</span>
-        {session.last_step && <span className={`font-mono text-[10px] ${mutedCls}`}>{session.last_step}</span>}
-        {/* Model badge from live WS events or session */}
+        <span className="w-20 shrink-0 text-[var(--muted)]">{relativeTime(session.started_at)}</span>
+        <span className={`font-semibold ${textCls}`}>{label}</span>
         {(liveModel?.model ?? session.model_used) && (
           <span className={`hidden sm:inline font-mono text-[10px] ${mutedCls} truncate max-w-[140px]`}>
             {liveModel?.model ?? session.model_used}
           </span>
         )}
-        <span className={`ml-auto font-mono tabular-nums ${mutedCls}`}>{elapsedStr}</span>
+        <span className={`ml-auto font-mono tabular-nums text-[11px] ${mutedCls}`}>{elapsedStr}</span>
         <button type="button" onClick={kill} disabled={killing} title="Kill this session"
           className={`ml-2 rounded px-1.5 py-0.5 text-[11px] font-semibold opacity-50 hover:opacity-100 hover:text-rose-400 hover:bg-rose-400/10 transition disabled:opacity-30 ${textCls}`}>
           {killing ? '…' : 'Kill'}
         </button>
-        <span className={mutedCls}>{open ? '▲' : '▼'}</span>
+        <span className={`ml-1 ${mutedCls}`}>{open ? '▲' : '▼'}</span>
       </button>
 
       {open && (
-        <div className={`border-t px-4 py-3 flex flex-col gap-3 ${isLlm ? 'border-emerald-400/20' : 'border-sky-400/20'}`}>
+        <div className="px-4 pb-3 flex flex-col gap-3">
 
           {/* Provider / model */}
           {(liveModel?.model || liveModel?.provider || session.model_used || session.provider_used) && (
@@ -537,57 +537,61 @@ export function LoopPage() {
         </div>
       </div>
 
-      {/* Live session banner */}
-      {loopStatus.currentSession && (
-        <LiveSessionBanner
-          session={loopStatus.currentSession}
-          label={loopStatus.label}
-          elapsedSeconds={elapsedSeconds}
-          wsEvents={wsEvents}
-        />
-      )}
-
-      {/* Tick list */}
+      {/* Tick list — live session injected at top when running */}
       <div className="rounded-xl border border-[var(--border-soft)] bg-[var(--panel)] flex flex-col min-h-0">
         <div className="border-b border-[var(--border-soft)] px-4 py-2.5 text-[10px] font-bold uppercase tracking-widest text-[var(--muted)] flex-shrink-0">Recent ticks</div>
-        <div className="overflow-y-auto" style={{ maxHeight: 480 }}>
-          {isLoading && <div className="px-4 py-6 text-center text-sm text-[var(--muted)]">Loading…</div>}
-          {!isLoading && displaySessions.length === 0 && <div className="px-4 py-6 text-center text-sm text-[var(--muted)]">No ticks in this range.</div>}
+        <div className="overflow-y-auto" style={{ maxHeight: 520 }}>
+          {isLoading && !loopStatus.currentSession && <div className="px-4 py-6 text-center text-sm text-[var(--muted)]">Loading…</div>}
+          {!isLoading && !loopStatus.currentSession && displaySessions.length === 0 && <div className="px-4 py-6 text-center text-sm text-[var(--muted)]">No ticks in this range.</div>}
           <div className="divide-y divide-[var(--border-soft)]">
-            {displaySessions.map((s) => {
-              const quiescent = isQuiescent(s)
-              const failed = s.status === 'failed'
-              const isOpen = expanded === s.id
-              // Colour active sessions by whether LLM was invoked:
-              // token_count > 0 is a reliable proxy — module_runs is empty in list responses
-              const hadLlm = sessionTokens(s) > 0
-              const activeDot = hadLlm
-                ? <span className="h-2 w-2 rounded-full bg-emerald-400 flex-shrink-0 mt-0.5" />
-                : <span className="h-2 w-2 rounded-full bg-sky-400 flex-shrink-0 mt-0.5" />
-              const dot = failed
-                ? <span className="h-2 w-2 rounded-full bg-amber-400 flex-shrink-0 mt-0.5" />
-                : quiescent
-                  ? <span className="h-2 w-2 rounded-full bg-[var(--border-soft)] flex-shrink-0 mt-0.5" />
-                  : activeDot
-              return (
-                <div key={s.id}>
-                  <button onClick={() => setExpanded(isOpen ? null : s.id)}
-                    className={`w-full flex items-start gap-3 px-4 py-2.5 text-left text-xs transition hover:bg-[var(--panel-subtle)] ${quiescent ? 'opacity-50 hover:opacity-100' : ''}`}>
-                    {dot}
-                    <span className="w-20 shrink-0 text-[var(--muted)]">{relativeTime(s.started_at)}</span>
-                    {failed ? <span className="font-semibold text-amber-400">Failed</span>
-                      : quiescent ? <span className="text-[var(--muted)]">Skipped</span>
-                        : <span className={`font-semibold ${hadLlm ? 'text-emerald-300' : 'text-sky-300'}`}>Active</span>}
-                    {failed && s.last_step && <span className="text-[10px] text-amber-400/70 font-mono ml-1">@ {s.last_step}</span>}
-                    {!quiescent && sessionTokens(s) > 0 && <span className="ml-auto text-[var(--muted)]">{sessionTokens(s).toLocaleString()} tok</span>}
-                    {sessionActions(s) > 0 && <span className="ml-2 rounded-full bg-indigo-400/15 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-300">{sessionActions(s)}↗</span>}
-                    {quiescent && <span className="ml-auto text-[10px] text-[var(--muted)]">quiescent</span>}
-                    {!quiescent && !failed && s.model_used && <span className="ml-2 hidden sm:inline text-[10px] text-[var(--muted)] font-mono truncate max-w-[120px]">{s.model_used}</span>}
-                  </button>
-                  {isOpen && <div className="px-4 pb-3"><TickDetail session={s} /></div>}
-                </div>
-              )
-            })}
+
+            {/* Live in-progress row at top */}
+            {loopStatus.currentSession && (
+              <LiveTickRow
+                session={loopStatus.currentSession}
+                label={loopStatus.label}
+                isLlmPhase={loopStatus.isLlmPhase}
+                elapsedSeconds={elapsedSeconds}
+                wsEvents={wsEvents}
+              />
+            )}
+
+            {/* Completed / historical rows */}
+            {displaySessions
+              .filter((s) => s.id !== loopStatus.currentSession?.id)
+              .map((s) => {
+                const quiescent = isQuiescent(s)
+                const failed = s.status === 'failed'
+                const isOpen = expanded === s.id
+                const hadLlm = sessionTokens(s) > 0
+                const dot = failed
+                  ? <span className="h-2 w-2 rounded-full bg-amber-400 flex-shrink-0 mt-0.5" />
+                  : quiescent
+                    ? <span className="h-2 w-2 rounded-full bg-[var(--border-soft)] flex-shrink-0 mt-0.5" />
+                    : hadLlm
+                      ? <span className="h-2 w-2 rounded-full bg-emerald-400 flex-shrink-0 mt-0.5" />
+                      : <span className="h-2 w-2 rounded-full bg-sky-400 flex-shrink-0 mt-0.5" />
+                return (
+                  <div key={s.id}>
+                    <button onClick={() => setExpanded(isOpen ? null : s.id)}
+                      className={`w-full flex items-start gap-3 px-4 py-2.5 text-left text-xs transition hover:bg-[var(--panel-subtle)] ${quiescent ? 'opacity-50 hover:opacity-100' : ''}`}>
+                      {dot}
+                      <span className="w-20 shrink-0 text-[var(--muted)]">{relativeTime(s.started_at)}</span>
+                      {failed
+                        ? <span className="font-semibold text-amber-400">Failed</span>
+                        : quiescent
+                          ? <span className="text-[var(--muted)]">Skipped</span>
+                          : <span className={`font-semibold ${hadLlm ? 'text-emerald-300' : 'text-sky-300'}`}>Done</span>}
+                      {failed && s.last_step && <span className="text-[10px] text-amber-400/70 font-mono ml-1">@ {s.last_step}</span>}
+                      {!quiescent && sessionTokens(s) > 0 && <span className="ml-auto text-[var(--muted)]">{sessionTokens(s).toLocaleString()} tok</span>}
+                      {sessionActions(s) > 0 && <span className="ml-2 rounded-full bg-indigo-400/15 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-300">{sessionActions(s)}↗</span>}
+                      {quiescent && <span className="ml-auto text-[10px] text-[var(--muted)]">quiescent</span>}
+                      {!quiescent && !failed && s.model_used && <span className="ml-2 hidden sm:inline text-[10px] text-[var(--muted)] font-mono truncate max-w-[120px]">{s.model_used}</span>}
+                    </button>
+                    {isOpen && <div className="px-4 pb-3"><TickDetail session={s} /></div>}
+                  </div>
+                )
+              })}
           </div>
         </div>
       </div>
