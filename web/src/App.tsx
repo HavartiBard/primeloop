@@ -1,15 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { Bot, CalendarClock, CircuitBoard, MessageSquare, Server, Settings } from 'lucide-react'
+import { Bot, CalendarClock, CircuitBoard, MessageSquare, Server, Settings as SettingsIcon } from 'lucide-react'
 import { Sidebar } from './components/Sidebar'
 import { CircuitView } from './pages/CircuitView'
 import { OperationsPortal } from './pages/OperationsPortal'
 import { Schedule } from './pages/Schedule'
-import { Agents } from './pages/Agents'
-import { McpServers } from './pages/McpServers'
-import { Providers } from './pages/Providers'
 import { Governance } from './pages/Governance'
+import { Settings, type SettingsTabId } from './pages/Settings'
 import { GoalList, GoalDetail } from './pages/goals'
 import { ApprovalQueue } from './pages/approvals/ApprovalQueue'
 import { LearningRecords } from './pages/learning/LearningRecords'
@@ -35,9 +33,7 @@ const NAV: NavItem[] = [
   { label: 'Approvals',icon: <Server className={ICON_CLS} />,       href: '/approvals' },
   { label: 'Learning', icon: <CalendarClock className={ICON_CLS} />, href: '/learning' },
   { label: 'Schedule', icon: <CalendarClock className={ICON_CLS} />, href: '/schedule' },
-  { label: 'Agents',   icon: <Bot className={ICON_CLS} />,          href: '/agents' },
-  { label: 'MCP',      icon: <Server className={ICON_CLS} />,       href: '/mcp-servers' },
-  { label: 'Providers',icon: <Server className={ICON_CLS} />,        href: '/providers' },
+  { label: 'Settings', icon: <SettingsIcon className={ICON_CLS} />, href: '/settings' },
 ]
 
 function Layout() {
@@ -56,12 +52,18 @@ function Layout() {
 
   const navItems = NAV
 
-  const pageLabel = useMemo(
-    () => navItems.find((item) => item.href === page)?.label ?? 'Portal',
-    [navItems, page]
-  )
+  const pageLabel = useMemo(() => {
+    if (page === '/providers' || page === '/agents' || page === '/mcp-servers') return 'Settings'
+    return navItems.find((item) => item.href === page)?.label ?? 'Portal'
+  }, [navItems, page])
 
   const pendingApprovals = approvals.filter((a) => a.status === 'pending').length
+
+  const settingsTab: SettingsTabId | undefined =
+    page === '/providers'   ? 'providers'
+    : page === '/agents'    ? 'agents'
+    : page === '/mcp-servers' ? 'integrations'
+    : undefined
 
   const Page =
     page === '/' ? OperationsPortal
@@ -70,10 +72,9 @@ function Layout() {
     : page === '/approvals' ? ApprovalQueue
     : page === '/learning' ? LearningRecords
     : page === '/schedule' ? Schedule
-    : page === '/agents' ? Agents
-    : page === '/mcp-servers' ? McpServers
     : page === '/governance' ? Governance
-    : Providers
+    : (page === '/settings' || settingsTab != null) ? () => <Settings defaultTab={settingsTab} />
+    : OperationsPortal
 
   return (
     <div className="app-shell flex min-h-screen bg-[var(--bg)] text-[var(--text)]">
@@ -118,7 +119,7 @@ function Layout() {
                 onClick={() => setPage('/governance')}
                 className="inline-flex h-9 items-center gap-2 rounded-full border border-[var(--border-soft)] bg-[var(--panel-subtle)] px-3 text-sm text-[var(--text)] transition hover:bg-[var(--panel-strong)]"
               >
-                <Settings className="h-4 w-4" />
+                <SettingsIcon className="h-4 w-4" />
                 <span className="hidden sm:inline">Settings</span>
               </button>
             </div>
