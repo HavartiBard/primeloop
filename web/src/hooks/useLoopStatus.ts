@@ -8,6 +8,8 @@ export type LoopPhase = 'idle' | 'running' | 'error' | 'skipped'
 export interface LoopStatus {
   phase: LoopPhase
   label: string
+  /** true when the current step involves an LLM call (decision, action, feedback, learning) */
+  isLlmPhase: boolean
   secondsLeft: number | null
   elapsedSeconds: number | null
   currentSession: PrimeSession | null
@@ -15,24 +17,29 @@ export interface LoopStatus {
   intervalSeconds: number
 }
 
+// Stages that involve an LLM call — chip turns green for these
+const LLM_STAGES = new Set(['decision', 'action', 'feedback', 'learning'])
+
 const STEP_LABELS: Record<string, string> = {
-  'trigger':  'Ingesting...',
-  'debounce': 'Debouncing...',
-  'context':  'Observing...',
-  'decision': 'Thinking...',
-  'policy':   'Evaluating...',
-  'action':   'Delegating...',
-  'feedback': 'Processing...',
-  'learning': 'Learning...',
-  'observer': 'Observing...',
+  'trigger':  'Ingesting',
+  'debounce': 'Checking',
+  'context':  'Analyzing',
+  'policy':   'Evaluating',
+  'observer': 'Observing',
+  'decision': 'Thinking',
+  'action':   'Delegating',
+  'feedback': 'Processing',
+  'learning': 'Learning',
 }
 
-function stepLabel(lastStep: string | null | undefined): string {
-  if (!lastStep) return 'Running...'
-  // Format: "module:context.fleet-state" or "shadow:context.fleet-state"
+function parseStep(lastStep: string | null | undefined): { label: string; isLlm: boolean } {
+  if (!lastStep) return { label: 'Analyzing', isLlm: false }
   const moduleId = lastStep.replace(/^(module|shadow):/, '')
   const stage = moduleId.split('.')[0]
-  return STEP_LABELS[stage] ?? 'Running...'
+  return {
+    label: STEP_LABELS[stage] ?? 'Running',
+    isLlm: LLM_STAGES.has(stage),
+  }
 }
 
 export function useLoopStatus(): LoopStatus {
@@ -101,9 +108,13 @@ export function useLoopStatus(): LoopStatus {
   if (running) {
     const runningElapsed = Math.floor((Date.now() - new Date(running.started_at).getTime()) / 1000)
     const stalled = runningElapsed > intervalSeconds
+    const { label, isLlm } = stalled
+      ? { label: 'Stalled?', isLlm: false }
+      : parseStep(running.last_step)
     return {
       phase: 'running',
-      label: stalled ? 'Stalled?' : stepLabel(running.last_step),
+      label,
+      isLlmPhase: isLlm,
       secondsLeft: null,
       elapsedSeconds,
       currentSession: running,
@@ -116,6 +127,7 @@ export function useLoopStatus(): LoopStatus {
     return {
       phase: 'error',
       label: 'Error',
+      isLlmPhase: false,
       secondsLeft,
       elapsedSeconds: null,
       currentSession: null,
@@ -128,8 +140,9 @@ export function useLoopStatus(): LoopStatus {
     return {
       phase: 'skipped',
       label: secondsLeft !== null
-        ? `Next: ${Math.floor(secondsLeft / 60)}:${String(secondsLeft % 60).padStart(2, '0')}`
+        ? `${Math.floor(secondsLeft / 60)}:${String(secondsLeft % 60).padStart(2, '0')}`
         : `${intervalSeconds}s`,
+      isLlmPhase: false,
       secondsLeft,
       elapsedSeconds: null,
       currentSession: null,
@@ -143,6 +156,7 @@ export function useLoopStatus(): LoopStatus {
     label: secondsLeft !== null
       ? `${Math.floor(secondsLeft / 60)}:${String(secondsLeft % 60).padStart(2, '0')}`
       : `${intervalSeconds}s`,
+    isLlmPhase: false,
     secondsLeft,
     elapsedSeconds: null,
     currentSession: null,

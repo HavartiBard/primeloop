@@ -44,7 +44,7 @@ const PRIME_NAV: NavItem[] = [
 const ALL_NAV = [...NAV, ...PRIME_NAV]
 
 function LoopChip({ status }: { status: ReturnType<typeof useLoopStatus> }) {
-  const { phase, label, elapsedSeconds, secondsLeft, currentSession } = status
+  const { phase, label, isLlmPhase, elapsedSeconds, secondsLeft, currentSession } = status
   const [killing, setKilling] = useState(false)
   const qc = useQueryClient()
 
@@ -59,45 +59,80 @@ function LoopChip({ status }: { status: ReturnType<typeof useLoopStatus> }) {
     finally { setKilling(false) }
   }, [currentSession, killing, qc])
 
-  const dot =
-    phase === 'running' ? (
-      <span className="relative flex h-2 w-2">
-        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-indigo-400 opacity-60" />
-        <span className="relative inline-flex h-2 w-2 rounded-full bg-indigo-400" />
-      </span>
-    ) : phase === 'error' ? (
-      <span className="h-2 w-2 rounded-full bg-amber-400" />
-    ) : (
-      <span className={`h-2 w-2 rounded-full ${secondsLeft !== null && secondsLeft <= 10 ? 'bg-emerald-300' : 'bg-emerald-400'}`} />
-    )
+  // Colour scheme: blue = pipeline work (no LLM), green = LLM active, amber = error, muted = idle
+  const running = phase === 'running'
+  const activeColor = running && isLlmPhase ? 'emerald' : running ? 'sky' : null
+
+  const chipCls = running && isLlmPhase
+    ? 'border-emerald-400/40 bg-emerald-400/8 text-emerald-300'
+    : running
+      ? 'border-sky-400/40 bg-sky-400/8 text-sky-300'
+      : phase === 'error'
+        ? 'border-amber-400/40 bg-amber-400/8 text-amber-300'
+        : 'border-[var(--border-soft)] bg-[var(--panel-subtle)] text-[var(--muted)]'
+
+  const dotColor = running && isLlmPhase
+    ? 'bg-emerald-400'
+    : running
+      ? 'bg-sky-400'
+      : phase === 'error'
+        ? 'bg-amber-400'
+        : secondsLeft !== null && secondsLeft <= 10
+          ? 'bg-emerald-300'
+          : 'bg-emerald-400'
+
+  const dot = running ? (
+    <span className="relative flex h-2 w-2 flex-shrink-0">
+      <span className={`absolute inline-flex h-full w-full animate-ping rounded-full ${dotColor} opacity-60`} />
+      <span className={`relative inline-flex h-2 w-2 rounded-full ${dotColor}`} />
+    </span>
+  ) : (
+    <span className={`h-2 w-2 flex-shrink-0 rounded-full ${dotColor}`} />
+  )
+
+  const timerCls = `font-mono tabular-nums text-[11px] ${
+    running && isLlmPhase ? 'text-emerald-300/70'
+    : running ? 'text-sky-300/70'
+    : phase === 'error' ? 'text-amber-300/70'
+    : secondsLeft !== null && secondsLeft <= 10 ? 'text-emerald-300'
+    : 'text-[var(--muted)]'
+  }`
+
+  const elapsedStr = elapsedSeconds !== null
+    ? `${Math.floor(elapsedSeconds / 60)}:${String(elapsedSeconds % 60).padStart(2, '0')}`
+    : null
+
+  // suppress unused var warning
+  void activeColor
 
   return (
-    <div className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs transition ${
-      phase === 'running'
-        ? 'border-indigo-400/40 bg-indigo-400/8 text-indigo-300'
-        : phase === 'error'
-          ? 'border-amber-400/40 bg-amber-400/8 text-amber-300'
-          : 'border-[var(--border-soft)] bg-[var(--panel-subtle)] text-[var(--muted)]'
-    }`}>
+    <div className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs transition ${chipCls}`}>
       {dot}
       <span>Control loop</span>
-      <span className={`font-mono tabular-nums text-[11px] ${
-        phase === 'running' ? 'text-indigo-300'
-        : phase === 'error' ? 'text-amber-300'
-        : secondsLeft !== null && secondsLeft <= 10 ? 'text-emerald-300'
-        : 'text-[var(--muted)]'
-      }`}>
-        {phase === 'running' && elapsedSeconds !== null
-          ? `${Math.floor(elapsedSeconds / 60)}:${String(elapsedSeconds % 60).padStart(2, '0')}`
-          : label}
-      </span>
-      {phase === 'running' && currentSession && (
+      {running && (
+        <>
+          <span className="opacity-40">·</span>
+          <span className="font-medium">{label}</span>
+        </>
+      )}
+      {!running && phase === 'error' && (
+        <>
+          <span className="opacity-40">·</span>
+          <span className="font-medium">Error</span>
+        </>
+      )}
+      {elapsedStr !== null ? (
+        <span className={timerCls}>{elapsedStr}</span>
+      ) : label && !running && phase !== 'error' ? (
+        <span className={timerCls}>{label}</span>
+      ) : null}
+      {running && currentSession && (
         <button
           type="button"
           onClick={kill}
           disabled={killing}
           title="Kill this session"
-          className="ml-1 rounded px-1 text-[11px] text-indigo-300/60 hover:text-rose-400 hover:bg-rose-400/10 transition disabled:opacity-40"
+          className={`ml-0.5 rounded px-1 text-[11px] opacity-50 hover:opacity-100 hover:text-rose-400 hover:bg-rose-400/10 transition disabled:opacity-30 ${isLlmPhase ? 'text-emerald-300' : 'text-sky-300'}`}
         >
           {killing ? '…' : '✕'}
         </button>
