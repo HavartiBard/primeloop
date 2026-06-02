@@ -225,40 +225,37 @@ function LiveSessionBanner({ session, label, elapsedSeconds, wsEvents }: {
     staleTime: 0,
   })
 
-  // Seed from module_runs (historical), then overlay WS events (real-time)
+  // Seed from module_runs (historical), then overlay WS events (real-time).
+  // Keyed by module_id only — "completed/failed" overwrites "started" so
+  // each module appears as a single row, not one for start + one for finish.
+  const STATUS_RANK: Record<string, number> = { started: 0, completed: 1, failed: 1 }
   const liveSteps = useMemo<LiveStepEvent[]>(() => {
-    // Build map from module_runs first (authoritative history)
-    const byKey = new Map<string, LiveStepEvent>()
+    const byModule = new Map<string, LiveStepEvent>()
+
+    const upsert = (step: LiveStepEvent) => {
+      const existing = byModule.get(step.module_id)
+      const rank = (s: string) => STATUS_RANK[s] ?? 0
+      if (!existing || rank(step.status) >= rank(existing.status)) {
+        byModule.set(step.module_id, step)
+      }
+    }
+
+    // Historical module_runs first
     for (const r of sessionDetail?.module_runs ?? []) {
-      const key = `${r.module_id}:${r.status}`
-      if (!byKey.has(key)) {
-        byKey.set(key, {
-          module_id: r.module_id,
-          stage: r.module_id.split('.')[0],
-          status: r.status,
-          detail: r.detail,
-          mode: undefined,
-        })
-      }
+      upsert({ module_id: r.module_id, stage: r.module_id.split('.')[0], status: r.status, detail: r.detail, mode: undefined })
     }
-    // Overlay WS events (may include in-progress steps not yet in module_runs)
-    for (const ev of [...wsEvents].reverse()) {
-      if (ev.agent !== 'prime' || ev.type !== 'prime.turn.step') continue
-      if (ev.payload['session_id'] !== session.id) continue
-      const mid = ev.payload['module_id'] as string
-      const status = ev.payload['status'] as string
-      const key = `${mid}:${status}`
-      if (!byKey.has(key)) {
-        byKey.set(key, {
-          module_id: mid,
-          stage: ev.payload['stage'] as string,
-          status,
-          detail: ev.payload['detail'] as string | undefined,
-          mode: ev.payload['mode'] as string | undefined,
-        })
-      }
+    // Live WS events on top (iterate oldest→newest so completed wins over started)
+    const relevant = [...wsEvents].reverse().filter(ev => ev.agent === 'prime' && ev.type === 'prime.turn.step' && ev.payload['session_id'] === session.id)
+    for (const ev of relevant) {
+      upsert({
+        module_id: ev.payload['module_id'] as string,
+        stage: ev.payload['stage'] as string,
+        status: ev.payload['status'] as string,
+        detail: ev.payload['detail'] as string | undefined,
+        mode: ev.payload['mode'] as string | undefined,
+      })
     }
-    return [...byKey.values()]
+    return [...byModule.values()]
   }, [sessionDetail?.module_runs, wsEvents, session.id])
 
   const liveReasoning = useMemo(() => {
@@ -370,14 +367,18 @@ function LiveSessionBanner({ session, label, elapsedSeconds, wsEvents }: {
                   </div>
                 )
               })}
-              {/* Running indicator for current step */}
-              {session.last_step && !liveSteps.some(s => s.module_id === session.last_step?.replace(/^(module|shadow):/, '') && s.status === 'completed') && (
-                <div className="flex items-center gap-2 text-[11px]">
-                  <span className={`inline-block h-2 w-2 rounded-full animate-pulse ${dotCls} flex-shrink-0`} />
-                  <span className={`font-mono ${textCls}`}>{session.last_step.replace(/^(module|shadow):/, '')}</span>
-                  <span className={`${mutedCls} animate-pulse`}>{isLlm ? 'waiting for LLM...' : 'processing...'}</span>
-                </div>
-              )}
+              {/* Current in-progress step — only shown if not already in list */}
+              {session.last_step && (() => {
+                const currentId = session.last_step.replace(/^(module|shadow):/, '')
+                if (liveSteps.some(s => s.module_id === currentId)) return null
+                return (
+                  <div className="flex items-center gap-2 text-[11px]">
+                    <span className={`inline-block h-2 w-2 rounded-full animate-pulse ${dotCls} flex-shrink-0`} />
+                    <span className={`font-mono ${textCls}`}>{currentId}</span>
+                    <span className={`${mutedCls} animate-pulse`}>{isLlm ? 'waiting for LLM...' : 'processing...'}</span>
+                  </div>
+                )
+              })()}
             </div>
           )}
 
@@ -424,6 +425,18 @@ export function LoopPage() {
 
   const loopStatus = useLoopStatus()
   const { events: wsEvents } = useWebSocket('/ws')
+  const qcMain = useQueryClient()
+
+  // When a new prime turn starts, immediately invalidate the status query so
+  // the live banner appears within seconds rather than waiting 15s for the
+  // next idle poll (non-LLM pipeline stages are done in a few seconds).
+  const latestWsId = wsEvents[0]?.id
+  useEffect(() => {
+    const ev = wsEvents[0]
+    if (ev?.agent === 'prime' && ev.type === 'prime.turn.started') {
+      void qcMain.invalidateQueries({ queryKey: ['prime-loop-status-sessions'] })
+    }
+  }, [latestWsId])
 
   // Elapsed counter for live banner
   const [elapsedSeconds, setElapsedSeconds] = useState<number | null>(null)
