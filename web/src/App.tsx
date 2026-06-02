@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useQuery, QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ActivitySquare, Bot, BookOpen, CalendarClock, CircuitBoard, MessageSquare, PuzzleIcon, Server, Settings as SettingsIcon, Sliders } from 'lucide-react'
 import { Sidebar } from './components/Sidebar'
@@ -15,9 +15,50 @@ import { LoopPage } from './pages/prime/LoopPage'
 import { useApprovals } from './hooks/useApprovals'
 import { useSetupStatus } from './hooks/useSetupStatus.js'
 import { Setup } from './pages/Setup.js'
+import { fetchPrimeConfig, fetchPrimeSessions } from './api'
 import { fetchPrimeProfile } from './api'
 
 const queryClient = new QueryClient()
+
+function useLoopCountdown() {
+  const { data: config } = useQuery({
+    queryKey: ['prime-config-interval'],
+    queryFn: fetchPrimeConfig,
+    staleTime: 60_000,
+  })
+  const { data: sessions } = useQuery({
+    queryKey: ['prime-last-session'],
+    queryFn: () => fetchPrimeSessions(10),
+    refetchInterval: 15_000,
+  })
+
+  const intervalMs = (config?.cron_fast_interval_seconds ?? 300) * 1000
+
+  const nextTickMs = useMemo(() => {
+    if (!sessions) return null
+    const last = sessions.find((s) => s.trigger_type === 'cron_fast')
+    if (!last?.completed_at) return null
+    return new Date(last.completed_at).getTime() + intervalMs
+  }, [sessions, intervalMs])
+
+  const [secondsLeft, setSecondsLeft] = useState<number | null>(null)
+  const rafRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  useEffect(() => {
+    if (rafRef.current) clearInterval(rafRef.current)
+    if (nextTickMs === null) { setSecondsLeft(null); return }
+
+    const tick = () => {
+      const diff = Math.max(0, Math.ceil((nextTickMs - Date.now()) / 1000))
+      setSecondsLeft(diff)
+    }
+    tick()
+    rafRef.current = setInterval(tick, 1000)
+    return () => { if (rafRef.current) clearInterval(rafRef.current) }
+  }, [nextTickMs])
+
+  return { secondsLeft, intervalSeconds: config?.cron_fast_interval_seconds ?? 300 }
+}
 
 const ICON_SM = 'h-3.5 w-3.5'
 const ICON_CLS = 'h-4 w-4'
@@ -49,6 +90,7 @@ function Layout() {
     return stored === 'light' ? 'light' : 'dark'
   })
   const { approvals } = useApprovals()
+  const { secondsLeft, intervalSeconds } = useLoopCountdown()
 
   const { data: primeProfile } = useQuery({
     queryKey: ['prime-profile'],
@@ -110,6 +152,16 @@ function Layout() {
                 <div className="inline-flex items-center gap-2 rounded-full border border-[var(--border-soft)] bg-[var(--panel-subtle)] px-3 py-1 text-xs text-[var(--muted)]">
                   <span className="h-2 w-2 rounded-full bg-emerald-400" />
                   Control loop
+                  {secondsLeft !== null && (
+                    <span className={`font-mono tabular-nums ${secondsLeft <= 10 ? 'text-emerald-400' : ''}`}>
+                      {secondsLeft > 0
+                        ? `${Math.floor(secondsLeft / 60)}:${String(secondsLeft % 60).padStart(2, '0')}`
+                        : '—'}
+                    </span>
+                  )}
+                  {secondsLeft === null && (
+                    <span className="text-[var(--muted)] opacity-50 text-[10px]">{intervalSeconds}s</span>
+                  )}
                 </div>
                 <div className="inline-flex items-center gap-2 rounded-full border border-[var(--border-soft)] bg-[var(--panel-subtle)] px-3 py-1 text-xs text-[var(--muted)]">
                   <span className={`inline-flex min-w-5 justify-center rounded-full px-1.5 py-0.5 text-[11px] ${pendingApprovals > 0 ? 'bg-amber-400/20 text-amber-300' : 'bg-emerald-400/15 text-emerald-300'}`}>
