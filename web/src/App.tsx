@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
-import type { ReactNode } from 'react'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { Bot, CalendarClock, CircuitBoard, MessageSquare, Server, Settings as SettingsIcon } from 'lucide-react'
+import { useQuery, QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { ActivitySquare, Bot, BookOpen, CalendarClock, CircuitBoard, MessageSquare, PuzzleIcon, Server, Settings as SettingsIcon, Sliders } from 'lucide-react'
 import { Sidebar } from './components/Sidebar'
+import type { NavItem } from './components/Sidebar'
 import { CircuitView } from './pages/CircuitView'
 import { OperationsPortal } from './pages/OperationsPortal'
 import { Schedule } from './pages/Schedule'
@@ -11,30 +11,35 @@ import { Settings, type SettingsTabId } from './pages/Settings'
 import { GoalList, GoalDetail } from './pages/goals'
 import { ApprovalQueue } from './pages/approvals/ApprovalQueue'
 import { LearningRecords } from './pages/learning/LearningRecords'
+import { LoopPage } from './pages/prime/LoopPage'
 import { useApprovals } from './hooks/useApprovals'
 import { useSetupStatus } from './hooks/useSetupStatus.js'
 import { Setup } from './pages/Setup.js'
+import { fetchPrimeProfile } from './api'
 
 const queryClient = new QueryClient()
 
-interface NavItem {
-  label: string
-  icon: ReactNode
-  href: string
-  badge?: number
-}
-
-const ICON_CLS = 'h-5 w-5'
+const ICON_SM = 'h-3.5 w-3.5'
+const ICON_CLS = 'h-4 w-4'
 
 const NAV: NavItem[] = [
-  { label: 'Circuit',  icon: <CircuitBoard className={ICON_CLS} />, href: '/circuit' },
-  { label: 'Rooms',    icon: <MessageSquare className={ICON_CLS} />, href: '/' },
-  { label: 'Goals',    icon: <Bot className={ICON_CLS} />,          href: '/goals' },
-  { label: 'Approvals',icon: <Server className={ICON_CLS} />,       href: '/approvals' },
-  { label: 'Learning', icon: <CalendarClock className={ICON_CLS} />, href: '/learning' },
-  { label: 'Schedule', icon: <CalendarClock className={ICON_CLS} />, href: '/schedule' },
-  { label: 'Settings', icon: <SettingsIcon className={ICON_CLS} />, href: '/settings' },
+  { label: 'Circuit',   icon: <CircuitBoard className={ICON_CLS} />, href: '/circuit' },
+  { label: 'Rooms',     icon: <MessageSquare className={ICON_CLS} />, href: '/' },
+  { label: 'Goals',     icon: <Bot className={ICON_CLS} />,           href: '/goals' },
+  { label: 'Approvals', icon: <Server className={ICON_CLS} />,        href: '/approvals' },
+  { label: 'Schedule',  icon: <CalendarClock className={ICON_CLS} />, href: '/schedule' },
+  { label: 'Settings',  icon: <SettingsIcon className={ICON_CLS} />,  href: '/settings' },
 ]
+
+const PRIME_NAV: NavItem[] = [
+  { label: 'Loop',     icon: <ActivitySquare className={ICON_SM} />, href: '/prime/loop' },
+  { label: 'Learning', icon: <BookOpen className={ICON_SM} />,       href: '/learning' },
+  { label: 'Sessions', icon: <MessageSquare className={ICON_SM} />,  href: '#', disabled: true },
+  { label: 'Modules',  icon: <PuzzleIcon className={ICON_SM} />,     href: '#', disabled: true },
+  { label: 'Config',   icon: <Sliders className={ICON_SM} />,        href: '#', disabled: true },
+]
+
+const ALL_NAV = [...NAV, ...PRIME_NAV]
 
 function Layout() {
   const [page, setPage] = useState('/')
@@ -45,33 +50,40 @@ function Layout() {
   })
   const { approvals } = useApprovals()
 
+  const { data: primeProfile } = useQuery({
+    queryKey: ['prime-profile'],
+    queryFn: fetchPrimeProfile,
+    staleTime: 5 * 60 * 1000,
+  })
+  const primeName = primeProfile?.name?.trim() || 'Prime'
+
   useEffect(() => {
     document.documentElement.dataset.theme = theme
     window.localStorage.setItem('agent-control-theme', theme)
   }, [theme])
 
-  const navItems = NAV
-
   const pageLabel = useMemo(() => {
     if (page === '/providers' || page === '/agents' || page === '/mcp-servers') return 'Settings'
-    return navItems.find((item) => item.href === page)?.label ?? 'Portal'
-  }, [navItems, page])
+    if (page.startsWith('/prime/')) return primeName
+    return ALL_NAV.find((item) => item.href === page)?.label ?? 'Portal'
+  }, [page, primeName])
 
   const pendingApprovals = approvals.filter((a) => a.status === 'pending').length
 
   const settingsTab: SettingsTabId | undefined =
-    page === '/providers'   ? 'providers'
-    : page === '/agents'    ? 'agents'
+    page === '/providers'    ? 'providers'
+    : page === '/agents'     ? 'agents'
     : page === '/mcp-servers' ? 'integrations'
     : undefined
 
   const Page =
-    page === '/' ? OperationsPortal
+    page === '/'             ? OperationsPortal
     : page.startsWith('/goals/') ? GoalDetail
-    : page === '/goals' ? GoalList
-    : page === '/approvals' ? ApprovalQueue
-    : page === '/learning' ? LearningRecords
-    : page === '/schedule' ? Schedule
+    : page === '/goals'      ? GoalList
+    : page === '/approvals'  ? ApprovalQueue
+    : page === '/learning'   ? LearningRecords
+    : page === '/prime/loop' ? LoopPage
+    : page === '/schedule'   ? Schedule
     : page === '/governance' ? Governance
     : (page === '/settings' || settingsTab != null) ? () => <Settings defaultTab={settingsTab} />
     : OperationsPortal
@@ -79,7 +91,9 @@ function Layout() {
   return (
     <div className="app-shell flex min-h-screen bg-[var(--bg)] text-[var(--text)]">
       <Sidebar
-        items={navItems}
+        items={NAV}
+        primeItems={PRIME_NAV}
+        primeName={primeName}
         current={page}
         onNavigate={setPage}
         theme={theme}
@@ -126,10 +140,10 @@ function Layout() {
           </div>
         </div>
 
-        {/* Mobile tab strip */}
+        {/* Mobile tab strip — flat list of all navigable items */}
         <div className="border-b border-[var(--border-soft)] bg-[var(--topbar-bg)] px-3 py-2 backdrop-blur lg:hidden">
           <div className="flex gap-2 overflow-x-auto">
-            {navItems.map((item) => (
+            {ALL_NAV.filter((item) => !item.disabled).map((item) => (
               <button
                 key={item.href}
                 onClick={() => setPage(item.href)}
