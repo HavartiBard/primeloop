@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { fetchPrimeLoopSessions } from '../../api'
 import type { PrimeSession } from '../../types'
+import { useLoopStatus } from '../../hooks/useLoopStatus'
 
 type TimeRange = '1h' | '6h' | '24h' | '7d'
 
@@ -218,6 +219,45 @@ function StatTile({ label, value, sub, accent, warn }: {
   )
 }
 
+// ── Live session banner ────────────────────────────────────────────────────
+
+function LiveSessionBanner({ session, label, elapsedSeconds }: {
+  session: PrimeSession
+  label: string
+  elapsedSeconds: number | null
+}) {
+  const [open, setOpen] = useState(false)
+  const elapsed = elapsedSeconds ?? Math.floor((Date.now() - new Date(session.started_at).getTime()) / 1000)
+  const elapsedStr = `${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, '0')}`
+
+  return (
+    <div className="rounded-xl border border-indigo-400/40 bg-indigo-400/6">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center gap-3 px-4 py-3 text-left text-xs"
+      >
+        <span className="relative flex h-2 w-2 flex-shrink-0">
+          <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-indigo-400 opacity-60" />
+          <span className="relative inline-flex h-2 w-2 rounded-full bg-indigo-400" />
+        </span>
+        <span className="font-semibold text-indigo-300">Live</span>
+        <span className="text-indigo-300/80">{label}</span>
+        {session.last_step && (
+          <span className="font-mono text-[10px] text-indigo-300/50">{session.last_step}</span>
+        )}
+        <span className="ml-auto font-mono tabular-nums text-indigo-300/60">{elapsedStr}</span>
+        <span className="text-indigo-300/40 ml-1">{open ? '▲' : '▼'}</span>
+      </button>
+      {open && (
+        <div className="border-t border-indigo-400/20 px-4 pb-3">
+          <TickDetail session={session} />
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Main ───────────────────────────────────────────────────────────────────
 
 export function LoopPage() {
@@ -227,6 +267,8 @@ export function LoopPage() {
   const [range, setRange] = useState<TimeRange>(savedRange ?? '24h')
   const [activeOnly, setActiveOnly] = useState(false)
   const [expanded, setExpanded] = useState<string | null>(null)
+
+  const loopStatus = useLoopStatus()
 
   function changeRange(r: TimeRange) {
     setRange(r)
@@ -367,6 +409,15 @@ export function LoopPage() {
           <span className="flex items-center gap-1.5"><span className="inline-block h-2 w-2 rounded-sm bg-amber-400" />Failed</span>
         </div>
       </div>
+
+      {/* Live session banner */}
+      {loopStatus.currentSession && (
+        <LiveSessionBanner
+          session={loopStatus.currentSession}
+          label={loopStatus.label}
+          elapsedSeconds={loopStatus.elapsedSeconds}
+        />
+      )}
 
       {/* Tick list — fixed height with scroll */}
       <div className="rounded-xl border border-[var(--border-soft)] bg-[var(--panel)] flex flex-col min-h-0">
