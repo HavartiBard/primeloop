@@ -119,6 +119,11 @@ function LoopChip({ status }: { status: ReturnType<typeof useLoopStatus> }) {
         <>
           <span className="opacity-40">·</span>
           <span className="font-medium">Error</span>
+          {secondsLeft !== null && (
+            <span className={timerCls}>
+              retry in {Math.floor(secondsLeft / 60)}:{String(secondsLeft % 60).padStart(2, '0')}
+            </span>
+          )}
         </>
       )}
       {elapsedStr !== null ? (
