@@ -567,6 +567,9 @@ ALTER TABLE prime_agent_sessions
 ALTER TABLE prime_agent_module_runs
   ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'active';
 
+ALTER TABLE prime_agent_modules
+  ADD COLUMN IF NOT EXISTS config JSONB NOT NULL DEFAULT '{}';
+
     ALTER TABLE prime_agent_config
       ADD COLUMN IF NOT EXISTS setup_complete BOOLEAN NOT NULL DEFAULT false;
 
