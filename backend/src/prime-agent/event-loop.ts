@@ -204,19 +204,31 @@ export async function handlePrimeEvent(
     ...triggerMetadata,
   })
 
+  // Hard cap: a session must complete within 3 minutes. This prevents a hung
+  // LLM call from leaving a session stuck as 'running' indefinitely.
+  const SESSION_TIMEOUT_MS = 3 * 60 * 1000
+  const sessionTimeoutPromise = new Promise<never>((_, reject) =>
+    setTimeout(() => reject(new Error(`Session timed out after ${SESSION_TIMEOUT_MS / 1000}s`)), SESSION_TIMEOUT_MS)
+  )
+
   try {
-    for (const stage of PRIME_MODULE_STAGES) {
-      const stageActiveModules = activeModules.filter((entry) => entry.module.stage === stage)
-      const stageShadowModules = shadowModules.filter((entry) => entry.module.stage === stage)
+    await Promise.race([
+      (async () => {
+        for (const stage of PRIME_MODULE_STAGES) {
+          const stageActiveModules = activeModules.filter((entry) => entry.module.stage === stage)
+          const stageShadowModules = shadowModules.filter((entry) => entry.module.stage === stage)
 
-      for (const configured of stageActiveModules) {
-        await runConfiguredModule(pool, deps, state, configured, 'active')
-      }
+          for (const configured of stageActiveModules) {
+            await runConfiguredModule(pool, deps, state, configured, 'active')
+          }
 
-      for (const configured of stageShadowModules) {
-        await runConfiguredModule(pool, deps, state, configured, 'shadow')
-      }
-    }
+          for (const configured of stageShadowModules) {
+            await runConfiguredModule(pool, deps, state, configured, 'shadow')
+          }
+        }
+      })(),
+      sessionTimeoutPromise,
+    ])
 
     const context = requireContext(state)
     const decision = requireDecision(state)

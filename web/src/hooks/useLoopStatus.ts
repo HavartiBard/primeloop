@@ -99,9 +99,11 @@ export function useLoopStatus(): LoopStatus {
 
   // Determine phase and label
   if (running) {
+    const runningElapsed = Math.floor((Date.now() - new Date(running.started_at).getTime()) / 1000)
+    const stalled = runningElapsed > intervalSeconds
     return {
       phase: 'running',
-      label: stepLabel(running.last_step),
+      label: stalled ? 'Stalled?' : stepLabel(running.last_step),
       secondsLeft: null,
       elapsedSeconds,
       currentSession: running,
