@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { fetchPrimeConfig, fetchPrimeSessions } from '../api'
 import type { PrimeSession } from '../types'
 
-export type LoopPhase = 'idle' | 'running' | 'error' | 'skipped'
+export type LoopPhase = 'idle' | 'running' | 'error' | 'skipped' | 'stopped'
 
 export interface LoopStatus {
   phase: LoopPhase
@@ -46,10 +46,12 @@ export function useLoopStatus(): LoopStatus {
   const { data: config } = useQuery({
     queryKey: ['prime-config-interval'],
     queryFn: fetchPrimeConfig,
-    staleTime: 60_000,
+    staleTime: 30_000,
+    refetchInterval: 30_000,
   })
 
   const intervalSeconds = config?.cron_fast_interval_seconds ?? 300
+  const primeEnabled = config?.enabled !== false  // default true while loading
   const intervalMs = intervalSeconds * 1000
 
   const { data: sessions } = useQuery({
@@ -105,6 +107,19 @@ export function useLoopStatus(): LoopStatus {
   }, [running, nextTickMs])
 
   // Determine phase and label
+  if (!primeEnabled) {
+    return {
+      phase: 'stopped',
+      label: 'Stopped',
+      isLlmPhase: false,
+      secondsLeft: null,
+      elapsedSeconds: null,
+      currentSession: null,
+      lastError: null,
+      intervalSeconds,
+    }
+  }
+
   if (running) {
     const runningElapsed = Math.floor((Date.now() - new Date(running.started_at).getTime()) / 1000)
     const stalled = runningElapsed > intervalSeconds

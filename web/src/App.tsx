@@ -69,7 +69,9 @@ function LoopChip({ status }: { status: ReturnType<typeof useLoopStatus> }) {
       ? 'border-sky-400/40 bg-sky-400/8 text-sky-300'
       : phase === 'error'
         ? 'border-amber-400/40 bg-amber-400/8 text-amber-300'
-        : 'border-[var(--border-soft)] bg-[var(--panel-subtle)] text-[var(--muted)]'
+        : phase === 'stopped'
+          ? 'border-[var(--border-soft)] bg-[var(--panel-subtle)] text-[var(--muted)] opacity-60'
+          : 'border-[var(--border-soft)] bg-[var(--panel-subtle)] text-[var(--muted)]'
 
   const dotColor = running && isLlmPhase
     ? 'bg-emerald-400'
@@ -77,9 +79,11 @@ function LoopChip({ status }: { status: ReturnType<typeof useLoopStatus> }) {
       ? 'bg-sky-400'
       : phase === 'error'
         ? 'bg-amber-400'
-        : secondsLeft !== null && secondsLeft <= 10
-          ? 'bg-emerald-300'
-          : 'bg-emerald-400'
+        : phase === 'stopped'
+          ? 'bg-[var(--muted)]'
+          : secondsLeft !== null && secondsLeft <= 10
+            ? 'bg-emerald-300'
+            : 'bg-emerald-400'
 
   const dot = running ? (
     <span className="relative flex h-2 w-2 flex-shrink-0">
@@ -124,6 +128,12 @@ function LoopChip({ status }: { status: ReturnType<typeof useLoopStatus> }) {
               retry in {Math.floor(secondsLeft / 60)}:{String(secondsLeft % 60).padStart(2, '0')}
             </span>
           )}
+        </>
+      )}
+      {phase === 'stopped' && (
+        <>
+          <span className="opacity-40">·</span>
+          <span className="font-medium">Stopped</span>
         </>
       )}
       {elapsedStr !== null ? (
