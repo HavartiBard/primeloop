@@ -558,8 +558,9 @@ export function LoopPage() {
               const quiescent = isQuiescent(s)
               const failed = s.status === 'failed'
               const isOpen = expanded === s.id
-              // Colour active (completed) sessions by whether they used LLM
-              const hadLlm = (s.module_runs ?? []).some(r => LLM_STAGES.has(r.module_id.split('.')[0]))
+              // Colour active sessions by whether LLM was invoked:
+              // token_count > 0 is a reliable proxy — module_runs is empty in list responses
+              const hadLlm = sessionTokens(s) > 0
               const activeDot = hadLlm
                 ? <span className="h-2 w-2 rounded-full bg-emerald-400 flex-shrink-0 mt-0.5" />
                 : <span className="h-2 w-2 rounded-full bg-sky-400 flex-shrink-0 mt-0.5" />
