@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { abortPrimeSession, fetchPrimeLoopSessions } from '../../api'
+import { abortPrimeSession, fetchPrimeLoopSessions, fetchPrimeSession } from '../../api'
 import type { AgentEvent, PrimeSession } from '../../types'
 import { useLoopStatus } from '../../hooks/useLoopStatus'
 import { useWebSocket } from '../../hooks/useWebSocket'
@@ -189,32 +189,51 @@ function LiveSessionBanner({ session, label, elapsedSeconds, wsEvents }: {
   const [killing, setKilling] = useState(false)
   const qc = useQueryClient()
   const isLlm = isLlmStep(session.last_step)
-  const accentCls = isLlm ? 'emerald' : 'sky'
 
-  // Accumulate step/reasoning/action events from WebSocket for this session
+  // Poll session detail while running — gives us historical module_runs that
+  // fired before this page was opened (WS only has events since connect time)
+  const { data: sessionDetail } = useQuery({
+    queryKey: ['prime-live-session', session.id],
+    queryFn: () => fetchPrimeSession(session.id),
+    refetchInterval: 3_000,
+    staleTime: 0,
+  })
+
+  // Seed from module_runs (historical), then overlay WS events (real-time)
   const liveSteps = useMemo<LiveStepEvent[]>(() => {
-    const steps: LiveStepEvent[] = []
-    const seen = new Set<string>()
-    for (const ev of [...wsEvents].reverse()) {
-      if (ev.agent !== 'prime') continue
-      const sid = ev.payload['session_id'] as string | undefined
-      if (sid !== session.id) continue
-      if (ev.type === 'prime.turn.step') {
-        const key = `${ev.payload['module_id']}:${ev.payload['status']}`
-        if (!seen.has(key)) {
-          seen.add(key)
-          steps.push({
-            module_id: ev.payload['module_id'] as string,
-            stage: ev.payload['stage'] as string,
-            status: ev.payload['status'] as string,
-            detail: ev.payload['detail'] as string | undefined,
-            mode: ev.payload['mode'] as string | undefined,
-          })
-        }
+    // Build map from module_runs first (authoritative history)
+    const byKey = new Map<string, LiveStepEvent>()
+    for (const r of sessionDetail?.module_runs ?? []) {
+      const key = `${r.module_id}:${r.status}`
+      if (!byKey.has(key)) {
+        byKey.set(key, {
+          module_id: r.module_id,
+          stage: r.module_id.split('.')[0],
+          status: r.status,
+          detail: r.detail,
+          mode: undefined,
+        })
       }
     }
-    return steps
-  }, [wsEvents, session.id])
+    // Overlay WS events (may include in-progress steps not yet in module_runs)
+    for (const ev of [...wsEvents].reverse()) {
+      if (ev.agent !== 'prime' || ev.type !== 'prime.turn.step') continue
+      if (ev.payload['session_id'] !== session.id) continue
+      const mid = ev.payload['module_id'] as string
+      const status = ev.payload['status'] as string
+      const key = `${mid}:${status}`
+      if (!byKey.has(key)) {
+        byKey.set(key, {
+          module_id: mid,
+          stage: ev.payload['stage'] as string,
+          status,
+          detail: ev.payload['detail'] as string | undefined,
+          mode: ev.payload['mode'] as string | undefined,
+        })
+      }
+    }
+    return [...byKey.values()]
+  }, [sessionDetail?.module_runs, wsEvents, session.id])
 
   const liveReasoning = useMemo(() => {
     for (const ev of wsEvents) {

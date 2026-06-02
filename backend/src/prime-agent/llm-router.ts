@@ -586,7 +586,7 @@ async function callLlamaCpp(
       model,
       prompt: buildCompactLlamaCppPrompt(templates.templates.llamacpp, systemPrompt, userMessage),
       stream: false,
-      n_predict: 512,
+      n_predict: 4096,
       temperature: 0,
       cache_prompt: false,
       reasoning_format: 'none',
@@ -707,7 +707,7 @@ async function callAnthropic(
   const client = new Anthropic({ apiKey, timeout: timeoutMs })
   const response = await withProviderTimeout(client.messages.create({
     model,
-    max_tokens: 1024,
+    max_tokens: 8192,
     system: systemPrompt,
     messages: [{ role: 'user', content: userMessage }],
   }, { signal }), timeoutMs)
@@ -761,13 +761,21 @@ async function callOpenAI(
         },
       },
     },
+    max_tokens: 8192,
     messages: [
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userMessage },
     ],
   }, { signal }), timeoutMs)
 
-  const text = response.choices[0]?.message?.content ?? ''
+  const msg = response.choices[0]?.message as unknown as Record<string, unknown>
+  // Thinking models (e.g. Qwen3-MTP) put chain-of-thought in reasoning_content
+  // and the actual answer in content. If content is empty, fall back to
+  // reasoning_content so we can at least surface a parse error rather than
+  // silently failing with an empty string.
+  const text = (msg?.['content'] as string | undefined)?.trim()
+    || (msg?.['reasoning_content'] as string | undefined)?.trim()
+    || ''
   const tokenCount = response.usage?.total_tokens ?? 0
   const decision = validatePrimeDecision(parseJsonDecision(text), { isUserFacing })
   decision.provider_used = providerType

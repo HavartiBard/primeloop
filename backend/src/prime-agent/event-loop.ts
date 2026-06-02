@@ -229,7 +229,7 @@ export async function handlePrimeEvent(
 
   // Hard cap: a session must complete within 3 minutes. This prevents a hung
   // LLM call from leaving a session stuck as 'running' indefinitely.
-  const SESSION_TIMEOUT_MS = 3 * 60 * 1000
+  const SESSION_TIMEOUT_MS = 6 * 60 * 1000
   const sessionTimeoutPromise = new Promise<never>((_, reject) => {
     const t = setTimeout(() => reject(new Error(`Session timed out after ${SESSION_TIMEOUT_MS / 1000}s`)), SESSION_TIMEOUT_MS)
     abortController.signal.addEventListener('abort', () => {
