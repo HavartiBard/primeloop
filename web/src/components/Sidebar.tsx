@@ -10,13 +10,15 @@ export interface NavItem {
   disabled?: boolean
 }
 
+export type ThemeId = 'dark' | 'light' | 'midnight' | 'ocean' | 'pcb'
+
 interface Props {
   items: NavItem[]
   primeItems: NavItem[]
   primeName: string
   current: string
   onNavigate: (href: string) => void
-  theme: 'dark' | 'light'
+  theme: ThemeId
   onToggleTheme: () => void
 }
 
@@ -87,11 +89,11 @@ export function Sidebar({ items, primeItems, primeName, current, onNavigate, the
         <button
           type="button"
           onClick={onToggleTheme}
-          title={`Theme: ${theme === 'dark' ? 'Dark' : 'Light'}`}
+          title="Cycle themes"
           className="flex w-full items-center gap-2.5 rounded-xl border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-2 text-xs font-semibold text-[var(--text)] transition hover:bg-[var(--panel-strong)]"
         >
-          <span className="text-base leading-none">{theme === 'dark' ? '◐' : '◑'}</span>
-          <span className="text-[var(--muted)]">{theme === 'dark' ? 'Dark' : 'Light'}</span>
+          <span className="text-base leading-none">🎨</span>
+          <span className="text-[var(--muted)] capitalize">{theme}</span>
         </button>
       </div>
     </aside>

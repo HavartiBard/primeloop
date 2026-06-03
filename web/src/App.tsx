@@ -156,12 +156,22 @@ function LoopChip({ status }: { status: ReturnType<typeof useLoopStatus> }) {
   )
 }
 
+const THEMES = [
+  { id: 'dark', label: 'Dark' },
+  { id: 'light', label: 'Light' },
+  { id: 'midnight', label: 'Midnight' },
+  { id: 'ocean', label: 'Ocean' },
+  { id: 'pcb', label: 'Circuit Board' },
+] as const
+
+type ThemeId = typeof THEMES[number]['id']
+
 function Layout() {
   const [page, setPage] = useState('/')
-  const [theme, setTheme] = useState<'dark' | 'light'>(() => {
+  const [theme, setTheme] = useState<ThemeId>(() => {
     if (typeof window === 'undefined') return 'dark'
     const stored = window.localStorage.getItem('agent-control-theme')
-    return stored === 'light' ? 'light' : 'dark'
+    return THEMES.some(t => t.id === stored) ? (stored as ThemeId) : 'dark'
   })
   const { approvals } = useApprovals()
   const loopStatus = useLoopStatus()
@@ -213,7 +223,11 @@ function Layout() {
         current={page}
         onNavigate={setPage}
         theme={theme}
-        onToggleTheme={() => setTheme((value) => value === 'dark' ? 'light' : 'dark')}
+        onToggleTheme={() => {
+          const currentIndex = THEMES.findIndex(t => t.id === theme)
+          const nextIndex = (currentIndex + 1) % THEMES.length
+          setTheme(THEMES[nextIndex].id)
+        }}
       />
       <main className="flex-1 overflow-y-auto">
         <div className="sticky top-0 z-30 border-b border-[var(--border-soft)] bg-[var(--topbar-bg)] px-3 py-2.5 backdrop-blur">
@@ -235,11 +249,16 @@ function Layout() {
             <div className="flex items-center gap-2">
               <button
                 type="button"
-                onClick={() => setTheme((value) => value === 'dark' ? 'light' : 'dark')}
+                onClick={() => {
+                  const currentIndex = THEMES.findIndex(t => t.id === theme)
+                  const nextIndex = (currentIndex + 1) % THEMES.length
+                  setTheme(THEMES[nextIndex].id)
+                }}
                 className="inline-flex h-9 items-center gap-2 rounded-full border border-[var(--border-soft)] bg-[var(--panel-subtle)] px-3 text-sm text-[var(--text)] transition hover:bg-[var(--panel-strong)]"
+                title="Cycle themes"
               >
-                <span className="text-base">{theme === 'dark' ? '◐' : '◑'}</span>
-                <span className="hidden sm:inline">{theme === 'dark' ? 'Dark' : 'Light'}</span>
+                <span className="text-base">🎨</span>
+                <span className="hidden sm:inline">{THEMES.find(t => t.id === theme)?.label}</span>
               </button>
               <button
                 type="button"
