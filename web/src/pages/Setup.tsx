@@ -158,11 +158,22 @@ export interface WizardState {
   }
 }
 
+const DEFAULT_LOCAL_AI_BASE_URL = ((import.meta.env.VITE_LOCAL_AI_BASE_URL as string | undefined) ?? '').trim().replace(/\/+$/, '')
+const DEFAULT_LOCAL_AI_PROVIDER_TYPE = DEFAULT_LOCAL_AI_BASE_URL
+  ? (DEFAULT_LOCAL_AI_BASE_URL.endsWith('/v1') ? 'litellm' : 'ollama')
+  : 'ollama'
+
 const INITIAL_STATE: WizardState = {
   providers: [
     { name: 'anthropic-main', type: 'anthropic', base_url: 'https://api.anthropic.com', model: 'claude-sonnet-4-6', active: false },
     { name: 'openai-main', type: 'openai', base_url: 'https://api.openai.com/v1', model: 'gpt-4o', active: false },
-    { name: 'local-main', type: 'ollama', base_url: 'http://localhost:11434', model: '', active: true },
+    {
+      name: 'local-main',
+      type: DEFAULT_LOCAL_AI_PROVIDER_TYPE,
+      base_url: DEFAULT_LOCAL_AI_BASE_URL || 'http://localhost:11434',
+      model: '',
+      active: true,
+    },
   ],
   routing: { planning: [], dispatching: [], discussion: [] },
   profile:   INITIAL_PROFILE_STATE,
@@ -542,8 +553,8 @@ function ProviderLogo({ draft }: { draft: ProviderDraft }) {
 }
 
 const LOCAL_TYPE_DEFAULTS: Record<string, string> = {
-  ollama:  'http://localhost:11434',
-  litellm: 'http://localhost:4000',
+  ollama:  DEFAULT_LOCAL_AI_PROVIDER_TYPE === 'ollama' && DEFAULT_LOCAL_AI_BASE_URL ? DEFAULT_LOCAL_AI_BASE_URL : 'http://localhost:11434',
+  litellm: DEFAULT_LOCAL_AI_PROVIDER_TYPE === 'litellm' && DEFAULT_LOCAL_AI_BASE_URL ? DEFAULT_LOCAL_AI_BASE_URL : 'http://localhost:4000/v1',
   openai:  'http://localhost:8000/v1',
 }
 
