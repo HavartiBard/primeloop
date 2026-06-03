@@ -36,6 +36,16 @@ export interface PrimeEventHandleResult {
 
 const STALE_DUPLICATE_MESSAGE_SESSION_MS = 5 * 60 * 1000
 
+// Per-session AbortControllers — lets the abort API cancel in-flight LLM calls.
+const _sessionAbortControllers = new Map<string, AbortController>()
+
+export function abortPrimeSession(sessionId: string): boolean {
+  const controller = _sessionAbortControllers.get(sessionId)
+  if (!controller) return false
+  controller.abort()
+  return true
+}
+
 async function updateLastStep(pool: pg.Pool, sessionId: string, step: string): Promise<void> {
   await pool.query(
     `UPDATE prime_agent_sessions SET last_step = $2 WHERE id = $1`,
@@ -50,6 +60,66 @@ async function emitPrimeEvent(
 ): Promise<void> {
   if (!deps.publishEvent) return
   await deps.publishEvent(type, payload)
+}
+
+/**
+ * Returns true if there is no actionable work for a cron.fast tick:
+ *   1. No active/pending work items exist, OR
+ *   2. Every active/pending work item already has an in-flight delegation, AND
+ *      no fleet.delegation completed/failed events have arrived since the last
+ *      cron_fast prime session completed.
+ *
+ * When quiescent, the cron.fast tick skips the LLM entirely.
+ */
+async function isCronQuiescent(pool: pg.Pool): Promise<boolean> {
+  // 1. Are there any active/pending work items?
+  const { rows: [itemCount] } = await pool.query<{ n: string }>(
+    `SELECT COUNT(*)::text AS n FROM work_items WHERE status IN ('active', 'pending')`
+  )
+  if (parseInt(itemCount.n, 10) === 0) {
+    return true
+  }
+
+  // 2. Do all active/pending work items have an in-flight delegation?
+  const { rows: [uncoveredCount] } = await pool.query<{ n: string }>(
+    `SELECT COUNT(*)::text AS n
+     FROM work_items wi
+     WHERE wi.status IN ('active', 'pending')
+       AND NOT EXISTS (
+         SELECT 1 FROM delegations d
+         WHERE d.work_item_id = wi.id
+           AND d.status IN ('queued', 'running', 'pending')
+       )`
+  )
+  if (parseInt(uncoveredCount.n, 10) > 0) {
+    // At least one item has no in-flight delegation — prime may need to act.
+    return false
+  }
+
+  // 3. All items are covered. Only wake if a delegation event arrived since the
+  //    last completed cron_fast session — otherwise there is nothing new to react to.
+  const { rows: [lastSession] } = await pool.query<{ completed_at: string | null }>(
+    `SELECT completed_at
+     FROM prime_agent_sessions
+     WHERE trigger_type = 'cron_fast'
+       AND status IN ('completed', 'escalated')
+     ORDER BY completed_at DESC
+     LIMIT 1`
+  )
+  const since = lastSession?.completed_at ?? null
+
+  const { rows: [newEvents] } = await pool.query<{ n: string }>(
+    since
+      ? `SELECT COUNT(*)::text AS n
+         FROM runtime_events
+         WHERE event_type IN ('delegation.completed', 'delegation.failed')
+           AND created_at > $1`
+      : `SELECT COUNT(*)::text AS n
+         FROM runtime_events
+         WHERE event_type IN ('delegation.completed', 'delegation.failed')`,
+    since ? [since] : []
+  )
+  return parseInt(newEvents.n, 10) === 0
 }
 
 export async function handlePrimeEvent(
@@ -77,6 +147,37 @@ export async function handlePrimeEvent(
         reasoning: 'Duplicate Prime message suppressed because it is already being processed.',
         actions: [],
       },
+      actions: [],
+    }
+  }
+
+  if (event.type === 'cron.fast' && await isCronQuiescent(pool).catch(() => false)) {
+    await emitPrimeEvent(deps, 'prime.cron.skipped', {
+      reason: 'quiescent',
+      triggered_at: event.payload.triggered_at,
+      source: event.payload.source ?? 'cron',
+    })
+    // Create a minimal completed session so the last-run timestamp advances
+    // and condition 3 above has a fresh baseline next tick.
+    const skippedSession = await startPrimeSession(pool, {
+      trigger_type: 'cron_fast',
+      trigger_payload: event.payload,
+      workspace_root: '',
+      workspace_revision: '',
+      prompt_templates: {},
+    })
+    const completed = await completePrimeSession(pool, skippedSession.id, {
+      reasoning_summary: 'Skipped: no actionable work (quiescent)',
+      actions_taken: [],
+      token_count: 0,
+    })
+    const noopDecision: PrimeDecision = {
+      reasoning: 'Skipped: no actionable work (quiescent)',
+      actions: [],
+    }
+    return {
+      session: completed ?? skippedSession,
+      decision: noopDecision,
       actions: [],
     }
   }
@@ -113,19 +214,48 @@ export async function handlePrimeEvent(
     ...triggerMetadata,
   })
 
+  // Per-session AbortController — allows the abort API to cancel the LLM call.
+  const abortController = new AbortController()
+  _sessionAbortControllers.set(session.id, abortController)
+
+  // Inject abort signal into the router so LLM calls can be cancelled.
+  const depsWithSignal: PrimeEventLoopDeps = {
+    ...deps,
+    router: {
+      ...deps.router,
+      decide: (ctx) => deps.router.decide(ctx, abortController.signal),
+    },
+  }
+
+  // Hard cap: a session must complete within 3 minutes. This prevents a hung
+  // LLM call from leaving a session stuck as 'running' indefinitely.
+  const SESSION_TIMEOUT_MS = 6 * 60 * 1000
+  const sessionTimeoutPromise = new Promise<never>((_, reject) => {
+    const t = setTimeout(() => reject(new Error(`Session timed out after ${SESSION_TIMEOUT_MS / 1000}s`)), SESSION_TIMEOUT_MS)
+    abortController.signal.addEventListener('abort', () => {
+      clearTimeout(t)
+      reject(new Error('Session aborted by operator'))
+    })
+  })
+
   try {
-    for (const stage of PRIME_MODULE_STAGES) {
-      const stageActiveModules = activeModules.filter((entry) => entry.module.stage === stage)
-      const stageShadowModules = shadowModules.filter((entry) => entry.module.stage === stage)
+    await Promise.race([
+      (async () => {
+        for (const stage of PRIME_MODULE_STAGES) {
+          const stageActiveModules = activeModules.filter((entry) => entry.module.stage === stage)
+          const stageShadowModules = shadowModules.filter((entry) => entry.module.stage === stage)
 
-      for (const configured of stageActiveModules) {
-        await runConfiguredModule(pool, deps, state, configured, 'active')
-      }
+          for (const configured of stageActiveModules) {
+            await runConfiguredModule(pool, depsWithSignal, state, configured, 'active')
+          }
 
-      for (const configured of stageShadowModules) {
-        await runConfiguredModule(pool, deps, state, configured, 'shadow')
-      }
-    }
+          for (const configured of stageShadowModules) {
+            await runConfiguredModule(pool, depsWithSignal, state, configured, 'shadow')
+          }
+        }
+      })(),
+      sessionTimeoutPromise,
+    ])
 
     const context = requireContext(state)
     const decision = requireDecision(state)
@@ -179,6 +309,7 @@ export async function handlePrimeEvent(
       })
     }
 
+    _sessionAbortControllers.delete(session.id)
     await updateLastStep(pool, session.id, 'completed')
     const completed = await completePrimeSession(pool, session.id, {
       reasoning_summary: decision.reasoning,
@@ -229,6 +360,7 @@ export async function handlePrimeEvent(
       actions,
     }
   } catch (error) {
+    _sessionAbortControllers.delete(session.id)
     await savePrimeSessionModuleRuns(pool, session.id, state.moduleRuns)
     await updateLastStep(pool, session.id, 'failed')
     const message = error instanceof Error ? error.message : String(error)

@@ -9,7 +9,8 @@ import {
   updatePrimeModuleConfig,
 } from '../prime-agent/modules/registry.js'
 import type { PrimeQueue } from '../prime-agent/queue.js'
-import { getPrimeSession, listPrimeSessions } from '../prime-agent/session.js'
+import { getPrimeSession, listPrimeSessions, failPrimeSession } from '../prime-agent/session.js'
+import { abortPrimeSession } from '../prime-agent/event-loop.js'
 import {
   ensureWorkspaceScaffold,
   getWorkspaceStatus,
@@ -72,6 +73,21 @@ export function createPrimeAgentRouter(
         return res.status(404).json({ error: 'prime session not found' })
       }
       res.json(session)
+    } catch {
+      res.status(500).json({ error: 'internal error' })
+    }
+  })
+
+  router.post('/sessions/:id/abort', async (req, res) => {
+    try {
+      const session = await getPrimeSession(pool, req.params.id)
+      if (!session) return res.status(404).json({ error: 'prime session not found' })
+      if (session.status !== 'running') return res.status(409).json({ error: `session is not running (status: ${session.status})` })
+
+      // Signal the in-flight LLM call to abort, then mark the session failed.
+      const signalled = abortPrimeSession(req.params.id)
+      await failPrimeSession(pool, req.params.id, 'Session aborted by operator')
+      res.json({ aborted: true, signal_sent: signalled })
     } catch {
       res.status(500).json({ error: 'internal error' })
     }

@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useState } from 'react'
-import type { ReactNode } from 'react'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { Bot, CalendarClock, CircuitBoard, MessageSquare, Server, Settings as SettingsIcon } from 'lucide-react'
+import { useEffect, useMemo, useState, useCallback } from 'react'
+import { useQuery, QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { ActivitySquare, Bot, BookOpen, CalendarClock, CircuitBoard, MessageSquare, PuzzleIcon, Server, Settings as SettingsIcon, Sliders } from 'lucide-react'
 import { Sidebar } from './components/Sidebar'
+import type { NavItem } from './components/Sidebar'
 import { CircuitView } from './pages/CircuitView'
 import { OperationsPortal } from './pages/OperationsPortal'
 import { Schedule } from './pages/Schedule'
@@ -11,67 +11,205 @@ import { Settings, type SettingsTabId } from './pages/Settings'
 import { GoalList, GoalDetail } from './pages/goals'
 import { ApprovalQueue } from './pages/approvals/ApprovalQueue'
 import { LearningRecords } from './pages/learning/LearningRecords'
+import { LoopPage } from './pages/prime/LoopPage'
 import { useApprovals } from './hooks/useApprovals'
 import { useSetupStatus } from './hooks/useSetupStatus.js'
 import { Setup } from './pages/Setup.js'
+import { abortPrimeSession, fetchPrimeProfile } from './api'
+import { useQueryClient } from '@tanstack/react-query'
+import { useLoopStatus } from './hooks/useLoopStatus'
 
 const queryClient = new QueryClient()
 
-interface NavItem {
-  label: string
-  icon: ReactNode
-  href: string
-  badge?: number
-}
-
-const ICON_CLS = 'h-5 w-5'
+const ICON_SM = 'h-3.5 w-3.5'
+const ICON_CLS = 'h-4 w-4'
 
 const NAV: NavItem[] = [
-  { label: 'Circuit',  icon: <CircuitBoard className={ICON_CLS} />, href: '/circuit' },
-  { label: 'Rooms',    icon: <MessageSquare className={ICON_CLS} />, href: '/' },
-  { label: 'Goals',    icon: <Bot className={ICON_CLS} />,          href: '/goals' },
-  { label: 'Approvals',icon: <Server className={ICON_CLS} />,       href: '/approvals' },
-  { label: 'Learning', icon: <CalendarClock className={ICON_CLS} />, href: '/learning' },
-  { label: 'Schedule', icon: <CalendarClock className={ICON_CLS} />, href: '/schedule' },
-  { label: 'Settings', icon: <SettingsIcon className={ICON_CLS} />, href: '/settings' },
+  { label: 'Circuit',   icon: <CircuitBoard className={ICON_CLS} />, href: '/circuit' },
+  { label: 'Rooms',     icon: <MessageSquare className={ICON_CLS} />, href: '/' },
+  { label: 'Goals',     icon: <Bot className={ICON_CLS} />,           href: '/goals' },
+  { label: 'Approvals', icon: <Server className={ICON_CLS} />,        href: '/approvals' },
+  { label: 'Schedule',  icon: <CalendarClock className={ICON_CLS} />, href: '/schedule' },
+  { label: 'Settings',  icon: <SettingsIcon className={ICON_CLS} />,  href: '/settings' },
 ]
+
+const PRIME_NAV: NavItem[] = [
+  { label: 'Loop',     icon: <ActivitySquare className={ICON_SM} />, href: '/prime/loop' },
+  { label: 'Learning', icon: <BookOpen className={ICON_SM} />,       href: '/learning' },
+  { label: 'Sessions', icon: <MessageSquare className={ICON_SM} />,  href: '#', disabled: true },
+  { label: 'Modules',  icon: <PuzzleIcon className={ICON_SM} />,     href: '#', disabled: true },
+  { label: 'Config',   icon: <Sliders className={ICON_SM} />,        href: '#', disabled: true },
+]
+
+const ALL_NAV = [...NAV, ...PRIME_NAV]
+
+function LoopChip({ status }: { status: ReturnType<typeof useLoopStatus> }) {
+  const { phase, label, isLlmPhase, elapsedSeconds, secondsLeft, currentSession } = status
+  const [killing, setKilling] = useState(false)
+  const qc = useQueryClient()
+
+  const kill = useCallback(async (e: React.MouseEvent) => {
+    e.stopPropagation()
+    if (!currentSession || killing) return
+    setKilling(true)
+    try {
+      await abortPrimeSession(currentSession.id)
+      await qc.invalidateQueries({ queryKey: ['prime-loop-status-sessions'] })
+    } catch { /* swallow — chip will update on next poll */ }
+    finally { setKilling(false) }
+  }, [currentSession, killing, qc])
+
+  // Colour scheme: blue = pipeline work (no LLM), green = LLM active, amber = error, muted = idle
+  const running = phase === 'running'
+  const activeColor = running && isLlmPhase ? 'emerald' : running ? 'sky' : null
+
+  const chipCls = running && isLlmPhase
+    ? 'border-emerald-400/40 bg-emerald-400/8 text-emerald-300'
+    : running
+      ? 'border-sky-400/40 bg-sky-400/8 text-sky-300'
+      : phase === 'error'
+        ? 'border-amber-400/40 bg-amber-400/8 text-amber-300'
+        : phase === 'stopped'
+          ? 'border-[var(--border-soft)] bg-[var(--panel-subtle)] text-[var(--muted)] opacity-60'
+          : 'border-[var(--border-soft)] bg-[var(--panel-subtle)] text-[var(--muted)]'
+
+  const dotColor = running && isLlmPhase
+    ? 'bg-emerald-400'
+    : running
+      ? 'bg-sky-400'
+      : phase === 'error'
+        ? 'bg-amber-400'
+        : phase === 'stopped'
+          ? 'bg-[var(--muted)]'
+          : secondsLeft !== null && secondsLeft <= 10
+            ? 'bg-emerald-300'
+            : 'bg-emerald-400'
+
+  const dot = running ? (
+    <span className="relative flex h-2 w-2 flex-shrink-0">
+      <span className={`absolute inline-flex h-full w-full animate-ping rounded-full ${dotColor} opacity-60`} />
+      <span className={`relative inline-flex h-2 w-2 rounded-full ${dotColor}`} />
+    </span>
+  ) : (
+    <span className={`h-2 w-2 flex-shrink-0 rounded-full ${dotColor}`} />
+  )
+
+  const timerCls = `font-mono tabular-nums text-[11px] ${
+    running && isLlmPhase ? 'text-emerald-300/70'
+    : running ? 'text-sky-300/70'
+    : phase === 'error' ? 'text-amber-300/70'
+    : secondsLeft !== null && secondsLeft <= 10 ? 'text-emerald-300'
+    : 'text-[var(--muted)]'
+  }`
+
+  const elapsedStr = elapsedSeconds !== null
+    ? `${Math.floor(elapsedSeconds / 60)}:${String(elapsedSeconds % 60).padStart(2, '0')}`
+    : null
+
+  // suppress unused var warning
+  void activeColor
+
+  return (
+    <div className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs transition ${chipCls}`}>
+      {dot}
+      <span>Control loop</span>
+      {running && (
+        <>
+          <span className="opacity-40">·</span>
+          <span className="font-medium">{label}</span>
+        </>
+      )}
+      {!running && phase === 'error' && (
+        <>
+          <span className="opacity-40">·</span>
+          <span className="font-medium">Error</span>
+          {secondsLeft !== null && (
+            <span className={timerCls}>
+              retry in {Math.floor(secondsLeft / 60)}:{String(secondsLeft % 60).padStart(2, '0')}
+            </span>
+          )}
+        </>
+      )}
+      {phase === 'stopped' && (
+        <>
+          <span className="opacity-40">·</span>
+          <span className="font-medium">Stopped</span>
+        </>
+      )}
+      {elapsedStr !== null ? (
+        <span className={timerCls}>{elapsedStr}</span>
+      ) : label && !running && phase !== 'error' ? (
+        <span className={timerCls}>{label}</span>
+      ) : null}
+      {running && currentSession && (
+        <button
+          type="button"
+          onClick={kill}
+          disabled={killing}
+          title="Kill this session"
+          className={`ml-0.5 rounded px-1 text-[11px] opacity-50 hover:opacity-100 hover:text-rose-400 hover:bg-rose-400/10 transition disabled:opacity-30 ${isLlmPhase ? 'text-emerald-300' : 'text-sky-300'}`}
+        >
+          {killing ? '…' : '✕'}
+        </button>
+      )}
+    </div>
+  )
+}
+
+const THEMES = [
+  { id: 'dark', label: 'Dark' },
+  { id: 'light', label: 'Light' },
+  { id: 'midnight', label: 'Midnight' },
+  { id: 'ocean', label: 'Ocean' },
+  { id: 'pcb', label: 'Circuit Board' },
+] as const
+
+type ThemeId = typeof THEMES[number]['id']
 
 function Layout() {
   const [page, setPage] = useState('/')
-  const [theme, setTheme] = useState<'dark' | 'light'>(() => {
+  const [theme, setTheme] = useState<ThemeId>(() => {
     if (typeof window === 'undefined') return 'dark'
     const stored = window.localStorage.getItem('agent-control-theme')
-    return stored === 'light' ? 'light' : 'dark'
+    return THEMES.some(t => t.id === stored) ? (stored as ThemeId) : 'dark'
   })
   const { approvals } = useApprovals()
+  const loopStatus = useLoopStatus()
+
+  const { data: primeProfile } = useQuery({
+    queryKey: ['prime-profile'],
+    queryFn: fetchPrimeProfile,
+    staleTime: 5 * 60 * 1000,
+  })
+  const primeName = primeProfile?.name?.trim() || 'Prime'
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme
     window.localStorage.setItem('agent-control-theme', theme)
   }, [theme])
 
-  const navItems = NAV
-
   const pageLabel = useMemo(() => {
     if (page === '/providers' || page === '/agents' || page === '/mcp-servers') return 'Settings'
-    return navItems.find((item) => item.href === page)?.label ?? 'Portal'
-  }, [navItems, page])
+    if (page.startsWith('/prime/')) return primeName
+    return ALL_NAV.find((item) => item.href === page)?.label ?? 'Portal'
+  }, [page, primeName])
 
   const pendingApprovals = approvals.filter((a) => a.status === 'pending').length
 
   const settingsTab: SettingsTabId | undefined =
-    page === '/providers'   ? 'providers'
-    : page === '/agents'    ? 'agents'
+    page === '/providers'    ? 'providers'
+    : page === '/agents'     ? 'agents'
     : page === '/mcp-servers' ? 'integrations'
     : undefined
 
   const Page =
-    page === '/' ? OperationsPortal
+    page === '/'             ? OperationsPortal
     : page.startsWith('/goals/') ? GoalDetail
-    : page === '/goals' ? GoalList
-    : page === '/approvals' ? ApprovalQueue
-    : page === '/learning' ? LearningRecords
-    : page === '/schedule' ? Schedule
+    : page === '/goals'      ? GoalList
+    : page === '/approvals'  ? ApprovalQueue
+    : page === '/learning'   ? LearningRecords
+    : page === '/prime/loop' ? LoopPage
+    : page === '/schedule'   ? Schedule
     : page === '/governance' ? Governance
     : (page === '/settings' || settingsTab != null) ? () => <Settings defaultTab={settingsTab} />
     : OperationsPortal
@@ -79,11 +217,17 @@ function Layout() {
   return (
     <div className="app-shell flex min-h-screen bg-[var(--bg)] text-[var(--text)]">
       <Sidebar
-        items={navItems}
+        items={NAV}
+        primeItems={PRIME_NAV}
+        primeName={primeName}
         current={page}
         onNavigate={setPage}
         theme={theme}
-        onToggleTheme={() => setTheme((value) => value === 'dark' ? 'light' : 'dark')}
+        onToggleTheme={() => {
+          const currentIndex = THEMES.findIndex(t => t.id === theme)
+          const nextIndex = (currentIndex + 1) % THEMES.length
+          setTheme(THEMES[nextIndex].id)
+        }}
       />
       <main className="flex-1 overflow-y-auto">
         <div className="sticky top-0 z-30 border-b border-[var(--border-soft)] bg-[var(--topbar-bg)] px-3 py-2.5 backdrop-blur">
@@ -94,25 +238,27 @@ function Layout() {
               </div>
               <div className="hidden items-center gap-2 md:flex">
                 <div className="inline-flex items-center gap-2 rounded-full border border-[var(--border-soft)] bg-[var(--panel-subtle)] px-3 py-1 text-xs text-[var(--muted)]">
-                  <span className="h-2 w-2 rounded-full bg-emerald-400" />
-                  Control loop
-                </div>
-                <div className="inline-flex items-center gap-2 rounded-full border border-[var(--border-soft)] bg-[var(--panel-subtle)] px-3 py-1 text-xs text-[var(--muted)]">
                   <span className={`inline-flex min-w-5 justify-center rounded-full px-1.5 py-0.5 text-[11px] ${pendingApprovals > 0 ? 'bg-amber-400/20 text-amber-300' : 'bg-emerald-400/15 text-emerald-300'}`}>
                     {pendingApprovals}
                   </span>
                   Pending approvals
                 </div>
+                <LoopChip status={loopStatus} />
               </div>
             </div>
             <div className="flex items-center gap-2">
               <button
                 type="button"
-                onClick={() => setTheme((value) => value === 'dark' ? 'light' : 'dark')}
+                onClick={() => {
+                  const currentIndex = THEMES.findIndex(t => t.id === theme)
+                  const nextIndex = (currentIndex + 1) % THEMES.length
+                  setTheme(THEMES[nextIndex].id)
+                }}
                 className="inline-flex h-9 items-center gap-2 rounded-full border border-[var(--border-soft)] bg-[var(--panel-subtle)] px-3 text-sm text-[var(--text)] transition hover:bg-[var(--panel-strong)]"
+                title="Cycle themes"
               >
-                <span className="text-base">{theme === 'dark' ? '◐' : '◑'}</span>
-                <span className="hidden sm:inline">{theme === 'dark' ? 'Dark' : 'Light'}</span>
+                <span className="text-base">🎨</span>
+                <span className="hidden sm:inline">{THEMES.find(t => t.id === theme)?.label}</span>
               </button>
               <button
                 type="button"
@@ -126,10 +272,10 @@ function Layout() {
           </div>
         </div>
 
-        {/* Mobile tab strip */}
+        {/* Mobile tab strip — flat list of all navigable items */}
         <div className="border-b border-[var(--border-soft)] bg-[var(--topbar-bg)] px-3 py-2 backdrop-blur lg:hidden">
           <div className="flex gap-2 overflow-x-auto">
-            {navItems.map((item) => (
+            {ALL_NAV.filter((item) => !item.disabled).map((item) => (
               <button
                 key={item.href}
                 onClick={() => setPage(item.href)}

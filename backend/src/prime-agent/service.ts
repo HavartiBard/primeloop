@@ -138,6 +138,23 @@ export function createPrimeAgentService(
         return
       }
 
+      // Mark any sessions still in 'running' state from a previous process as failed.
+      // These are zombies — the server crashed or was restarted mid-session.
+      try {
+        const { rowCount } = await pool.query(
+          `UPDATE prime_agent_sessions
+           SET status = 'failed',
+               error  = 'Session abandoned: server restarted while session was running',
+               completed_at = now()
+           WHERE status = 'running'`
+        )
+        if (rowCount && rowCount > 0) {
+          console.log(`[prime-agent] marked ${rowCount} stale running session(s) as failed on startup`)
+        }
+      } catch (err) {
+        console.warn('[prime-agent] failed to clean stale sessions on startup:', err)
+      }
+
       started = true
       await updatePrimeConfig(pool, {
         status: 'running',
