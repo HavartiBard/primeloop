@@ -1,21 +1,16 @@
 import { ChildProcess, spawn } from 'child_process';
 import { EventEmitter } from 'events';
-import type {
-  InitializeRequest,
-  InitializeResult,
-  SessionNewRequest,
-  SessionNewResult,
-  SessionPromptRequest,
-  SessionPromptResult,
-  SessionUpdateNotification,
-  SessionRequestPermissionRequest,
-  SessionRequestPermissionResult,
-  FsReadTextFileRequest,
-  FsReadTextFileResult,
-  FsWriteTextFileRequest,
-  FsWriteTextFileResult,
-} from '@agentclientprotocol/sdk';
 import type { AcpSessionState } from './types.js';
+
+// Method names from @agentclientprotocol/sdk v0.12.0
+const METHOD_INITIALIZE = 'initialize';
+const METHOD_SESSION_NEW = 'session/new';
+const METHOD_SESSION_PROMPT = 'session/prompt';
+const METHOD_SESSION_CANCEL = 'session/cancel';
+const METHOD_SESSION_UPDATE = 'session/update';
+const METHOD_SESSION_REQUEST_PERMISSION = 'session/request_permission';
+const METHOD_FS_READ_TEXT_FILE = 'fs/read_text_file';
+const METHOD_FS_WRITE_TEXT_FILE = 'fs/write_text_file';
 
 export interface AcpClientOptions {
   command: string;
@@ -25,10 +20,10 @@ export interface AcpClientOptions {
 }
 
 export interface AcpClientHandlers {
-  onSessionUpdate?: (update: SessionUpdateNotification['params']) => void;
-  onRequestPermission?: (req: SessionRequestPermissionRequest['params']) => Promise<SessionRequestPermissionResult>;
-  onFsReadTextFile?: (req: FsReadTextFileRequest['params']) => Promise<FsReadTextFileResult>;
-  onFsWriteTextFile?: (req: FsWriteTextFileRequest['params']) => Promise<FsWriteTextFileResult>;
+  onSessionUpdate?: (update: { sessionId: string; update: any }) => void;
+  onRequestPermission?: (req: { sessionId: string; toolCall: any; options: any[] }) => Promise<{ outcome: 'granted' | 'denied' }>;
+  onFsReadTextFile?: (req: { sessionId: string; path: string }) => Promise<{ content: string }>;
+  onFsWriteTextFile?: (req: { sessionId: string; path: string; content: string }) => Promise<void>;
 }
 
 export class AcpClient extends EventEmitter {
@@ -69,28 +64,28 @@ export class AcpClient extends EventEmitter {
     });
   }
 
-  public async initialize(request: InitializeRequest['params']): Promise<InitializeResult> {
-    const result = await this.sendRequest<InitializeResult>('initialize', request);
+  public async initialize(request: { protocolVersion: number; clientCapabilities: any; clientInfo: any }): Promise<{ protocolVersion: number }> {
+    const result = await this.sendRequest<{ protocolVersion: number }>(METHOD_INITIALIZE, request);
     this.state = { sessionId: '', status: 'ready' };
     return result;
   }
 
-  public async sessionNew(request: SessionNewRequest['params']): Promise<SessionNewResult> {
+  public async sessionNew(request: { cwd: string; mcpServers: any[] }): Promise<{ sessionId: string }> {
     if (!this.state) throw new Error('Client not initialized');
-    const result = await this.sendRequest<SessionNewResult>('session/new', request);
+    const result = await this.sendRequest<{ sessionId: string }>(METHOD_SESSION_NEW, request);
     this.state.sessionId = result.sessionId;
     this.state.status = 'ready';
     return result;
   }
 
-  public async sessionPrompt(request: SessionPromptRequest['params']): Promise<SessionPromptResult> {
+  public async sessionPrompt(request: { sessionId: string; prompt: any[] }): Promise<{ stopReason: string }> {
     if (!this.state) throw new Error('Client not initialized');
     this.state.status = 'prompting';
-    return this.sendRequest<SessionPromptResult>('session/prompt', request);
+    return this.sendRequest<{ stopReason: string }>(METHOD_SESSION_PROMPT, request);
   }
 
   public async sessionCancel(sessionId: string): Promise<void> {
-    await this.sendNotification('session/cancel', { sessionId });
+    await this.sendNotification(METHOD_SESSION_CANCEL, { sessionId });
     if (this.state) this.state.status = 'cancelled';
     this.rejectAllPending(new Error('Session cancelled'));
   }
@@ -172,20 +167,25 @@ export class AcpClient extends EventEmitter {
       return;
     }
 
-    if (message.method === 'session/update') {
+    if (message.method === METHOD_SESSION_UPDATE) {
       this.handlers.onSessionUpdate?.(message.params);
       return;
     }
 
-    if (message.method === 'session/request_permission') {
+    if (message.method === METHOD_SESSION_REQUEST_PERMISSION) {
+      // v0.12.0 passes { sessionId, toolCall, options }
       this.handleRequest(message.id, message.params, async () => {
-        if (!this.handlers.onRequestPermission) return { outcome: 'cancelled' as const };
-        return this.handlers.onRequestPermission(message.params);
+        if (!this.handlers.onRequestPermission) return { outcome: 'denied' as const };
+        return this.handlers.onRequestPermission({
+          sessionId: message.params.sessionId,
+          toolCall: message.params.toolCall,
+          options: message.params.options,
+        });
       });
       return;
     }
 
-    if (message.method === 'fs/read_text_file') {
+    if (message.method === METHOD_FS_READ_TEXT_FILE) {
       this.handleRequest(message.id, message.params, async () => {
         if (!this.handlers.onFsReadTextFile) {
           throw new Error('fs/read_text_file is not supported by this client');
@@ -195,7 +195,7 @@ export class AcpClient extends EventEmitter {
       return;
     }
 
-    if (message.method === 'fs/write_text_file') {
+    if (message.method === METHOD_FS_WRITE_TEXT_FILE) {
       this.handleRequest(message.id, message.params, async () => {
         if (!this.handlers.onFsWriteTextFile) {
           throw new Error('fs/write_text_file is not supported by this client');

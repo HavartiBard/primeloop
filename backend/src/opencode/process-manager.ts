@@ -16,7 +16,7 @@ import {
 } from '../registry.js'
 import { resolveToolGrant } from '../tool-grants.js'
 import { bootstrapDurableStaff } from '../durable-staff.js'
-import { PiHarness } from '../fleet-executor/pi-harness.js'
+
 import { AcpHarness } from '../fleet-executor/acp-harness.js'
 import type { AgentHarness } from '../fleet-executor/harness.js'
 
@@ -416,10 +416,7 @@ export class OpenCodeProcessManager {
   }
 
   private async startAgent(agent: RegistryAgent): Promise<void> {
-    if (agent.runtime_family === 'pi') {
-      return this.startPiAgent(agent)
-    }
-    if (agent.runtime_family === 'acp') {
+    if (agent.runtime_family === 'pi' || agent.runtime_family === 'acp') {
       return this.startAcpAgent(agent)
     }
 
@@ -447,31 +444,17 @@ export class OpenCodeProcessManager {
     await this.launchManagedProcess(agent, localPort, worktreePath, env, 0)
   }
 
-  private async startPiAgent(agent: RegistryAgent): Promise<void> {
-    const worktreePath = agent.worktree_path
-    if (!worktreePath) throw new Error(`worktree_path missing for pi agent ${agent.name}`)
-
-    const provider = await this.resolveProvider(agent)
-    const model = await this.resolveModel(agent)
-
-    const harness = new PiHarness()
-    await harness.start({
-      cwd: worktreePath,
-      model: { providerID: provider?.type ?? 'openai', id: model },
-    })
-    this.harnesses.set(agent.id, harness)
-  }
-
   private async startAcpAgent(agent: RegistryAgent): Promise<void> {
     const worktreePath = agent.worktree_path
-    const workspaceRoot = agent.workspace_root ?? worktreePath
     if (!worktreePath) throw new Error(`worktree_path missing for acp agent ${agent.name}`)
+    const workspaceRoot = agent.workspace_root ?? worktreePath
 
     const provider = await this.resolveProvider(agent)
     const model = await this.resolveModel(agent)
 
-    const command = (agent.config as any)?.command ?? 'acp-agent'
-    const args = (agent.config as any)?.args ?? []
+    // Pi runtime-family agents always use the built-in pi-acp launch profile
+    const command = agent.runtime_family === 'pi' ? 'pi-acp' : (agent.config as any)?.command ?? 'acp-agent'
+    const args = (agent.runtime_family === 'pi' ? [] : ((agent.config as any)?.args ?? [])) as string[]
     const permissionConfig = (agent.config as any)?.permission ?? {}
 
     console.log(`[process-manager] Selecting AcpHarness for agent ${agent.id} (${agent.name})`)

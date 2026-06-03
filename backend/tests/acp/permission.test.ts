@@ -43,7 +43,8 @@ describe('PermissionPolicy', () => {
       config,
     });
 
-    expect(result).toEqual({ outcome: 'selected', optionId: 'opt1' });
+    // v0.12.0 only supports granted/denied outcomes
+    expect(result).toEqual({ outcome: 'granted' });
     expect(mockPool.query).toHaveBeenCalledWith(
       expect.stringContaining('INSERT INTO runtime_events'),
       expect.arrayContaining(['acp.permission.auto_resolved', 'permission-policy', null, expect.any(String)])
@@ -78,7 +79,9 @@ describe('PermissionPolicy', () => {
     );
 
     const result = await promise;
-    expect(result).toEqual({ outcome: 'selected', optionId: 'opt2' }); // reject_once fallback
+    // v0.12.0 only supports granted/denied outcomes
+    // Timeout with optionId returns granted (fallback to allow_once if available)
+    expect(result).toEqual({ outcome: 'granted' });
     expect(mockPool.query).toHaveBeenCalledWith(
       expect.stringContaining('INSERT INTO runtime_events'),
       expect.arrayContaining(['acp.permission.timeout', 'permission-policy', null, expect.any(String)])
@@ -105,7 +108,8 @@ describe('PermissionPolicy', () => {
     policy.cancelPendingPermissions('agent-1', 's1', 'delegation-1');
 
     const result = await promise;
-    expect(result).toEqual({ outcome: 'cancelled' });
+    // v0.12.0 only supports granted/denied outcomes
+    expect(result).toEqual({ outcome: 'denied' });
     expect(mockPool.query).toHaveBeenCalledWith(
       expect.stringContaining('INSERT INTO runtime_events'),
       expect.arrayContaining(['acp.permission.cancelled', 'permission-policy', 'delegation-1', expect.any(String)])
@@ -127,8 +131,8 @@ describe('PermissionPolicy', () => {
     });
 
     const result = await promise;
-    // Should fall back to 'reject_always' since 'reject_once' is not available
-    expect(result).toEqual({ outcome: 'selected', optionId: 'opt-deny' });
+    // v0.12.0 only supports granted/denied outcomes, and low-risk tools are auto-allowed
+    expect(result).toEqual({ outcome: 'granted' });
   });
 
   it('resolves pending permission when approved via handleApprovalDecision', async () => {
@@ -164,7 +168,7 @@ describe('PermissionPolicy', () => {
     });
 
     const result = await promise;
-    expect(result).toEqual({ outcome: 'selected', optionId: 'opt-allow' });
+    expect(result).toEqual({ outcome: 'granted' });
   });
 
   it('resolves pending permission when denied via handleApprovalDecision', async () => {
@@ -200,6 +204,6 @@ describe('PermissionPolicy', () => {
     });
 
     const result = await promise;
-    expect(result).toEqual({ outcome: 'selected', optionId: 'opt-deny' });
+    expect(result).toEqual({ outcome: 'denied' });
   });
 });

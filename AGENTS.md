@@ -49,5 +49,5 @@ When editing `backend/src/db.ts`:
 - If no verification command is requested, do not invent one solely for process reasons.
 
 <!-- SPECKIT START -->
-Current Speckit plan: `specs/023-repo-rename-plan/plan.md`
+Current Speckit plan: `specs/023-pi-acp-migration/plan.md`
 <!-- SPECKIT END -->

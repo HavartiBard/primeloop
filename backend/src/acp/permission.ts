@@ -1,6 +1,25 @@
 import type pg from 'pg';
-import type { SessionRequestPermissionRequest, SessionRequestPermissionResult } from '@agentclientprotocol/sdk';
 import { ensurePendingApproval } from '../approvals.js';
+
+// Types for the ACP permission request/response based on v0.12.0 protocol
+export interface SessionRequestPermissionRequestParams {
+  sessionId: string;
+  toolCall: {
+    name: string;
+    args: Record<string, unknown>;
+  };
+  options: {
+    optionId: string;
+    name: string;
+    kind: 'allow_once' | 'deny_once' | 'allow_always' | 'deny_always';
+  }[];
+}
+
+// v0.12.0 permission result only supports granted/denied outcomes
+// selected/cancelled are handled internally by the policy
+export interface SessionRequestPermissionResult {
+  outcome: 'granted' | 'denied';
+}
 
 export interface PermissionConfig {
   lowRiskTools?: string[];
@@ -33,7 +52,7 @@ export class PermissionPolicy {
   constructor(private pool: pg.Pool) {}
 
   public async resolvePermission(
-    req: SessionRequestPermissionRequest['params'],
+    req: SessionRequestPermissionRequestParams,
     context: PermissionContext
   ): Promise<SessionRequestPermissionResult> {
     const { sessionId, toolCall, options } = req;
@@ -56,7 +75,8 @@ export class PermissionPolicy {
         outcome: 'auto_allowed',
       });
 
-      return optionId ? { outcome: 'selected', optionId } : { outcome: 'cancelled' };
+      // v0.12.0 only supports granted/denied outcomes
+      return optionId ? { outcome: 'granted' } : { outcome: 'denied' };
     }
 
     // 3. Gate sensitive requests
@@ -89,7 +109,8 @@ export class PermissionPolicy {
           outcome: 'timeout_denied',
         });
 
-        resolve(optionId ? { outcome: 'selected', optionId } : { outcome: 'cancelled' });
+        // v0.12.0 only supports granted/denied outcomes
+        resolve(optionId ? { outcome: 'granted' } : { outcome: 'denied' });
       }, timeoutMs);
 
       this.pendingPermissions.set(approvalId, {
@@ -126,9 +147,10 @@ export class PermissionPolicy {
     );
 
     if (optionId) {
-      pending.resolve({ outcome: 'selected', optionId });
+      // v0.12.0 only supports granted/denied outcomes
+      pending.resolve({ outcome: decision === 'approved' ? 'granted' : 'denied' });
     } else {
-      pending.resolve({ outcome: 'cancelled' });
+      pending.resolve({ outcome: 'denied' });
     }
   }
 
@@ -144,7 +166,8 @@ export class PermissionPolicy {
         outcome: 'cancelled',
       });
 
-      pending.resolve({ outcome: 'cancelled' });
+      // v0.12.0 only supports granted/denied outcomes
+      pending.resolve({ outcome: 'denied' });
     }
   }
 
