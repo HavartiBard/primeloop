@@ -53,7 +53,7 @@ export class FsHandler {
     return { content };
   }
 
-  public async writeTextFile(requestedPath: string, content: string): Promise<{}> {
+  public async writeTextFile(requestedPath: string, content: string): Promise<void> {
     const resolved = this.resolveAndValidatePath(requestedPath);
     
     // For writes, we should also ensure the directory exists and is within sandbox
@@ -67,6 +67,5 @@ export class FsHandler {
     }
 
     await fs.writeFile(resolved, content, 'utf-8');
-    return {};
   }
 }

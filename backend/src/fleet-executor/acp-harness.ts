@@ -49,10 +49,12 @@ export class AcpHarness implements AgentHarness {
           });
         },
         onFsReadTextFile: async (req) => {
-          return this.fsHandler!.readTextFile(req.path, req.line, req.limit);
+          // v0.12.0 uses { sessionId, path } for fs/read_text_file
+          return this.fsHandler!.readTextFile(req.path);
         },
         onFsWriteTextFile: async (req) => {
-          return this.fsHandler!.writeTextFile(req.path, req.content);
+          // v0.12.0 uses { sessionId, path, content } for fs/write_text_file
+          await this.fsHandler!.writeTextFile(req.path, req.content);
         },
       }
     );
@@ -69,10 +71,11 @@ export class AcpHarness implements AgentHarness {
         clientInfo: { name: 'primeloop', version: '0.1.0' },
       });
 
-      // T013: Capability reconciliation — derive a stable string list from the structured
+      // Capability reconciliation — derive a stable string list from the structured
       // AgentCapabilities object and persist it back to the registry as a routing hint.
-      if (initResult.agentCapabilities) {
-        const caps = initResult.agentCapabilities
+      // Note: v0.12.0 may not have agentCapabilities in the response; skip if missing.
+      const caps = (initResult as any).agentCapabilities;
+      if (caps) {
         const negotiatedCapabilities: string[] = []
         if (caps.auth?.logout)             negotiatedCapabilities.push('auth')
         if (caps.loadSession)              negotiatedCapabilities.push('load_session')
