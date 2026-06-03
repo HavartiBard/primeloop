@@ -22,6 +22,10 @@ async function parseJson(res: Response): Promise<Record<string, unknown>> {
   }
 }
 
+/**
+ * @deprecated Legacy generic HTTP adapter. Remove when no agent depends on this path.
+ * @see https://github.com/.../specs/022-acp-adapter
+ */
 export class GenericHttpAdapter implements AgentAdapter {
   constructor(private readonly fetchFn: typeof globalThis.fetch = fetch) {}
 

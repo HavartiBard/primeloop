@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import type pg from 'pg'
 import { decideApproval, getApproval, listPendingApprovals } from '../approvals.js'
+import { lookupApprovalPolicy } from '../acp/permission.js'
 import { runDelegation } from '../delegation-runner.js'
 import { callControlPlaneTool, createPrimePortalContext } from '../mcp/service.js'
 import { insertRuntimeEvent, updateDelegation, updateWorkItem } from '../runtime.js'
@@ -20,6 +21,11 @@ export function createApprovalsRouter({ pool }: { pool: pg.Pool }) {
     try {
       const approval = await decideApproval(pool, req.params.id, 'approved')
       if (!approval) return res.status(404).json({ error: 'approval not found' })
+
+      const acpEntry = lookupApprovalPolicy(approval.approval_id)
+      if (acpEntry) {
+        await acpEntry.policy.handleApprovalDecision(approval.approval_id, 'approved', acpEntry.context)
+      }
 
       let resume: unknown = null
       try {
@@ -44,6 +50,11 @@ export function createApprovalsRouter({ pool }: { pool: pg.Pool }) {
     try {
       const approval = await decideApproval(pool, req.params.id, 'denied')
       if (!approval) return res.status(404).json({ error: 'approval not found' })
+
+      const acpEntry = lookupApprovalPolicy(approval.approval_id)
+      if (acpEntry) {
+        await acpEntry.policy.handleApprovalDecision(approval.approval_id, 'denied', acpEntry.context)
+      }
 
       const delegation = await updateDelegation(pool, approval.run_id, {
         status: 'blocked',

@@ -8,6 +8,11 @@ export function createAgentAdapter(
   fetchFn: typeof globalThis.fetch = fetch
 ): AgentAdapter {
   switch (agent.runtime_family) {
+    case 'acp':
+      // ACP agents are handled by AcpHarness in process-manager.ts, not via HTTP shims.
+      throw new Error(`ACP agents should not use createAgentAdapter. Use AcpHarness instead.`)
+    // @deprecated Legacy cases. Remove when no agent depends on this path.
+    // @see https://github.com/.../specs/022-acp-adapter
     case 'opencode':
     case 'codex-app-server':
       return new OpenCodeAdapter(fetchFn)

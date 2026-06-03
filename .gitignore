@@ -3,6 +3,7 @@
 .pi/
 .agent-workspace/
 .claude/
+.commandcode/
 context/
 context-qwen-local/
 implement/
