@@ -3,15 +3,18 @@ import { EventEmitter } from 'events';
 import { AcpClient } from '../acp/client.js';
 import { updateMapper, mapTaskEnd } from '../acp/update-mapper.js';
 import { FsHandler } from '../acp/fs-handler.js';
+import { PermissionPolicy, type PermissionConfig } from '../acp/permission.js';
 import { updateAgent } from '../registry.js';
 import type { AgentHarness, HarnessEvent, ModelRef, TaskHandle, TaskPrompt, TaskResult } from './harness.js';
 
 export class AcpHarness implements AgentHarness {
   private client: AcpClient | null = null;
   private fsHandler: FsHandler | null = null;
+  private permissionPolicy: PermissionPolicy;
   private sessionId: string | null = null;
   private eventEmitter = new EventEmitter();
   private promptPromise: Promise<any> | null = null;
+  private currentDelegationId: string | null = null;
 
   constructor(
     private agentId: string,
@@ -19,7 +22,10 @@ export class AcpHarness implements AgentHarness {
     private command: string,
     private args: string[] = [],
     private workspaceRoot: string,
-  ) {}
+    private permissionConfig: PermissionConfig = {},
+  ) {
+    this.permissionPolicy = new PermissionPolicy(this.pool);
+  }
 
   async start(opts: { cwd: string; model: ModelRef }): Promise<void> {
     this.fsHandler = new FsHandler(this.workspaceRoot);
@@ -35,8 +41,12 @@ export class AcpHarness implements AgentHarness {
           this.eventEmitter.emit('sessionUpdate', update);
         },
         onRequestPermission: async (req) => {
-          // TODO: Wire to permission policy (T017/T018)
-          return { outcome: 'cancelled' as const };
+          return this.permissionPolicy.resolvePermission(req, {
+            agentId: this.agentId,
+            sessionId: this.sessionId!,
+            delegationId: this.currentDelegationId ?? undefined,
+            config: this.permissionConfig,
+          });
         },
         onFsReadTextFile: async (req) => {
           return this.fsHandler!.readTextFile(req.path, req.line, req.limit);
@@ -90,6 +100,7 @@ export class AcpHarness implements AgentHarness {
     if (!this.client) throw new Error('AcpHarness not started');
 
     const taskId = crypto.randomUUID();
+    this.currentDelegationId = taskId;
 
     if (!this.sessionId) {
       const newSessionResult = await this.client.sessionNew({
@@ -194,8 +205,21 @@ export class AcpHarness implements AgentHarness {
   }
 
   async abort(taskId: string): Promise<void> {
+    this.currentDelegationId = null;
+    
+    // 1. Cancel any pending permissions immediately so they don't block the task settlement
+    if (this.sessionId) {
+      this.permissionPolicy.cancelPendingPermissions(this.agentId, this.sessionId, taskId);
+    }
+    
+    // 2. Send cancel to the agent (ignore errors if the process already crashed or closed)
     if (this.client && this.sessionId) {
-      await this.client.sessionCancel(this.sessionId);
+      try {
+        await this.client.sessionCancel(this.sessionId);
+      } catch {
+        // Process may have already crashed or closed; proceed to cleanup
+      }
+      
       await this.recordRuntimeEvent('acp.session.cancelled', {
         agent_id: this.agentId,
         delegation_id: taskId,
@@ -205,11 +229,17 @@ export class AcpHarness implements AgentHarness {
   }
 
   async close(): Promise<void> {
+    // Unconditionally reap the subprocess to prevent orphans (SC-005)
     if (this.client) {
-      await this.client.terminate();
+      try {
+        await this.client.terminate();
+      } catch {
+        // Ignore termination errors if the process is already dead
+      }
       this.client = null;
     }
     this.sessionId = null;
+    this.currentDelegationId = null;
   }
 
   private async recordRuntimeEvent(

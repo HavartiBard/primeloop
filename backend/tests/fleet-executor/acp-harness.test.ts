@@ -120,4 +120,52 @@ describe('AcpHarness Integration', () => {
       expect.arrayContaining(['acp.session.cancelled', 'acp-harness', handle.id, expect.any(String)])
     );
   });
+
+  it('should handle crash-before-cancel gracefully in abort', async () => {
+    await harness.start({
+      cwd: '/tmp/test-workspace',
+      model: { providerID: 'openai', id: 'gpt-4' },
+    });
+
+    const handle = await harness.dispatch({
+      text: 'Do something',
+      allowed_files: [],
+      read_files: [],
+    });
+
+    // Simulate crash by clearing the client
+    (harness as any).client = null;
+
+    // abort should not throw even if client is null
+    await expect(harness.abort(handle.id)).resolves.not.toThrow();
+    
+    // close should also be safe
+    await expect(harness.close()).resolves.not.toThrow();
+  });
+
+  it('should handle cancel-during-permission-wait', async () => {
+    // Mock the permission policy to simulate a pending permission
+    const mockCancelPending = vi.fn();
+    (harness as any).permissionPolicy.cancelPendingPermissions = mockCancelPending;
+
+    await harness.start({
+      cwd: '/tmp/test-workspace',
+      model: { providerID: 'openai', id: 'gpt-4' },
+    });
+
+    const handle = await harness.dispatch({
+      text: 'Do something requiring permission',
+      allowed_files: [],
+      read_files: [],
+    });
+
+    await harness.abort(handle.id);
+
+    expect(mockCancelPending).toHaveBeenCalledWith(
+      'test-agent-id',
+      'test-session-1',
+      handle.id
+    );
+    expect(mockClientInstance.sessionCancel).toHaveBeenCalledWith('test-session-1');
+  });
 });

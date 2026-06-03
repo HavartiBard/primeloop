@@ -134,6 +134,10 @@ async function* streamSse(
   }
 }
 
+/**
+ * @deprecated Legacy OpenCode adapter. Remove when no agent depends on this path.
+ * @see https://github.com/.../specs/022-acp-adapter
+ */
 export class OpenCodeAdapter implements AgentAdapter {
   constructor(private readonly fetchFn: typeof globalThis.fetch = fetch) {}
 

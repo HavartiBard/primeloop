@@ -892,19 +892,46 @@ export async function seedRegistry(pool: pg.Pool, env: NodeJS.ProcessEnv): Promi
   const { rows } = await pool.query('SELECT COUNT(*)::int AS count FROM agents')
   if (rows[0].count > 0) return  // already seeded
 
-  const seeds: Array<{ name: string; type: string; config: object }> = []
+  const seeds: Array<{ 
+    name: string; 
+    type: string; 
+    runtime_family: string; 
+    execution_mode: string; 
+    workspace_root?: string;
+    config: object 
+  }> = []
 
   if (env['RACLETTE_API_URL']) {
-    seeds.push({ name: 'raclette', type: 'hermes', config: { api_url: env['RACLETTE_API_URL'] } })
+    seeds.push({ name: 'raclette', type: 'hermes', runtime_family: 'custom', execution_mode: 'external', config: { api_url: env['RACLETTE_API_URL'] } })
   }
   if (env['LANGGRAPH_API_URL']) {
-    seeds.push({ name: 'langgraph', type: 'langgraph', config: { api_url: env['LANGGRAPH_API_URL'] } })
+    seeds.push({ name: 'langgraph', type: 'langgraph', runtime_family: 'custom', execution_mode: 'external', config: { api_url: env['LANGGRAPH_API_URL'] } })
   }
+
+  // T016/T021: Seed a sample ACP agent for development/quickstart with permission config
+  seeds.push({
+    name: 'acp-stub',
+    type: 'acp',
+    runtime_family: 'acp',
+    execution_mode: 'local',
+    workspace_root: '/workspace/acp-stub',
+    config: {
+      command: 'node',
+      args: ['--eval', 'console.log(\'{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentCapabilities":{"fs":true}}}\\n\'); process.stdin.on("data", () => {})'],
+      permission: {
+        lowRiskTools: ['read_file', 'list_directory', 'search_files'],
+        timeoutMs: 30000,
+        default: 'gate',
+      }
+    }
+  })
 
   for (const seed of seeds) {
     await pool.query(
-      `INSERT INTO agents (name, type, config) VALUES ($1, $2, $3) ON CONFLICT (name) DO NOTHING`,
-      [seed.name, seed.type, JSON.stringify(seed.config)]
+      `INSERT INTO agents (name, type, runtime_family, execution_mode, workspace_root, config) 
+       VALUES ($1, $2, $3, $4, $5, $6) 
+       ON CONFLICT (name) DO NOTHING`,
+      [seed.name, seed.type, seed.runtime_family, seed.execution_mode, seed.workspace_root, JSON.stringify(seed.config)]
     )
   }
 }

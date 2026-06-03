@@ -17,6 +17,7 @@ import {
 import { resolveToolGrant } from '../tool-grants.js'
 import { bootstrapDurableStaff } from '../durable-staff.js'
 import { PiHarness } from '../fleet-executor/pi-harness.js'
+import { AcpHarness } from '../fleet-executor/acp-harness.js'
 import type { AgentHarness } from '../fleet-executor/harness.js'
 
 const execFileAsync = promisify(execFile)
@@ -81,6 +82,7 @@ function isManagedLocalAgent(agent: RegistryAgent): boolean {
       agent.runtime_family === 'opencode'
       || agent.runtime_family === 'codex-app-server'
       || agent.runtime_family === 'pi'
+      || agent.runtime_family === 'acp'
     )
 }
 
@@ -165,7 +167,7 @@ export class OpenCodeProcessManager {
   private readonly execFileFn: typeof execFileAsync
   private readonly sleepFn: (ms: number) => Promise<void>
   private readonly processes = new Map<string, ProcessState>()
-  private readonly piHarnesses = new Map<string, PiHarness>()
+  private readonly harnesses = new Map<string, AgentHarness>()
 
   constructor(
     private readonly pool: pg.Pool,
@@ -227,14 +229,15 @@ export class OpenCodeProcessManager {
   }
 
   getRunningHarness(agentId: string): AgentHarness | undefined {
-    return this.piHarnesses.get(agentId)
+    return this.harnesses.get(agentId)
   }
 
   stopAgent(agentId: string): void {
-    const piHarness = this.piHarnesses.get(agentId)
-    if (piHarness) {
-      void piHarness.close()
-      this.piHarnesses.delete(agentId)
+    const harness = this.harnesses.get(agentId)
+    if (harness) {
+      console.log(`[process-manager] Reaping AcpHarness for agent ${agentId}`)
+      void harness.close()
+      this.harnesses.delete(agentId)
     }
     const running = this.processes.get(agentId)
     if (!running) return
@@ -414,6 +417,9 @@ export class OpenCodeProcessManager {
     if (agent.runtime_family === 'pi') {
       return this.startPiAgent(agent)
     }
+    if (agent.runtime_family === 'acp') {
+      return this.startAcpAgent(agent)
+    }
 
     const localPort = agent.local_port
     const worktreePath = agent.worktree_path
@@ -451,7 +457,29 @@ export class OpenCodeProcessManager {
       cwd: worktreePath,
       model: { providerID: provider?.type ?? 'openai', id: model },
     })
-    this.piHarnesses.set(agent.id, harness)
+    this.harnesses.set(agent.id, harness)
+  }
+
+  private async startAcpAgent(agent: RegistryAgent): Promise<void> {
+    const worktreePath = agent.worktree_path
+    const workspaceRoot = agent.workspace_root ?? worktreePath
+    if (!worktreePath) throw new Error(`worktree_path missing for acp agent ${agent.name}`)
+
+    const provider = await this.resolveProvider(agent)
+    const model = await this.resolveModel(agent)
+
+    const command = (agent.config as any)?.command ?? 'acp-agent'
+    const args = (agent.config as any)?.args ?? []
+    const permissionConfig = (agent.config as any)?.permission ?? {}
+
+    console.log(`[process-manager] Selecting AcpHarness for agent ${agent.id} (${agent.name})`)
+    const harness = new AcpHarness(agent.id, this.pool, command, args, workspaceRoot, permissionConfig)
+    await harness.start({
+      cwd: worktreePath,
+      model: { providerID: provider?.type ?? 'openai', id: model },
+    })
+    console.log(`[process-manager] AcpHarness spawned for agent ${agent.id} (${agent.name})`)
+    this.harnesses.set(agent.id, harness)
   }
 
   private async retryStart(agent: RegistryAgent, restartAttempts: number): Promise<void> {
