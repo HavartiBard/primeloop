@@ -908,23 +908,6 @@ export async function seedRegistry(pool: pg.Pool, env: NodeJS.ProcessEnv): Promi
     seeds.push({ name: 'langgraph', type: 'langgraph', runtime_family: 'custom', execution_mode: 'external', config: { api_url: env['LANGGRAPH_API_URL'] } })
   }
 
-  // T016/T021: Seed a sample ACP agent for development/quickstart with permission config
-  seeds.push({
-    name: 'acp-stub',
-    type: 'acp',
-    runtime_family: 'acp',
-    execution_mode: 'local',
-    workspace_root: '/workspace/acp-stub',
-    config: {
-      command: 'node',
-      args: ['--eval', 'console.log(\'{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"agentCapabilities":{"fs":true}}}\\n\'); process.stdin.on("data", () => {})'],
-      permission: {
-        lowRiskTools: ['read_file', 'list_directory', 'search_files'],
-        timeoutMs: 30000,
-        default: 'gate',
-      }
-    }
-  })
 
   for (const seed of seeds) {
     await pool.query(
