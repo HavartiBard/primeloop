@@ -1,4 +1,4 @@
-// Composer payload mapping helpers for ACP message submission
+// Composer payload mapping helpers for Primeloop message submission
 
 import type { ChatDraft, ToolConfig } from '../types/composer'
 
@@ -20,7 +20,7 @@ export interface AttachmentMetadata {
 }
 
 /**
- * Map composer draft to ACP message submission payload
+ * Map composer draft to Primeloop message submission payload
  */
 export function mapDraftToSendRequest(draft: ChatDraft): SendRequest {
   return {

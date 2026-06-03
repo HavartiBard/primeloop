@@ -18,7 +18,7 @@ Additionally, there is no unified view of which agent was performing which actio
 
 ## Goal
 
-Add durable checkpoint and resume capability to the Agent Control Plane using a targeted addition on top of the existing schema, without duplicating the step-log role already served by `runtime_events`.
+Add durable checkpoint and resume capability to PrimeLoop using a targeted addition on top of the existing schema, without duplicating the step-log role already served by `runtime_events`.
 
 Specifically:
 - Queue events survive backend restarts and auto-resume on boot

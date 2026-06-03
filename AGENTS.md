@@ -1,4 +1,4 @@
-# Agent Control Plane Instructions
+# PrimeLoop Instructions
 
 This repository is delegated to local OpenCode agents for both focused implementation tasks and larger end-to-end execution plans.
 
@@ -49,5 +49,5 @@ When editing `backend/src/db.ts`:
 - If no verification command is requested, do not invent one solely for process reasons.
 
 <!-- SPECKIT START -->
-Current Speckit plan: `specs/020-chat-composer-controls/plan.md`
+Current Speckit plan: `specs/023-repo-rename-plan/plan.md`
 <!-- SPECKIT END -->

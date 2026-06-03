@@ -32,7 +32,7 @@ async function handleRequest(poolConnectionString: string, request: JsonRpcReque
 
   if (method === 'initialize') {
     respond(id, {
-      serverInfo: { name: 'agent-control-plane-mcp', version: '0.1.0' },
+      serverInfo: { name: 'primeloop-mcp', version: '0.1.0' },
       capabilities: { tools: {} },
     })
     return

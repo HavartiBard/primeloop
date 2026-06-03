@@ -2,7 +2,7 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
-const backendUrl = process.env['ACP_BACKEND_URL']
+const backendUrl = process.env['PRIMELOOP_BACKEND_URL'] ?? process.env['ACP_BACKEND_URL']
 const useSetupDevMiddleware = !backendUrl
 
 function sendJson(res: { statusCode: number; setHeader: (name: string, value: string) => void; end: (body?: string) => void }, statusCode: number, body: unknown) {

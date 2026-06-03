@@ -62,7 +62,7 @@ describe('db schema', () => {
        WHERE table_name = 'approvals' ORDER BY column_name`
     )
     const cols = res.rows.map((r: { column_name: string }) => r.column_name)
-    // Accept either legacy approvals shape or ACP approvals shape.
+    // Accept either legacy approvals shape or Primeloop approvals shape.
     expect(cols).toEqual(expect.arrayContaining(['created_at', 'status']))
     expect(
       cols.includes('approval_id') || cols.includes('id')

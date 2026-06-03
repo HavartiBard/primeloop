@@ -80,8 +80,8 @@ The tasks.md in `specs/017-expand-agent-canvas-ux/tasks.md` is the authoritative
 - Start everything: `./scripts/dev-up.sh` from repo root
 - Backend: `tsx watch src/index.ts` on port 3100
 - Frontend: `vite` on port 5173
-- Dev DB: Unraid-hosted Postgres at `ACP_DEV_DATABASE_HOST` (defaults to `192.168.20.14:55433`)
-- The Docker `backend-dev` container uses `local/agent-cp-backend:current` image — needs a rebuild to pick up changes when not using `dev-up.sh`
+- Dev DB: Unraid-hosted Postgres at `PRIMELOOP_DEV_DATABASE_HOST` (defaults to `192.168.20.14:55433`)
+- The Docker `backend-dev` container uses `local/primeloop-backend:current` image — needs a rebuild to pick up changes when not using `dev-up.sh`
 
 ## Current branch
 

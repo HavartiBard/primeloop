@@ -50,8 +50,8 @@
   terminology and patterns, and covers loading, empty, success, and error states.
 - **Visual polish**: Confirm the design reuses established components, spacing,
   hierarchy, and motion patterns or explicitly justifies a new pattern.
-- **ACP architecture constraints**: Preserve Prime as the sole steering interface,
-  ACP durable records as source of truth, per-agent isolation, and single-tenant
+- **Primeloop architecture constraints**: Preserve Prime as the sole steering interface,
+  Primeloop durable records as source of truth, per-agent isolation, and single-tenant
   scope where the feature touches those areas.
 - **Complexity tracking**: Record any constitutional tension in the table below
   before proceeding.

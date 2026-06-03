@@ -66,7 +66,7 @@ export function Governance() {
   const [wsScope, setWsScope] = useState<WS_Scope>('all')
   const [wsCat, setWsCat] = useState<WS_Cat>('all')
   const [wsSearch, setWsSearch] = useState('')
-  const [wsSettings, setWsSettings] = useState({ mode: 'local' as 'local' | 'git', root_path: '/var/lib/agent-cp/workspace', remote_url: '', branch: 'main' })
+  const [wsSettings, setWsSettings] = useState({ mode: 'local' as 'local' | 'git', root_path: '/var/lib/primeloop/workspace', remote_url: '', branch: 'main' })
 
   // Queries
   const { data: config } = useQuery({ queryKey: ['prime-config'], queryFn: fetchPrimeConfig, refetchInterval: 30_000 })

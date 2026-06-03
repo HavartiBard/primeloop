@@ -5,7 +5,7 @@
 
 ## Summary
 
-Add a Loop Activity page to the ACP dashboard so you can evaluate the prime agent's work loop after the fact — seeing when ticks ran, when they were skipped (quiescent), what they cost in tokens, and what happened on each active tick.
+Add a Loop Activity page to the PrimeLoop dashboard so you can evaluate the prime agent's work loop after the fact — seeing when ticks ran, when they were skipped (quiescent), what they cost in tokens, and what happened on each active tick.
 
 ## Sidebar restructure
 

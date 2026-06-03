@@ -66,7 +66,7 @@ export class AcpHarness implements AgentHarness {
           fs: { readTextFile: true, writeTextFile: true },
           terminal: false,
         },
-        clientInfo: { name: 'agent-control-plane', version: '0.1.0' },
+        clientInfo: { name: 'primeloop', version: '0.1.0' },
       });
 
       // T013: Capability reconciliation — derive a stable string list from the structured

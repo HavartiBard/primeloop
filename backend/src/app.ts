@@ -145,7 +145,7 @@ export function createApp(deps: AppDeps): express.Express {
 }
 
 function getAllowedCorsOrigins(): Set<string> {
-  const configured = process.env['ACP_CORS_ORIGINS']
+  const configured = process.env['PRIMELOOP_CORS_ORIGINS'] ?? process.env['ACP_CORS_ORIGINS']
     ?.split(',')
     .map((value) => value.trim())
     .filter(Boolean)

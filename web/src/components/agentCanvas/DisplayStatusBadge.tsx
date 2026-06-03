@@ -1,4 +1,4 @@
-// DisplayStatusBadge.tsx - Reusable status badge component for all ACP states
+// DisplayStatusBadge.tsx - Reusable status badge component for all Primeloop states
 
 import React from 'react'
 import { DisplayStatus, getStatusLabel, getStatusColorClass, getStatusIcon } from '../../lib/displayStatus'

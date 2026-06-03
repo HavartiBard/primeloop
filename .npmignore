@@ -1,0 +1,34 @@
+# npmignore - for publishing
+
+# Development files
+node_modules/
+*.test.ts
+*.spec.ts
+tests/
+__tests__/
+
+# Build outputs
+dist/
+build/
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs and temp
+*.log*
+tmp/
+temp/
+
+# Coverage
+coverage/
+
+# Speckit-generated
+specs/019-inline-chat-artifacts/
+
+# Documentation (optional - comment out if you want to include)
+# README.md
+# CHANGELOG.md
+# LICENSE

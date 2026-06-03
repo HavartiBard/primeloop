@@ -16,6 +16,7 @@ const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url))
 const BACKEND_ROOT = path.resolve(MODULE_DIR, '..')
 const REPO_ROOT = path.resolve(BACKEND_ROOT, '..')
 const LEGACY_WORKSPACE_ROOT = '/var/lib/agent-cp/workspace'
+const DEFAULT_WORKSPACE_ROOT_PATH = '/var/lib/primeloop/workspace'
 
 export type WorkspaceMode = 'local' | 'git'
 
@@ -53,7 +54,10 @@ export interface WorkspaceTemplateBundle {
   templatePaths: Record<string, string>
 }
 
-const DEFAULT_WORKSPACE_ROOT = process.env['ACP_AGENT_WORKSPACE']?.trim() || path.join(REPO_ROOT, '.agent-workspace')
+const DEFAULT_WORKSPACE_ROOT =
+  process.env['PRIMELOOP_AGENT_WORKSPACE']?.trim()
+  || process.env['ACP_AGENT_WORKSPACE']?.trim()
+  || path.join(REPO_ROOT, '.agent-workspace')
 const DEFAULT_BRANCH = 'main'
 const WORKSPACE_FILE_DIRS = ['agents', 'prompts', 'skills', 'policies', 'memory', 'config'] as const
 const EDITABLE_EXTENSIONS = new Set(['.md', '.txt', '.yaml', '.yml', '.json'])
@@ -308,7 +312,7 @@ function shouldAutoFallbackWorkspaceRoot(root: string, error: unknown): boolean 
   if (!(error instanceof Error) || !('code' in error)) return false
   const code = String((error as NodeJS.ErrnoException).code ?? '')
   if (code !== 'EACCES' && code !== 'EPERM') return false
-  return root === LEGACY_WORKSPACE_ROOT || root.startsWith('/var/lib/agent-cp/')
+  return root === LEGACY_WORKSPACE_ROOT || root === DEFAULT_WORKSPACE_ROOT_PATH || root.startsWith('/var/lib/agent-cp/') || root.startsWith('/var/lib/primeloop/')
 }
 
 function buildWorkspaceStatus(

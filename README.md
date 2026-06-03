@@ -1,4 +1,4 @@
-# agent-control-plane
+# PrimeLoop
 
 Multi-agent dashboard and control plane.
 
@@ -25,9 +25,9 @@ Default assumptions:
 Override with env vars as needed:
 
 ```sh
-ACP_VM_IP=192.168.20.60 \
-ACP_DEV_DATABASE_HOST=192.168.20.14 \
-ACP_DEV_DATABASE_PORT=55433 \
+PRIMELOOP_VM_IP=192.168.20.60 \
+PRIMELOOP_DEV_DATABASE_HOST=192.168.20.14 \
+PRIMELOOP_DEV_DATABASE_PORT=55433 \
 ./scripts/dev-up.sh
 ```
 
@@ -66,7 +66,7 @@ If you want DB-backed tests to run against the hosted dev database instead, over
 
 ```sh
 cd backend
-TEST_DATABASE_URL='postgresql://agent_cp:agent_cp_dev@192.168.20.14:55433/agent_cp_dev' npm test
+TEST_DATABASE_URL='postgresql://primeloop:primeloop_dev@192.168.20.14:55433/primeloop_dev' npm test
 ```
 
 Use the hosted dev DB path carefully because those tests are not written as read-only checks.

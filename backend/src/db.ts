@@ -645,7 +645,7 @@ INSERT INTO agent_workspace_config (id, mode, root_path, branch, sync_status, di
 VALUES (
   'default',
   'local',
-  COALESCE(NULLIF(current_setting('app.agent_workspace_root', true), ''), '/var/lib/agent-cp/workspace'),
+  COALESCE(NULLIF(current_setting('app.agent_workspace_root', true), ''), '/var/lib/primeloop/workspace'),
   'main',
   'uninitialized',
   false
@@ -655,17 +655,17 @@ ON CONFLICT (id) DO NOTHING;
 INSERT INTO prime_agent_config (id, enabled) VALUES ('default', false) ON CONFLICT (id) DO NOTHING;
 
 -- =============================================================
--- ACP (Agentic Control Plane) tables — Spec 016
+-- Primeloop tables — Spec 016
 -- Idempotent: safe to re-run. Uses CREATE TABLE IF NOT EXISTS.
 -- =============================================================
 
 -- =============================================================
--- ACP tables — migrate legacy tables to match ACP schema
+-- Primeloop tables — migrate legacy tables to match Primeloop schema
 -- Legacy work_items and approvals tables already exist above (UUID PK / approval_id TEXT PK).
--- We convert them idempotently BEFORE creating ACP tables that FK into them.
+-- We convert them idempotently BEFORE creating Primeloop tables that FK into them.
 -- =============================================================
 
--- goals: brand new ACP table (no conflict with legacy)
+-- goals: brand new Primeloop table (no conflict with legacy)
 CREATE TABLE IF NOT EXISTS goals (
   id                 TEXT PRIMARY KEY,
   title              TEXT NOT NULL,
@@ -685,7 +685,7 @@ CREATE TABLE IF NOT EXISTS goals (
   cancelled_at       TIMESTAMPTZ
 );
 
--- agent_roles: brand new ACP table (no conflict with legacy)
+-- agent_roles: brand new Primeloop table (no conflict with legacy)
 CREATE TABLE IF NOT EXISTS agent_roles (
   id                 TEXT PRIMARY KEY,
   name               TEXT NOT NULL UNIQUE,
@@ -739,7 +739,7 @@ BEGIN
 END
 $$;
 
--- Add missing ACP columns to work_items
+-- Add missing Primeloop columns to work_items
 ALTER TABLE work_items ADD COLUMN IF NOT EXISTS goal_id TEXT REFERENCES goals(id);
 ALTER TABLE work_items ADD COLUMN IF NOT EXISTS parent_work_item_id TEXT;
 ALTER TABLE work_items ADD COLUMN IF NOT EXISTS assigned_agent_role TEXT NOT NULL DEFAULT 'prime';
@@ -765,7 +765,7 @@ $$;
 -- ---------------------------------------------------------------
 -- Migrate legacy approvals (approval_id TEXT PK) to id TEXT PK
 -- Legacy table has: approval_id, run_id, action, status, created_at, decided_at
--- ACP table needs: id, goal_id, work_item_id, requested_by_agent_role,
+-- Primeloop table needs: id, goal_id, work_item_id, requested_by_agent_role,
 --   action_summary, risk_summary, status, decision_notes, expires_at,
 --   resolved_at, created_at
 -- Wrapped in DO block for idempotency.
@@ -804,7 +804,7 @@ BEGIN
 END
 $$;
 
--- Add missing ACP columns to approvals (always safe with IF NOT EXISTS)
+-- Add missing Primeloop columns to approvals (always safe with IF NOT EXISTS)
 ALTER TABLE approvals ADD COLUMN IF NOT EXISTS goal_id TEXT REFERENCES goals(id);
 ALTER TABLE approvals ADD COLUMN IF NOT EXISTS work_item_id TEXT;
 ALTER TABLE approvals ADD COLUMN IF NOT EXISTS requested_by_agent_role TEXT NOT NULL DEFAULT 'prime';
@@ -824,7 +824,7 @@ END
 $$;
 
 -- ---------------------------------------------------------------
--- ACP tables that FK into work_items / goals (now all TEXT)
+-- Primeloop tables that FK into work_items / goals (now all TEXT)
 -- ---------------------------------------------------------------
 
 CREATE TABLE IF NOT EXISTS recovery_events (

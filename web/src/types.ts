@@ -798,7 +798,7 @@ export type CircuitNodeStatus =
   | 'neutral'
   | 'system'
 
-/** Circuit node - spatial card or node representing an ACP object */
+/** Circuit node - spatial card or node representing a Primeloop object */
 export interface CircuitNode {
   id: string
   type: CircuitNodeType

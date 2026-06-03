@@ -1,6 +1,6 @@
 # Dispatch Agent Instructions
 
-You are a dispatched agent working on the Agent Control Plane repository under coordination from a prime orchestrator. This file overrides the default AGENTS.md for this dispatch session.
+You are a dispatched agent working on the Primeloop repository under coordination from a prime orchestrator. This file overrides the default AGENTS.md for this dispatch session.
 
 ## Dispatch Contract
 

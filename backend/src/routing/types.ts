@@ -10,7 +10,7 @@ import type { EphemeralTemplate } from '../ephemeral-templates.js'
 /**
  * Execution capacity classification for a registered agent.
  * - `dispatchable`: Has a healthy runnable harness, can accept work immediately
- * - `registered`: Exists in ACP but runtime is unavailable or unproven
+ * - `registered`: Exists in Primeloop but runtime is unavailable or unproven
  * - `spawnable`: An ephemeral template that can be instantiated on demand
  */
 export type ExecutionCapacity = 'dispatchable' | 'registered' | 'spawnable'

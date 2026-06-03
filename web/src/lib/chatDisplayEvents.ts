@@ -1,4 +1,4 @@
-// chatDisplayEvents.ts - Map ACP runtime records to ChatDisplayEvent for timeline rendering
+// chatDisplayEvents.ts - Map Primeloop runtime records to ChatDisplayEvent for timeline rendering
 
 import {
   ThreadMessage,
@@ -15,7 +15,7 @@ import {
 } from '../types'
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Helper: derive status from ACP record state
+// Helper: derive status from Primeloop record state
 // ─────────────────────────────────────────────────────────────────────────────
 
 function deriveDisplayStatusForMessage(message: ThreadMessage): DisplayStatus {

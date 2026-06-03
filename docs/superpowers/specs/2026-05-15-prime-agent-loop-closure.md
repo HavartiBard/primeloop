@@ -48,7 +48,7 @@ Close all five gaps so that:
 ## Architecture
 
 ```
-container (agent-control-plane backend)
+container (primeloop backend)
 │
 ├── Prime Agent service
 │     every N seconds: enqueue cron.fast
@@ -427,8 +427,8 @@ GITEA_TOKEN: ${GITEA_TOKEN:-}
 
 ```yaml
 volumes:
-  - /mnt/user/appdata/agent-cp/workspace:/workspace
-  - /mnt/user/appdata/agent-cp/codex:/root/.codex
+  - /mnt/user/appdata/primeloop/workspace:/workspace
+  - /mnt/user/appdata/primeloop/codex:/root/.codex
 ```
 
 `/workspace/repo` must contain a git checkout of the target repository (the one agents will modify). This volume is bind-mounted so changes made by agents in worktrees persist across container restarts.

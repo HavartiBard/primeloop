@@ -2,13 +2,13 @@ services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_DB: agent_cp
-      POSTGRES_USER: agent_cp
+      POSTGRES_DB: primeloop
+      POSTGRES_USER: primeloop
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?required}
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD", "pg_isready", "-U", "agent_cp"]
+      test: ["CMD", "pg_isready", "-U", "primeloop"]
       interval: 5s
       timeout: 5s
       retries: 5
@@ -16,7 +16,7 @@ services:
   backend:
     build: .
     environment:
-      DATABASE_URL: postgresql://agent_cp:${POSTGRES_PASSWORD}@postgres:5432/agent_cp
+      DATABASE_URL: postgresql://primeloop:${POSTGRES_PASSWORD}@postgres:5432/primeloop
       LANGGRAPH_API_URL: ${LANGGRAPH_API_URL:?required}
       RACLETTE_API_URL: ${RACLETTE_API_URL:-http://192.168.20.169:9119}
       RACLETTE_SESSION_TOKEN: ${RACLETTE_SESSION_TOKEN:-}

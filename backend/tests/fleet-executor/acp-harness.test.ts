@@ -62,7 +62,7 @@ describe('AcpHarness Integration', () => {
     expect(mockClientInstance.initialize).toHaveBeenCalledWith({
       protocolVersion: 1,
       clientCapabilities: { fs: { readTextFile: true, writeTextFile: true }, terminal: false },
-      clientInfo: { name: 'agent-control-plane', version: '0.1.0' },
+      clientInfo: { name: 'primeloop', version: '0.1.0' },
     });
     
     // Verify updateAgent was called. The mock returns { agentCapabilities: { fs: true } }

@@ -85,7 +85,7 @@
 - **Reliability & Operations**: [Describe logging, metrics, health signals, failure handling, and rollback/recovery expectations]
 - **UX Consistency**: [Describe the primary flow, terminology, and loading/empty/success/error states]
 - **Design Consistency**: [Describe reused UI patterns/tokens/components and any justified new pattern]
-- **ACP Architecture Constraints**: [If applicable, describe Prime routing, durable records, isolation, and single-tenant impact; otherwise state "No architectural change"]
+- **Primeloop Architecture Constraints**: [If applicable, describe Prime routing, durable records, isolation, and single-tenant impact; otherwise state "No architectural change"]
 
 ## Requirements *(mandatory)*
 

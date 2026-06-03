@@ -167,7 +167,7 @@ export async function validateDelegationTarget(
 }
 
 /**
- * Parse delegate action payload from LLM output into ACP's structured action shape.
+ * Parse delegate action payload from LLM output into Primeloop's structured action shape.
  * Supports both snake_case and camelCase field names.
  */
 export function parseDelegateActionPayload(

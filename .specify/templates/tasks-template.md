@@ -71,7 +71,7 @@ Examples of foundational tasks (adjust based on your project):
 - [ ] T009 Setup environment configuration management
 - [ ] T010 Identify the simplest viable design and remove speculative abstractions from the plan
 - [ ] T011 Define observability, health checks, rollback path, and operational ownership for the feature
-- [ ] T012 Verify reused UX patterns, shared components, and ACP architectural constraints for any affected surface
+- [ ] T012 Verify reused UX patterns, shared components, and Primeloop architectural constraints for any affected surface
 
 **Checkpoint**: Foundation ready - user story implementation can now begin in parallel
 

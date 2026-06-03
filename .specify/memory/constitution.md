@@ -20,10 +20,10 @@ Sync Impact Report
 - Follow-up TODOs:
   - None
 -->
-# Agent Control Plane Constitution
+# Primeloop Constitution
 
-ACP is a self-hosted Personal Chief of Staff for one human, running on that
-operator's own server. ACP exists to turn conversational intent into async-first,
+Primeloop is a self-hosted Personal Chief of Staff for one human, running on that
+operator's own server. Primeloop exists to turn conversational intent into async-first,
 durable execution without requiring minute-by-minute supervision.
 
 ## Core Principles
@@ -33,7 +33,7 @@ Production code MUST be clear, reviewable, and maintainable. Changes MUST keep
 modules cohesive, names explicit, failure paths handled, and behavior covered by
 verification appropriate to the risk and surface area touched. Duplication MUST be
 removed when it creates maintenance risk, but abstraction MUST not be introduced
-without a concrete present need. Rationale: ACP is long-lived infrastructure and
+without a concrete present need. Rationale: Primeloop is long-lived infrastructure and
 product code; unclear code slows delivery and silently raises operational risk.
 
 ### II. YAGNI Over Premature Complexity
@@ -57,7 +57,7 @@ Primary workflows MUST be easy to discover, easy to understand, and consistent
 across surfaces. Features MUST minimize operator effort, preserve predictable
 terminology, and handle loading, empty, success, and error states intentionally.
 If a user needs special knowledge to complete a routine task, the design is not yet
-good enough. Rationale: ACP is a control product; friction, ambiguity, and mixed
+good enough. Rationale: Primeloop is a control product; friction, ambiguity, and mixed
 interaction patterns directly reduce trust and usefulness.
 
 ### V. Visual Design Must Feel Slick and Intentional
@@ -70,18 +70,18 @@ quality, trustworthiness, and ease.
 
 ## Architecture Constraints
 
-The following constraints remain mandatory for ACP-specific implementation:
+The following constraints remain mandatory for Primeloop-specific implementation:
 
 - User intent MUST enter through Prime; secondary surfaces MAY expose promoted
   actions, but they MUST route through Prime rather than creating parallel control
   paths.
-- Durable records in ACP's database MUST remain the source of truth for work,
+- Durable records in Primeloop's database MUST remain the source of truth for work,
   decisions, approvals, and artifacts; session state and transient UI state are
   never authoritative.
 - Per-agent isolation remains mandatory through dedicated worktrees, working
   directories, scoped environments, short-lived credentials, and enforced runtime
   boundaries.
-- ACP remains single-tenant and self-hosted by design; one instance serves one
+- Primeloop remains single-tenant and self-hosted by design; one instance serves one
   human operator unless this Constitution is amended.
 
 ## Delivery & Review Standards

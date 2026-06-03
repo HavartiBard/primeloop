@@ -1,4 +1,4 @@
-// Composer validation helpers for ACP chat input
+// Composer validation helpers for Primeloop chat input
 
 import type { ChatDraft, ModelOption, ToolConfig } from '../types/composer'
 

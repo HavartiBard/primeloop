@@ -1,6 +1,6 @@
 # Operations Portal UI Redesign — Design Spec
 **Date:** 2026-05-06  
-**Scope:** Two new views for the agent-control-plane Operations Portal
+**Scope:** Two new views for the PrimeLoop Operations Portal
 
 ---
 

@@ -354,7 +354,7 @@ export function CollaborationRoomsView({
   const [selectedWorkId, setSelectedWorkId] = useState<string | null>(null)
   const [clockNow, setClockNow] = useState(() => Date.now())
   const [unreadMessages, setUnreadMessages] = useState(0)
-  // Composer state for ACP chat input enhancements
+  // Composer state for Primeloop chat input enhancements
   const [composerState, setComposerState] = useState<ChatDraft>({
     text: '',
     modelId: null,

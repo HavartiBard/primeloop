@@ -108,7 +108,7 @@ function mapFunctionKeyToPurpose(key: PrimeOnboardingFunctionKey): string {
     planning: 'Break down goals and create execution plans',
     coding_execution: 'Write and execute code',
     review_validation: 'Review code and validate outputs',
-    platform_maintenance: 'Maintain ACP platform infrastructure',
+    platform_maintenance: 'Maintain Primeloop platform infrastructure',
   }
   return purposes[key] ?? key
 }
@@ -177,7 +177,7 @@ export function buildTeamPlanAgent(
 export function buildTeamPlan(overrides?: Partial<TeamPlan>): TeamPlan {
   return {
     id: 'team-plan-1',
-    purpose: 'Initial team setup for ACP',
+    purpose: 'Initial team setup for Primeloop',
     confirmation_status: 'proposed',
     agents: [
       buildTeamPlanAgent({ role: 'sre', name: 'SRE Agent' }),

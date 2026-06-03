@@ -15,7 +15,7 @@ import {
   getAgentRuntimeConfig,
 } from '../src/registry.js'
 
-const TEST_DB = process.env.TEST_DATABASE_URL ?? 'postgresql://agent_cp:agent_cp_dev@127.0.0.1:5434/agent_cp_test'
+const TEST_DB = process.env.TEST_DATABASE_URL ?? 'postgresql://primeloop:primeloop_dev@127.0.0.1:5434/primeloop_test'
 
 describe('ephemeral templates', () => {
   let pool: pg.Pool

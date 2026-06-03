@@ -1,6 +1,6 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Circuit View Model (spec 017)
-// Derive CircuitCanvasView from existing ACP records
+// Derive CircuitCanvasView from existing Primeloop records
 // ─────────────────────────────────────────────────────────────────────────────
 
 import type {

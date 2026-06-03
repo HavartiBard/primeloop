@@ -1,4 +1,4 @@
-// Composer types for ACP chat input
+// Composer types for Primeloop chat input
 
 export interface ChatDraft {
   text: string;

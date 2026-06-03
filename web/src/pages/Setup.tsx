@@ -774,7 +774,7 @@ function ProviderCard({ draft, onChange, onToggle, onConnect, onDeviceAuth }: {
                   </div>
                 )}
                 <p className="text-xs text-[var(--muted)]">
-                  This flow still depends on the ACP backend routes behind `/api/providers/*/codex/auth`. On the Vite-only dev server it can stall or time out unless the backend is also running.
+                  This flow still depends on the PrimeLoop backend routes behind `/api/providers/*/codex/auth`. On the Vite-only dev server it can stall or time out unless the backend is also running.
                 </p>
               </>
             )}
@@ -867,8 +867,8 @@ function ProviderCard({ draft, onChange, onToggle, onConnect, onDeviceAuth }: {
               />
               <p className="mt-1 text-xs text-[var(--muted)]">
                 {draft.type === 'ollama'
-                  ? 'Use the Ollama server root. ACP will query /api/tags when you connect.'
-                  : 'For GoudAI or any OpenAI-compatible local server, use the API base URL ending in /v1. ACP will query /models when you connect.'}
+                  ? 'Use the Ollama server root. PrimeLoop will query /api/tags when you connect.'
+                  : 'For GoudAI or any OpenAI-compatible local server, use the API base URL ending in /v1. PrimeLoop will query /models when you connect.'}
               </p>
             </div>
             {draft.type === 'litellm' && (
@@ -1535,7 +1535,7 @@ function StepWorkspace({ state, onChange }: { state: WizardState; onChange: (s: 
   return (
     <div className="space-y-4">
       <p className="text-xs text-[var(--muted)]">
-        The Agent Workspace stores editable agent profiles, prompt templates, skills, and operating notes outside the ACP codebase.
+        The Agent Workspace stores editable agent profiles, prompt templates, skills, and operating notes outside the PrimeLoop codebase.
       </p>
       <div>
         <label className={LABEL_CLS}>Workspace mode</label>
@@ -1569,7 +1569,7 @@ function StepWorkspace({ state, onChange }: { state: WizardState; onChange: (s: 
         <input
           value={workspace.root_path}
           onChange={(e) => update({ root_path: e.target.value })}
-          placeholder="/var/lib/agent-cp/workspace"
+          placeholder="/var/lib/primeloop/workspace"
           className={INPUT_CLS}
         />
       </div>
@@ -1596,7 +1596,7 @@ function StepWorkspace({ state, onChange }: { state: WizardState; onChange: (s: 
         </>
       )}
       <div className="rounded-lg border border-[var(--border-soft)] bg-[var(--panel-subtle)] p-3 text-xs text-[var(--muted)]">
-        ACP will scaffold `agents/`, `prompts/`, `skills/`, `policies/`, `memory/`, and `config/`, then use those markdown files as the editable behavior layer for Prime.
+        PrimeLoop will scaffold `agents/`, `prompts/`, `skills/`, `policies/`, `memory/`, and `config/`, then use those markdown files as the editable behavior layer for Prime.
       </div>
     </div>
   )
@@ -1709,11 +1709,11 @@ function StepIntro() {
   return (
     <div className="space-y-5">
       <div className="rounded-xl border border-[rgba(110,231,255,0.18)] bg-[linear-gradient(180deg,rgba(15,27,45,0.96),rgba(9,18,32,0.94))] p-5">
-        <div className="text-[11px] uppercase tracking-[0.18em] text-[var(--accent)]">Agent Control Plane</div>
+        <div className="text-[11px] uppercase tracking-[0.18em] text-[var(--accent)]">PrimeLoop</div>
         <h2 className="mt-2 text-lg font-semibold text-[var(--text)]">Set up your operator layer</h2>
         <div className="mt-3 space-y-3 text-sm leading-6 text-[var(--muted)]">
           <p>
-            ACP is a control surface for configuring providers, routing work across models, and shaping how your prime agent behaves.
+            PrimeLoop is a control surface for configuring providers, routing work across models, and shaping how your prime agent behaves.
           </p>
           <p>
             This setup walks through LLM access, routing defaults, personality, and standing rules so the system can start in a usable state.

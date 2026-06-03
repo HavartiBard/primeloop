@@ -232,8 +232,8 @@ Host mounts the shared codebase into the container:
 ```yaml
 # docker-compose.prod.yml
 volumes:
-  - /mnt/user/appdata/agent-cp/workspace:/workspace/repo
-  - /mnt/user/appdata/agent-cp/agents:/workspace/agents
+  - /mnt/user/appdata/primeloop/workspace:/workspace/repo
+  - /mnt/user/appdata/primeloop/agents:/workspace/agents
 ```
 
 ### Per-Agent Worktrees
@@ -552,8 +552,8 @@ RUN npm install -g opencode@latest
 environment:
   - SECRET_ENCRYPTION_KEY=${SECRET_ENCRYPTION_KEY}
 volumes:
-  - /mnt/user/appdata/agent-cp/workspace:/workspace/repo
-  - /mnt/user/appdata/agent-cp/agents:/workspace/agents
+  - /mnt/user/appdata/primeloop/workspace:/workspace/repo
+  - /mnt/user/appdata/primeloop/agents:/workspace/agents
 ```
 
 ---

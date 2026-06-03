@@ -23,13 +23,13 @@ const {
   SLACK_CHANNEL_ID = 'C0AU0620ATX',
   SSH_KEY_PATH = '/app/ssh/id_ed25519_homelab',
   SSH_USER = 'root',
-  ACP_MINIMAL_BOOT = '0',
-  ACP_STARTUP_TRACE = '0',
+  PRIMELOOP_MINIMAL_BOOT = process.env['ACP_MINIMAL_BOOT'] ?? '0',
+  PRIMELOOP_STARTUP_TRACE = process.env['ACP_STARTUP_TRACE'] ?? '0',
 } = process.env
 
 if (!DATABASE_URL) throw new Error('DATABASE_URL is required')
-const minimalBoot = ACP_MINIMAL_BOOT === '1'
-const startupTrace = ACP_STARTUP_TRACE === '1'
+const minimalBoot = PRIMELOOP_MINIMAL_BOOT === '1'
+const startupTrace = PRIMELOOP_STARTUP_TRACE === '1'
 
 function traceStep(message: string): void {
   if (startupTrace) {
@@ -178,7 +178,7 @@ if (!minimalBoot && SLACK_BOT_TOKEN && SLACK_APP_TOKEN) {
 
 traceStep('binding http server')
 server.listen(parseInt(PORT), () => {
-  console.log(`Agent control plane backend listening on :${PORT}${minimalBoot ? ' (minimal boot)' : ''}`)
+  console.log(`PrimeLoop backend listening on :${PORT}${minimalBoot ? ' (minimal boot)' : ''}`)
 })
 
 process.on('SIGTERM', async () => {

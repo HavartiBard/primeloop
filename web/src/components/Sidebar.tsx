@@ -47,9 +47,9 @@ export function Sidebar({ items, primeItems, primeName, current, onNavigate, the
       {/* Logo */}
       <div className="mb-2 flex items-center gap-2.5 rounded-xl border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-2.5">
         <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg border border-[var(--border-soft)] bg-[var(--panel-subtle)] text-[11px] font-bold text-[var(--accent-strong)]">
-          ACP
+          PL
         </div>
-        <span className="text-[10px] font-bold uppercase tracking-[0.15em] text-[var(--muted)]">Control</span>
+        <span className="text-[10px] font-bold uppercase tracking-[0.15em] text-[var(--muted)]">PrimeLoop</span>
       </div>
 
       {/* Main nav */}
