@@ -115,7 +115,7 @@ const ACTION_MODULE: PrimeModule = {
     if (deps.executionMode === 'shadow') {
       return { detail: `${state.decision.actions.length} actions observed in shadow mode` }
     }
-    state.actions = await dispatchPrimeActions(deps.pool, state.context, state.decision)
+    state.actions = await dispatchPrimeActions(deps.pool, state.context, state.decision, deps.getHarness)
     state.budget.actionsDispatched = state.actions.length
     return { detail: `${state.actions.length} actions dispatched` }
   },

@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useMcpServers } from '../hooks/useMcpServers'
 import type { MCPServer } from '../types'
+import { AppModal } from '../components/AppModal'
 
 interface McpServerFormState {
   name: string
@@ -60,12 +61,17 @@ function McpServerModal({ mode, server, onClose, onSubmit }: {
   const labelCls = 'block text-xs text-[var(--muted)] mb-1'
 
   return (
-    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
-      <div className="bg-[var(--panel)] border border-[var(--border-soft)] rounded-lg p-6 w-full max-w-lg max-h-[90vh] overflow-y-auto">
-        <h2 className="text-sm font-semibold text-[var(--text)] mb-4">
-          {mode === 'add' ? 'Add MCP Server' : 'Edit MCP Server'}
-        </h2>
-        <form onSubmit={handleSubmit} className="flex flex-col gap-3">
+    <AppModal
+      open
+      onClose={onClose}
+      eyebrow="Integrations"
+      title={mode === 'add' ? 'Add MCP Server' : 'Edit MCP Server'}
+      tone="queued"
+      widthClassName="w-[min(720px,100%)]"
+      heightClassName="h-[min(88vh,760px)]"
+      bodyClassName="min-h-0 flex-1 overflow-y-auto bg-[var(--panel)] p-6"
+    >
+      <form onSubmit={handleSubmit} className="flex flex-col gap-3">
           <div>
             <label className={labelCls}>Name *</label>
             <input required value={form.name} onChange={setField('name')} className={inputCls} />
@@ -113,9 +119,8 @@ function McpServerModal({ mode, server, onClose, onSubmit }: {
               {mode === 'add' ? 'Add' : 'Save'}
             </button>
           </div>
-        </form>
-      </div>
-    </div>
+      </form>
+    </AppModal>
   )
 }
 

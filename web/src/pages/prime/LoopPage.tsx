@@ -1,11 +1,23 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { abortPrimeSession, fetchPrimeLoopSessions, fetchPrimeSession } from '../../api'
-import type { AgentEvent, PrimeSession } from '../../types'
+import {
+  abortPrimeSession,
+  appendThreadMessage,
+  createRuntimeWorkItem,
+  createThread,
+  fetchPrimeLoopSessions,
+  sendPrimeMessage,
+  fetchPrimeSession,
+  fetchRuntimeWorkItems,
+  fetchThreads,
+} from '../../api'
+import type { AgentEvent, PrimeSession, RuntimeThread, RuntimeWorkItem } from '../../types'
 import { useLoopStatus } from '../../hooks/useLoopStatus'
 import { useWebSocket } from '../../hooks/useWebSocket'
 
 type TimeRange = '1h' | '6h' | '24h' | '7d'
+
+const FOCUSED_ROOM_STORAGE_KEY = 'primeloop:focus-room-id'
 
 const RANGE_MS: Record<TimeRange, number> = {
   '1h':  1 * 60 * 60 * 1000,
@@ -51,6 +63,52 @@ function relativeTime(iso: string): string {
 function isQuiescent(s: PrimeSession): boolean {
   return (s.reasoning_summary ?? '').startsWith('Skipped:')
 }
+
+function truncateForTitle(value: string, max = 72): string {
+  const normalized = value.replace(/\s+/g, ' ').trim()
+  if (normalized.length <= max) return normalized
+  return `${normalized.slice(0, max - 1)}…`
+}
+
+function errorSignature(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/["'`]/g, '')
+    .replace(/[0-9a-f]{8}-[0-9a-f-]{27,}/g, '<uuid>')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function investigationSummary(session: PrimeSession): string {
+  return session.error?.trim() || session.reasoning_summary?.trim() || `Prime control-loop session ${session.id} failed`
+}
+
+function findExistingInvestigation(
+  failureSignature: string,
+  threads: RuntimeThread[],
+  workItems: RuntimeWorkItem[],
+): { thread: RuntimeThread | null; workItem: RuntimeWorkItem | null } {
+  const workItem = workItems.find((item) => {
+    const metadata = item.metadata ?? {}
+    return metadata['failure_signature'] === failureSignature
+      && metadata['investigation_status'] === 'open'
+      && !['completed', 'failed', 'cancelled'].includes(item.status)
+  }) ?? null
+
+  const threadFromWorkItem = workItem?.thread_id
+    ? threads.find((thread) => thread.id === workItem.thread_id) ?? null
+    : null
+
+  const thread = threadFromWorkItem ?? threads.find((item) => {
+    const metadata = item.metadata ?? {}
+    return metadata['failure_signature'] === failureSignature
+      && metadata['kind'] === 'investigation'
+      && item.status !== 'closed'
+  }) ?? null
+
+  return { thread, workItem }
+}
+
 function sessionTokens(s: PrimeSession): number { return s.token_count ?? 0 }
 function sessionActions(s: PrimeSession): number {
   return Array.isArray(s.actions_taken) ? s.actions_taken.length : 0
@@ -143,7 +201,15 @@ function PipelineRuns({ session }: { session: PrimeSession }) {
   )
 }
 
-function TickDetail({ session }: { session: PrimeSession }) {
+function TickDetail({
+  session,
+  onStartInvestigation,
+  investigation,
+}: {
+  session: PrimeSession
+  onStartInvestigation: (session: PrimeSession) => Promise<void>
+  investigation?: { loading?: boolean; threadId?: string; workItemId?: string; error?: string }
+}) {
   const actions = Array.isArray(session.actions_taken) ? session.actions_taken as Array<{ type?: string; reason?: string }> : []
   const failedModules = (session.module_runs ?? []).filter((r) => r.status === 'failed')
   const isFailed = session.status === 'failed'
@@ -157,12 +223,30 @@ function TickDetail({ session }: { session: PrimeSession }) {
 
       {/* Failure banner */}
       {isFailed && (
-        <div className="rounded-md border border-amber-400/30 bg-amber-400/8 px-3 py-2 flex flex-col gap-1.5">
-          <div className="text-[10px] font-bold uppercase tracking-widest text-amber-400">Failure detail</div>
+        <div className="rounded-md border border-amber-400/30 bg-amber-400/8 px-3 py-2 flex flex-col gap-2">
+          <div className="flex items-start justify-between gap-3">
+            <div className="text-[10px] font-bold uppercase tracking-widest text-amber-400">Failure detail</div>
+            <button
+              type="button"
+              onClick={() => { void onStartInvestigation(session) }}
+              disabled={investigation?.loading}
+              className="rounded-md border border-amber-400/30 bg-amber-400/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-amber-200 transition hover:bg-amber-400/20 disabled:cursor-wait disabled:opacity-60"
+            >
+              {investigation?.loading ? 'Starting…' : investigation?.threadId ? 'Open room' : 'Start investigation'}
+            </button>
+          </div>
           {session.error && <div className="font-mono text-[11px] text-amber-300 break-all">{session.error}</div>}
           {session.reasoning_summary && session.reasoning_summary !== session.error && <div className="text-[11px] text-amber-200/80 leading-relaxed">{session.reasoning_summary}</div>}
           {failedModules.length === 0 && !session.error && !session.reasoning_summary && (
             <div className="text-[11px] text-amber-200/60">No error detail recorded. Check backend logs for session {session.id}.</div>
+          )}
+          {investigation?.threadId && (
+            <div className="text-[11px] text-amber-200/80">
+              Investigation room ready{investigation.workItemId ? ` · work item ${investigation.workItemId}` : ''}.
+            </div>
+          )}
+          {investigation?.error && (
+            <div className="text-[11px] text-rose-200">{investigation.error}</div>
           )}
         </div>
       )}
@@ -318,13 +402,17 @@ function LiveTickRow({ session, label, isLlmPhase, elapsedSeconds, wsEvents }: {
           <span className={`relative inline-flex h-2 w-2 rounded-full ${dotCls}`} />
         </span>
         <span className="w-20 shrink-0 text-[var(--muted)]">{relativeTime(session.started_at)}</span>
-        <span className={`font-semibold ${textCls}`}>{label}</span>
-        {(liveModel?.model ?? session.model_used) && (
-          <span className={`hidden sm:inline font-mono text-[10px] ${mutedCls} truncate max-w-[140px]`}>
-            {liveModel?.model ?? session.model_used}
-          </span>
-        )}
-        <span className={`ml-auto font-mono tabular-nums text-[11px] ${mutedCls}`}>{elapsedStr}</span>
+        <span className={`shrink-0 font-semibold ${textCls}`}>{label}</span>
+        <span className="hidden min-w-0 flex-1 sm:block">
+          {(liveModel?.model ?? session.model_used) && (
+            <span className={`block truncate font-mono text-[10px] ${mutedCls}`}>
+              {liveModel?.model ?? session.model_used}
+            </span>
+          )}
+        </span>
+        <span className={`w-20 shrink-0 text-right font-mono tabular-nums text-[11px] ${mutedCls}`}>{sessionTokens(session).toLocaleString()} tok</span>
+        <span className={`w-12 shrink-0 text-right font-mono text-[10px] ${liveActions.length > 0 ? 'text-indigo-300' : mutedCls}`}>{liveActions.length}↗</span>
+        <span className={`w-12 shrink-0 text-right font-mono tabular-nums text-[11px] ${mutedCls}`}>{elapsedStr}</span>
         <button type="button" onClick={kill} disabled={killing} title="Kill this session"
           className={`ml-2 rounded px-1.5 py-0.5 text-[11px] font-semibold opacity-50 hover:opacity-100 hover:text-rose-400 hover:bg-rose-400/10 transition disabled:opacity-30 ${textCls}`}>
           {killing ? '…' : 'Kill'}
@@ -472,6 +560,132 @@ export function LoopPage() {
     [sessions, activeOnly]
   )
 
+  const { data: threads = [] } = useQuery({
+    queryKey: ['threads'],
+    queryFn: fetchThreads,
+    staleTime: 5_000,
+  })
+
+  const { data: workItems = [] } = useQuery({
+    queryKey: ['runtime-work-items'],
+    queryFn: () => fetchRuntimeWorkItems(),
+    staleTime: 5_000,
+  })
+
+  const [investigationState, setInvestigationState] = useState<Record<string, {
+    loading?: boolean
+    threadId?: string
+    workItemId?: string
+    error?: string
+  }>>({})
+
+  const startInvestigation = useCallback(async (session: PrimeSession) => {
+    const summary = investigationSummary(session)
+    const failureSignature = errorSignature(summary)
+
+    const existing = findExistingInvestigation(failureSignature, threads, workItems)
+    if (existing.thread) {
+      window.sessionStorage.setItem(FOCUSED_ROOM_STORAGE_KEY, existing.thread.id)
+      setInvestigationState((current) => ({
+        ...current,
+        [session.id]: { threadId: existing.thread!.id, workItemId: existing.workItem?.id },
+      }))
+      window.location.assign('/')
+      return
+    }
+
+    setInvestigationState((current) => ({
+      ...current,
+      [session.id]: { ...current[session.id], loading: true, error: undefined },
+    }))
+
+    try {
+      const title = `Investigate control-loop failure: ${truncateForTitle(summary)}`
+      const description = [
+        `Prime control-loop session ${session.id} failed.`,
+        `Started: ${session.started_at}`,
+        session.completed_at ? `Completed: ${session.completed_at}` : null,
+        session.last_step ? `Last step: ${session.last_step}` : null,
+        session.error ? `Failure: ${session.error}` : null,
+        session.reasoning_summary && session.reasoning_summary !== session.error ? `Summary: ${session.reasoning_summary}` : null,
+      ].filter(Boolean).join('\n')
+
+      const thread = await createThread({
+        title,
+        metadata: {
+          kind: 'investigation',
+          source: 'prime-loop-ui',
+          failure_signature: failureSignature,
+          source_session_id: session.id,
+        },
+      })
+
+      const workItem = existing.workItem ?? await createRuntimeWorkItem({
+        title,
+        description,
+        status: 'active',
+        lane: 'operations',
+        owner_label: 'Prime',
+        thread_id: thread.id,
+        metadata: {
+          source: 'prime-loop-ui',
+          action_type: 'control_loop_failure_investigation',
+          failure_signature: failureSignature,
+          source_session_id: session.id,
+          latest_session_id: session.id,
+          error: session.error ?? summary,
+          investigation_status: 'open',
+        },
+      })
+
+      await appendThreadMessage(thread.id, {
+        role: 'system',
+        sender: 'Prime',
+        content: description,
+        metadata: {
+          investigation: {
+            source: 'prime-loop-ui',
+            source_session_id: session.id,
+            work_item_id: workItem.id,
+            failure_signature: failureSignature,
+          },
+        },
+      })
+
+      await sendPrimeMessage(thread.id, {
+        content: [
+          `Start investigation for Prime control-loop failure session ${session.id}.`,
+          `Work item: ${workItem.id}.`,
+          session.last_step ? `Last step: ${session.last_step}.` : null,
+          session.error ? `Failure: ${session.error}` : null,
+          session.reasoning_summary && session.reasoning_summary !== session.error ? `Summary: ${session.reasoning_summary}` : null,
+          'Please investigate the failure, identify likely root cause, and propose or take the next remediation step.',
+        ].filter(Boolean).join(' '),
+        sender: 'operator',
+      })
+
+      await Promise.all([
+        qcMain.invalidateQueries({ queryKey: ['threads'] }),
+        qcMain.invalidateQueries({ queryKey: ['runtime-work-items'] }),
+      ])
+
+      window.sessionStorage.setItem(FOCUSED_ROOM_STORAGE_KEY, thread.id)
+      setInvestigationState((current) => ({
+        ...current,
+        [session.id]: { loading: false, threadId: thread.id, workItemId: workItem.id },
+      }))
+      window.location.assign('/')
+    } catch (error) {
+      setInvestigationState((current) => ({
+        ...current,
+        [session.id]: {
+          loading: false,
+          error: error instanceof Error ? error.message : 'Failed to start investigation',
+        },
+      }))
+    }
+  }, [qcMain, threads, workItems])
+
   const stats = useMemo(() => {
     const total = sessions.length
     const skipped = sessions.filter(isQuiescent).length
@@ -578,17 +792,27 @@ export function LoopPage() {
                       {dot}
                       <span className="w-20 shrink-0 text-[var(--muted)]">{relativeTime(s.started_at)}</span>
                       {failed
-                        ? <span className="font-semibold text-amber-400">Failed</span>
+                        ? <span className="shrink-0 font-semibold text-amber-400">Failed</span>
                         : quiescent
-                          ? <span className="text-[var(--muted)]">Skipped</span>
-                          : <span className={`font-semibold ${hadLlm ? 'text-emerald-300' : 'text-sky-300'}`}>Done</span>}
-                      {failed && s.last_step && <span className="text-[10px] text-amber-400/70 font-mono ml-1">@ {s.last_step}</span>}
-                      {!quiescent && sessionTokens(s) > 0 && <span className="ml-auto text-[var(--muted)]">{sessionTokens(s).toLocaleString()} tok</span>}
-                      {sessionActions(s) > 0 && <span className="ml-2 rounded-full bg-indigo-400/15 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-300">{sessionActions(s)}↗</span>}
-                      {quiescent && <span className="ml-auto text-[10px] text-[var(--muted)]">quiescent</span>}
-                      {!quiescent && !failed && s.model_used && <span className="ml-2 hidden sm:inline text-[10px] text-[var(--muted)] font-mono truncate max-w-[120px]">{s.model_used}</span>}
+                          ? <span className="shrink-0 text-[var(--muted)]">Skipped</span>
+                          : <span className={`shrink-0 font-semibold ${hadLlm ? 'text-emerald-300' : 'text-sky-300'}`}>Done</span>}
+                      <span className="hidden min-w-0 flex-1 sm:block">
+                        {failed && s.last_step && <span className="font-mono text-[10px] text-amber-400/70">@ {s.last_step}</span>}
+                        {!quiescent && !failed && s.model_used && <span className="block truncate font-mono text-[10px] text-[var(--muted)]">{s.model_used}</span>}
+                        {quiescent && <span className="text-[10px] text-[var(--muted)]">quiescent</span>}
+                      </span>
+                      <span className="w-20 shrink-0 text-right font-mono tabular-nums text-[11px] text-[var(--muted)]">{quiescent ? '—' : `${sessionTokens(s).toLocaleString()} tok`}</span>
+                      <span className={`w-12 shrink-0 text-right font-mono text-[10px] ${sessionActions(s) > 0 ? 'text-indigo-300' : 'text-[var(--muted)]'}`}>{sessionActions(s)}↗</span>
                     </button>
-                    {isOpen && <div className="px-4 pb-3"><TickDetail session={s} /></div>}
+                    {isOpen && (
+                      <div className="px-4 pb-3">
+                        <TickDetail
+                          session={s}
+                          onStartInvestigation={startInvestigation}
+                          investigation={investigationState[s.id]}
+                        />
+                      </div>
+                    )}
                   </div>
                 )
               })}

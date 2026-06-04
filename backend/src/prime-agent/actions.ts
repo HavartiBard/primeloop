@@ -1,4 +1,5 @@
 import type pg from 'pg'
+import type { AgentHarness } from '../fleet-executor/harness.js'
 import { ensurePendingApproval } from '../approvals.js'
 import {
   appendThreadMessage,
@@ -48,7 +49,8 @@ export interface PrimeActionDispatchResult {
 export async function dispatchPrimeActions(
   pool: pg.Pool,
   ctx: PrimeContext,
-  decision: PrimeDecision
+  decision: PrimeDecision,
+  getHarness: (agentId: string) => AgentHarness | undefined,
 ): Promise<PrimeActionDispatchResult[]> {
   const results: PrimeActionDispatchResult[] = []
 
@@ -60,7 +62,7 @@ export async function dispatchPrimeActions(
 
     switch (action.type) {
       case 'delegate':
-        results.push(await dispatchRoutingDelegate(pool, ctx, action))
+        results.push(await dispatchRoutingDelegate(pool, ctx, action, getHarness))
         break
       case 'update_work_item':
         results.push(await dispatchUpdateWorkItem(pool, ctx, action))
@@ -85,7 +87,8 @@ export async function dispatchPrimeActions(
 async function dispatchRoutingDelegate(
   pool: pg.Pool,
   ctx: PrimeContext,
-  action: PrimeAction
+  action: PrimeAction,
+  getHarness: (agentId: string) => AgentHarness | undefined,
 ): Promise<PrimeActionDispatchResult> {
   const coordinatorName = await getCoordinatorName(pool)
   const title = normalizedTitle(
@@ -116,7 +119,7 @@ async function dispatchRoutingDelegate(
 
   // Route through the routing layer to validate executable runtime availability (FR-002)
   const outcome = await routeWorkRequest(
-    { pool, getHarness: () => undefined }, // harness check is done in runtime-checker via heartbeat
+    { pool, getHarness },
     routingRequest,
   )
 

@@ -20,12 +20,13 @@ interface Props {
   onNavigate: (href: string) => void
   theme: ThemeId
   onToggleTheme: () => void
+  primeConfigOpen?: boolean
 }
 
 const PRIME_EXPANDED_KEY = 'prime-nav-expanded'
 const SIDEBAR_COLLAPSED_KEY = 'sidebar-collapsed'
 
-export function Sidebar({ items, primeItems, primeName, current, onNavigate, theme, onToggleTheme }: Props) {
+export function Sidebar({ items, primeItems, primeName, current, onNavigate, theme, onToggleTheme, primeConfigOpen = false }: Props) {
   const [primeExpanded, setPrimeExpanded] = useState(() => {
     if (typeof window === 'undefined') return true
     const stored = window.localStorage.getItem(PRIME_EXPANDED_KEY)
@@ -98,7 +99,7 @@ export function Sidebar({ items, primeItems, primeName, current, onNavigate, the
           {primeExpanded && (
             <div className="flex flex-col gap-0.5 pl-2">
               {primeItems.map((item) => (
-                <NavButton key={item.href} item={item} current={current} onNavigate={onNavigate} sub />
+                <NavButton key={item.href} item={item} current={current} onNavigate={onNavigate} sub forceActive={primeConfigOpen && item.href === '/prime/config'} />
               ))}
             </div>
           )}
@@ -114,7 +115,7 @@ export function Sidebar({ items, primeItems, primeName, current, onNavigate, the
             {primeExpanded ? <ChevronDown className="h-4 w-4" /> : <Bot className="h-4 w-4" />}
           </button>
           {primeExpanded && primeItems.map((item) => (
-            <NavButton key={item.href} item={item} current={current} onNavigate={onNavigate} collapsed />
+            <NavButton key={item.href} item={item} current={current} onNavigate={onNavigate} collapsed forceActive={primeConfigOpen && item.href === '/prime/config'} />
           ))}
         </>
       )}
@@ -142,14 +143,16 @@ function NavButton({
   onNavigate,
   sub = false,
   collapsed = false,
+  forceActive = false,
 }: {
   item: NavItem
   current: string
   onNavigate: (href: string) => void
   sub?: boolean
   collapsed?: boolean
+  forceActive?: boolean
 }) {
-  const active = current === item.href || (item.href !== '/' && current.startsWith(item.href + '/'))
+  const active = forceActive || current === item.href || (item.href !== '/' && current.startsWith(item.href + '/'))
   const disabled = item.disabled === true
 
   return (

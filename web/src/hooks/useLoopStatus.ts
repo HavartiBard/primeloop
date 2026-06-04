@@ -139,11 +139,12 @@ export function useLoopStatus(): LoopStatus {
   }
 
   if (latest?.status === 'failed') {
+    const retryOverdue = nextTickMs !== null && Date.now() >= nextTickMs
     return {
       phase: 'error',
-      label: 'Error',
+      label: retryOverdue ? 'Retry overdue' : 'Error',
       isLlmPhase: false,
-      secondsLeft,
+      secondsLeft: retryOverdue ? null : secondsLeft,
       elapsedSeconds: null,
       currentSession: null,
       lastError: latest.error ?? latest.reasoning_summary ?? 'Unknown error',

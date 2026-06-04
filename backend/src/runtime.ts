@@ -143,7 +143,7 @@ export async function ensureRuntimeDefaults(pool: pg.Pool): Promise<void> {
     await pool.query(
       `INSERT INTO permission_rules (name, scope, mode, rule)
        VALUES ($1, $2, $3, $4)
-       ON CONFLICT DO NOTHING`,
+       ON CONFLICT (name, scope, mode) DO NOTHING`,
       [name, scope, mode, JSON.stringify(rule)]
     )
   }

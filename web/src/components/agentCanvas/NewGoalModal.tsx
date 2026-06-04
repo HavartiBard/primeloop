@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { createGoal } from '../../api'
+import { AppModal } from '../AppModal'
 
 export interface NewGoalResult {
   id: string
@@ -34,113 +35,70 @@ export function NewGoalModal({ onClose, onCreated }: NewGoalModalProps) {
   }
 
   return (
-    <div
-      style={{
-        position: 'fixed', inset: 0, zIndex: 200,
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        background: 'rgba(0,0,0,0.45)',
-      }}
-      onPointerDown={(e) => e.stopPropagation()}
-      onClick={(e) => { if (e.target === e.currentTarget) onClose() }}
+    <AppModal
+      open
+      onClose={onClose}
+      eyebrow="Goals"
+      title="New Goal"
+      tone="queued"
+      widthClassName="w-[min(520px,100%)]"
+      heightClassName="h-[min(78vh,560px)]"
+      bodyClassName="min-h-0 flex-1 overflow-y-auto bg-[var(--panel)] p-6"
     >
-      <div
-        style={{
-          background: 'var(--panel)',
-          border: '1px solid var(--border-soft)',
-          borderRadius: 10,
-          padding: '24px 28px',
-          width: 440,
-          maxWidth: '92vw',
-          boxShadow: '0 8px 32px rgba(0,0,0,0.22)',
-        }}
-      >
-        <h2 style={{ margin: '0 0 16px', fontSize: 16, fontWeight: 700, color: 'var(--text)' }}>
-          New Goal
-        </h2>
-        <form onSubmit={handleSubmit}>
-          <div style={{ marginBottom: 14 }}>
-            <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--muted)', marginBottom: 5 }}>
-              Title <span style={{ color: 'var(--s-blk-tx)' }}>*</span>
-            </label>
-            <input
-              autoFocus
-              type="text"
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              maxLength={200}
-              placeholder="Describe what you want to achieve"
-              disabled={submitting}
-              style={{
-                width: '100%', boxSizing: 'border-box',
-                padding: '8px 10px', borderRadius: 6, fontSize: 13,
-                border: '1px solid var(--border-soft)',
-                background: 'var(--panel-subtle)', color: 'var(--text)',
-                outline: 'none',
-              }}
-            />
-          </div>
-          <div style={{ marginBottom: 18 }}>
-            <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--muted)', marginBottom: 5 }}>
-              Description <span style={{ color: 'var(--muted)', fontWeight: 400 }}>(optional)</span>
-            </label>
-            <textarea
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              rows={3}
-              placeholder="Additional context or success criteria"
-              disabled={submitting}
-              style={{
-                width: '100%', boxSizing: 'border-box',
-                padding: '8px 10px', borderRadius: 6, fontSize: 13,
-                border: '1px solid var(--border-soft)',
-                background: 'var(--panel-subtle)', color: 'var(--text)',
-                resize: 'vertical', outline: 'none',
-              }}
-            />
-          </div>
+      <form onSubmit={handleSubmit} className="space-y-4">
+        <div>
+          <label className="mb-1 block text-xs font-semibold text-[var(--muted)]">
+            Title <span className="text-[var(--s-blk-tx)]">*</span>
+          </label>
+          <input
+            autoFocus
+            type="text"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            maxLength={200}
+            placeholder="Describe what you want to achieve"
+            disabled={submitting}
+            className="w-full rounded border border-[var(--border-soft)] bg-[var(--panel-subtle)] px-3 py-2 text-sm text-[var(--text)] outline-none"
+          />
+        </div>
+        <div>
+          <label className="mb-1 block text-xs font-semibold text-[var(--muted)]">
+            Description <span className="font-normal text-[var(--muted)]">(optional)</span>
+          </label>
+          <textarea
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            rows={3}
+            placeholder="Additional context or success criteria"
+            disabled={submitting}
+            className="w-full resize-y rounded border border-[var(--border-soft)] bg-[var(--panel-subtle)] px-3 py-2 text-sm text-[var(--text)] outline-none"
+          />
+        </div>
 
-          {error && (
-            <div style={{
-              marginBottom: 14, padding: '8px 12px',
-              borderRadius: 6, fontSize: 12,
-              background: 'var(--s-blk-bg)', border: '1px solid var(--s-blk-bd)',
-              color: 'var(--s-blk-tx)',
-            }}>
-              {error}
-            </div>
-          )}
-
-          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10 }}>
-            <button
-              type="button"
-              onClick={onClose}
-              disabled={submitting}
-              style={{
-                padding: '7px 16px', borderRadius: 6, fontSize: 13,
-                border: '1px solid var(--border-soft)',
-                background: 'var(--panel-subtle)', color: 'var(--muted)',
-                cursor: 'pointer',
-              }}
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={submitting || !title.trim()}
-              style={{
-                padding: '7px 18px', borderRadius: 6, fontSize: 13, fontWeight: 600,
-                border: 'none',
-                background: title.trim() && !submitting ? 'var(--sel-bg)' : 'var(--panel-subtle)',
-                color: title.trim() && !submitting ? 'var(--sel-tx)' : 'var(--muted)',
-                cursor: title.trim() && !submitting ? 'pointer' : 'default',
-                transition: 'background 0.15s',
-              }}
-            >
-              {submitting ? 'Creating…' : 'Create Goal'}
-            </button>
+        {error && (
+          <div className="rounded border border-[var(--s-blk-bd)] bg-[var(--s-blk-bg)] px-3 py-2 text-xs text-[var(--s-blk-tx)]">
+            {error}
           </div>
-        </form>
-      </div>
-    </div>
+        )}
+
+        <div className="flex justify-end gap-2">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={submitting}
+            className="rounded border border-[var(--border-soft)] bg-[var(--panel-subtle)] px-4 py-2 text-sm text-[var(--muted)]"
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            disabled={submitting || !title.trim()}
+            className="rounded bg-[var(--sel-bg)] px-4 py-2 text-sm font-semibold text-[var(--sel-tx)] disabled:cursor-not-allowed disabled:bg-[var(--panel-subtle)] disabled:text-[var(--muted)]"
+          >
+            {submitting ? 'Creating…' : 'Create Goal'}
+          </button>
+        </div>
+      </form>
+    </AppModal>
   )
 }

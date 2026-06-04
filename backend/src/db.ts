@@ -213,6 +213,16 @@ export async function runMigrations(pool: pg.Pool): Promise<void> {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
     );
 
+    DELETE FROM permission_rules a
+    USING permission_rules b
+    WHERE a.ctid < b.ctid
+      AND a.name = b.name
+      AND a.scope = b.scope
+      AND a.mode = b.mode;
+
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_permission_rules_name_scope_mode
+      ON permission_rules (name, scope, mode);
+
     CREATE TABLE IF NOT EXISTS tool_invocations (
       id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       work_item_id   UUID REFERENCES work_items(id) ON DELETE SET NULL,
@@ -757,6 +767,75 @@ BEGIN
   LOOP
     EXECUTE format('ALTER TABLE %I ALTER COLUMN %I TYPE TEXT USING %I::text', rec.tbl, rec.col, rec.col);
   END LOOP;
+END
+$$;
+
+-- Repair legacy UUID foreign-key columns that still point at work_items(id).
+-- The dynamic FK loop above drops constraints before inspecting them, so some
+-- already-created tables can retain UUID work_item_id columns. Convert them
+-- idempotently and restore the intended FK shape.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='delegations' AND column_name='work_item_id' AND data_type='uuid') THEN
+    ALTER TABLE delegations ALTER COLUMN work_item_id TYPE TEXT USING work_item_id::text;
+  END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='runtime_events' AND column_name='work_item_id' AND data_type='uuid') THEN
+    ALTER TABLE runtime_events ALTER COLUMN work_item_id TYPE TEXT USING work_item_id::text;
+  END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='tool_invocations' AND column_name='work_item_id' AND data_type='uuid') THEN
+    ALTER TABLE tool_invocations ALTER COLUMN work_item_id TYPE TEXT USING work_item_id::text;
+  END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='tool_grants' AND column_name='work_item_id' AND data_type='uuid') THEN
+    ALTER TABLE tool_grants ALTER COLUMN work_item_id TYPE TEXT USING work_item_id::text;
+  END IF;
+  IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='artifacts' AND column_name='work_item_id' AND data_type='uuid') THEN
+    ALTER TABLE artifacts ALTER COLUMN work_item_id TYPE TEXT USING work_item_id::text;
+  END IF;
+END
+$$;
+
+DO $$
+BEGIN
+  ALTER TABLE delegations DROP CONSTRAINT IF EXISTS delegations_work_item_id_fkey;
+  ALTER TABLE delegations ADD CONSTRAINT delegations_work_item_id_fkey
+    FOREIGN KEY (work_item_id) REFERENCES work_items(id) ON DELETE SET NULL;
+EXCEPTION WHEN undefined_column THEN NULL;
+END
+$$;
+
+DO $$
+BEGIN
+  ALTER TABLE runtime_events DROP CONSTRAINT IF EXISTS runtime_events_work_item_id_fkey;
+  ALTER TABLE runtime_events ADD CONSTRAINT runtime_events_work_item_id_fkey
+    FOREIGN KEY (work_item_id) REFERENCES work_items(id) ON DELETE SET NULL;
+EXCEPTION WHEN undefined_column THEN NULL;
+END
+$$;
+
+DO $$
+BEGIN
+  ALTER TABLE tool_invocations DROP CONSTRAINT IF EXISTS tool_invocations_work_item_id_fkey;
+  ALTER TABLE tool_invocations ADD CONSTRAINT tool_invocations_work_item_id_fkey
+    FOREIGN KEY (work_item_id) REFERENCES work_items(id) ON DELETE SET NULL;
+EXCEPTION WHEN undefined_column THEN NULL;
+END
+$$;
+
+DO $$
+BEGIN
+  ALTER TABLE tool_grants DROP CONSTRAINT IF EXISTS tool_grants_work_item_id_fkey;
+  ALTER TABLE tool_grants ADD CONSTRAINT tool_grants_work_item_id_fkey
+    FOREIGN KEY (work_item_id) REFERENCES work_items(id) ON DELETE SET NULL;
+EXCEPTION WHEN undefined_column THEN NULL;
+END
+$$;
+
+DO $$
+BEGIN
+  ALTER TABLE artifacts DROP CONSTRAINT IF EXISTS artifacts_work_item_id_fkey;
+  ALTER TABLE artifacts ADD CONSTRAINT artifacts_work_item_id_fkey
+    FOREIGN KEY (work_item_id) REFERENCES work_items(id) ON DELETE SET NULL;
+EXCEPTION WHEN undefined_column THEN NULL;
 END
 $$;
 

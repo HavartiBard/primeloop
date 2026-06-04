@@ -5,6 +5,8 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { abortPrimeSession, fetchPrimeSessions, fetchProviders, fetchSetupProviderModels, fetchThreadMessages, sendPrimeMessage } from '../api'
 import type { AgentEvent, Provider, RegistryAgent, RuntimeAuditLoop, RuntimeDelegation, RuntimeThread, RuntimeWorkItem } from '../types'
 import type { ChatDraft } from '../types/composer'
+const FOCUSED_ROOM_STORAGE_KEY = 'primeloop:focus-room-id'
+
 type AgentHealth = {
   agent: string
   last_seen: string
@@ -281,6 +283,7 @@ function artifactKindLabel(artifact: ArtifactSessionView): string {
   if (joined.includes('profile')) return 'Profile Update'
   if (types.length > 0) return 'Tool Run'
   if (artifact.reasoning) return 'Thinking'
+  if (artifact.live && artifact.lines.some((line) => line.kind === 'thinking' || line.kind === 'turn' || line.command === 'dispatching' || line.command === 'turn started')) return 'Thinking'
   if (artifact.error) return 'Error'
   return 'Activity'
 }
@@ -302,14 +305,11 @@ function matchesArtifactFilter(session: ArtifactSessionView, filter: ArtifactFil
   if (filter === 'web') return label.includes('web')
   if (filter === 'shell') return label.includes('shell')
   if (filter === 'tool') return label.includes('tool') || label.includes('delegation') || label.includes('approval') || label.includes('profile')
-  if (filter === 'thinking') return label.includes('thinking')
+  if (filter === 'thinking') return label.includes('thinking') || session.lines.some((line) => line.kind === 'thinking' || line.kind === 'turn' || line.command === 'dispatching' || line.command === 'turn started')
   return label.includes('error') || Boolean(session.error) || session.steps.some((step) => step.status === 'failed')
 }
 
-function artifactFilterLabel(hideDetails: boolean, filters: ArtifactFilterOption[]): string {
-  if (hideDetails) return 'Hide details'
-  const allFilters: ArtifactFilterOption[] = ['web', 'shell', 'tool', 'thinking', 'error']
-  if (filters.length === allFilters.length) return 'All details'
+function artifactFilterLabel(filters: ArtifactFilterOption[], enabled: boolean): string {
   const labels: Record<ArtifactFilterOption, string> = {
     web: 'Web',
     shell: 'Shell',
@@ -317,7 +317,8 @@ function artifactFilterLabel(hideDetails: boolean, filters: ArtifactFilterOption
     thinking: 'Think',
     error: 'Errors',
   }
-  return filters.map((filter) => labels[filter]).join(', ')
+  if (filters.length === 0) return enabled ? 'No details' : 'Details off'
+  return enabled ? filters.map((filter) => labels[filter]).join(', ') : 'Details off'
 }
 
 function workFocusCardClass(status: string, selected: boolean): string {
@@ -379,7 +380,7 @@ function eventToTerminalLine(event: AgentEvent): TerminalLine | null {
       return {
         key: event.id,
         speaker,
-        command: 'turn started',
+        command: 'dispatching',
         detail: `trigger=${asText(payload.trigger_type) ?? 'prime.message'}`,
         occurredAt: event.created_at,
         tone: 'info',
@@ -552,8 +553,8 @@ export function CollaborationRoomsView({
   const [showCompanionPrompt, setShowCompanionPrompt] = useState(false)
   const [showModelMenu, setShowModelMenu] = useState(false)
   const [showArtifactFilterMenu, setShowArtifactFilterMenu] = useState(false)
-  const [hideArtifactDetails, setHideArtifactDetails] = useState(false)
-  const [artifactFilters, setArtifactFilters] = useState<ArtifactFilterOption[]>(['web', 'shell', 'tool', 'thinking', 'error'])
+  const [artifactFilterEnabled, setArtifactFilterEnabled] = useState(true)
+  const [artifactFilters, setArtifactFilters] = useState<ArtifactFilterOption[]>(['thinking'])
   const [modelSearch, setModelSearch] = useState('')
   const [providerModels, setProviderModels] = useState<Record<string, string[]>>({})
   const [modelMenuPosition, setModelMenuPosition] = useState<{ top: number; left: number; width: number }>({ top: 0, left: 0, width: 260 })
@@ -600,7 +601,7 @@ export function CollaborationRoomsView({
 
       return {
         id: thread.id,
-        title: truncate(thread.title || 'Untitled room', 40),
+        title: truncate(thread.title || 'Untitled room', 72),
         state,
         lane: laneLabel(items[0]?.lane ?? 'intake'),
         summary: derivedSummary(items, delegs, agents, degraded[0]),
@@ -776,6 +777,17 @@ export function CollaborationRoomsView({
     }
   }, [showModelMenu])
 
+  useEffect(() => {
+    if (rooms.length === 0) return
+    const pendingRoomId = window.sessionStorage.getItem(FOCUSED_ROOM_STORAGE_KEY)
+    if (!pendingRoomId) return
+    const match = rooms.find((room) => room.id === pendingRoomId)
+    if (!match) return
+    setFilter('all')
+    setSelectedRoomId(match.id)
+    window.sessionStorage.removeItem(FOCUSED_ROOM_STORAGE_KEY)
+  }, [rooms])
+
   const selectedRoom = filteredRooms.find((r) => r.id === selectedRoomId) ?? filteredRooms[0]
   const activeRoomId = selectedRoom?.id ?? null
 
@@ -799,19 +811,6 @@ export function CollaborationRoomsView({
     refetchInterval: runningPrimeSessions.length > 0 ? 1_000 : 3_000,
   })
 
-  const optimisticMessages = queuedMessages
-    .filter((message) => message.roomId === activeRoomId)
-    .map((message) => ({
-      speaker: message.sender,
-      text: message.content,
-      at: formatShortTime(message.queuedAt),
-      occurredAt: message.queuedAt,
-      key: `queued:${message.id}`,
-      sessionId: undefined,
-      queued: true,
-      failed: message.status === 'error',
-    }))
-
   const persistedMessages = rawMessages.length >= 1
     ? rawMessages.map(msg => ({
         speaker: msg.sender || msg.role,
@@ -832,6 +831,24 @@ export function CollaborationRoomsView({
         failed: false,
       }))
 
+  const optimisticMessages = queuedMessages
+    .filter((message) => message.roomId === activeRoomId)
+    .filter((message) => !persistedMessages.some((persisted) => {
+      if (persisted.speaker !== message.sender) return false
+      if (persisted.text.trim() !== message.content.trim()) return false
+      return true
+    }))
+    .map((message) => ({
+      speaker: message.sender,
+      text: message.content,
+      at: formatShortTime(message.queuedAt),
+      occurredAt: message.queuedAt,
+      key: `queued:${message.id}`,
+      sessionId: undefined,
+      queued: true,
+      failed: message.status === 'error',
+    }))
+
   const displayMessages = [...persistedMessages, ...optimisticMessages].sort((a, b) => a.occurredAt.localeCompare(b.occurredAt))
 
   useEffect(() => {
@@ -839,6 +856,16 @@ export function CollaborationRoomsView({
     setUnreadMessages(0)
     setFollowBottom(true)
   }, [activeRoomId])
+
+  useEffect(() => {
+    setQueuedMessages((current) => current.filter((message) => {
+      if (message.roomId !== activeRoomId) return true
+      return !persistedMessages.some((persisted) => (
+        persisted.speaker === message.sender
+        && persisted.text.trim() === message.content.trim()
+      ))
+    }))
+  }, [activeRoomId, persistedMessages])
 
   useEffect(() => {
     if (!followBottom) return
@@ -1000,7 +1027,7 @@ export function CollaborationRoomsView({
     : primaryRunningSession?.last_step === 'deciding'
       ? 'thinking'
       : primaryRunningSession?.last_step === 'dispatching'
-        ? 'taking action'
+        ? 'dispatching'
         : 'processing'
   const roomArtifactSessions = useMemo(() => {
     if (!activeRoomId) return [] as ArtifactSessionView[]
@@ -1106,6 +1133,88 @@ export function CollaborationRoomsView({
       .sort((a, b) => a.occurredAt.localeCompare(b.occurredAt))
   }, [activeRoomId, events, roomPrimeSessions])
 
+  const dispatchingArtifactSessions = useMemo<ArtifactSessionView[]>(() => {
+    if (!activeRoomId) return []
+
+    const hasRenderableLiveArtifact = roomArtifactSessions.some((session) => (
+      session.live && (session.lines.length > 0 || session.steps.length > 0 || Boolean(session.reasoning) || Boolean(session.error))
+    ))
+    if (hasRenderableLiveArtifact) return []
+
+    const queued = queuedMessages
+      .filter((message) => message.roomId === activeRoomId && (message.status === 'queued' || message.status === 'sending'))
+      .map((message) => ({
+        id: `dispatch:${message.id}`,
+        occurredAt: message.queuedAt,
+        summary: message.status === 'queued' ? 'queued for dispatch' : 'dispatching latest request',
+        live: true,
+        actor: primeName,
+        reasoning: 'Dispatching latest request…',
+        lines: [{
+          key: `dispatch-line:${message.id}`,
+          speaker: primeName,
+          command: 'dispatching',
+          detail: truncate(message.content.trim() || 'latest request', 88),
+          occurredAt: message.queuedAt,
+          tone: 'info',
+          kind: 'thinking',
+        }],
+        actions: [],
+        steps: [],
+      }))
+
+    if (queued.length > 0) {
+      return queued.sort((a, b) => a.occurredAt.localeCompare(b.occurredAt))
+    }
+
+    if (visiblePrimeSessions.length > 0) {
+      return visiblePrimeSessions.map((session) => ({
+        id: `dispatch-session:${session.id}`,
+        occurredAt: session.started_at || new Date().toISOString(),
+        summary: 'dispatching latest request',
+        live: session.status === 'running',
+        actor: primeName,
+        reasoning: 'Dispatching latest request…',
+        lines: [{
+          key: `dispatch-session-line:${session.id}`,
+          speaker: primeName,
+          command: 'dispatching',
+          detail: processingSummary,
+          occurredAt: session.started_at || new Date().toISOString(),
+          tone: 'info',
+          kind: 'thinking',
+        }],
+        actions: [],
+        steps: [],
+      }))
+    }
+
+    const latestEntry = [...displayMessages].sort((a, b) => b.occurredAt.localeCompare(a.occurredAt))[0]
+    if (!latestEntry || latestEntry.speaker === 'system' || latestEntry.speaker === primeName) return []
+    const ageMs = Date.now() - new Date(latestEntry.occurredAt).getTime()
+    if (!Number.isFinite(ageMs) || ageMs < 0 || ageMs > 2 * 60_000) return []
+
+    return [{
+      id: `dispatch-persisted:${latestEntry.key}`,
+      occurredAt: latestEntry.occurredAt,
+      summary: 'dispatching latest request',
+      live: true,
+      actor: primeName,
+      reasoning: 'Dispatching latest request…',
+      lines: [{
+        key: `dispatch-persisted-line:${latestEntry.key}`,
+        speaker: primeName,
+        command: 'dispatching',
+        detail: truncate(latestEntry.text.trim() || 'latest request', 88),
+        occurredAt: latestEntry.occurredAt,
+        tone: 'info',
+        kind: 'thinking',
+      }],
+      actions: [],
+      steps: [],
+    }]
+  }, [activeRoomId, displayMessages, primeName, processingSummary, queuedMessages, roomArtifactSessions, visiblePrimeSessions])
+
   const chatTimelineEntries = useMemo<ChatTimelineEntry[]>(() => {
     const messageEntries: ChatTimelineEntry[] = displayMessages.map((msg) => ({
       kind: 'message' as const,
@@ -1114,11 +1223,13 @@ export function CollaborationRoomsView({
       speaker: msg.speaker,
       text: msg.text,
       at: msg.at,
+      queued: msg.queued,
+      failed: msg.failed,
     }))
 
-    if (hideArtifactDetails || roomArtifactSessions.length === 0) return messageEntries
+    if (!artifactFilterEnabled) return messageEntries
 
-    const filteredArtifactSessions = roomArtifactSessions.filter((session) => (
+    const filteredArtifactSessions = [...dispatchingArtifactSessions, ...roomArtifactSessions].filter((session) => (
       artifactFilters.some((filter) => matchesArtifactFilter(session, filter))
     ))
 
@@ -1149,7 +1260,7 @@ export function CollaborationRoomsView({
     }
 
     return timeline.sort((a, b) => a.occurredAt.localeCompare(b.occurredAt))
-  }, [artifactFilters, displayMessages, hideArtifactDetails, roomArtifactSessions])
+  }, [artifactFilterEnabled, artifactFilters, dispatchingArtifactSessions, displayMessages, roomArtifactSessions])
 
   useEffect(() => {
     const node = chatScrollRef.current
@@ -1171,6 +1282,8 @@ export function CollaborationRoomsView({
       lastMessageCountRef.current = chatTimelineEntries.length
     })
   }, [chatTimelineEntries.length, followBottom, activeRoomId, visiblePrimeSessions.length])
+
+  const hasVisibleLiveArtifact = chatTimelineEntries.some((entry) => entry.kind === 'artifact' && entry.live)
 
   const sendMessage = useMutation({
     mutationFn: async (message: QueuedComposerMessage) => {
@@ -1489,7 +1602,7 @@ export function CollaborationRoomsView({
           <div className="shrink-0 border-b border-[var(--border-soft)] px-5 py-3.5">
             <div className="flex items-center gap-3">
               <div className="min-w-0 flex-1">
-                <div className="truncate text-lg font-semibold text-[var(--text)]">{selectedRoom.title}</div>
+                <div className="pr-4 text-lg font-semibold leading-tight text-[var(--text)] break-words">{selectedRoom.title}</div>
                 <div className="mt-2 flex flex-wrap items-center gap-1.5">
                   {activeAgents.length === 0 && (
                     <span className="font-mono text-[11px] uppercase tracking-wide text-[var(--muted)]">No participants yet</span>
@@ -1507,31 +1620,40 @@ export function CollaborationRoomsView({
                 </div>
               </div>
               <div className="relative shrink-0">
-                <button
-                  ref={artifactFilterButtonRef}
-                  type="button"
-                  onClick={() => setShowArtifactFilterMenu((current) => !current)}
-                  className="inline-flex min-w-[170px] items-center justify-between gap-2 rounded-full border border-[var(--border-soft)] bg-[var(--panel-subtle)] px-3 py-1.5 font-mono text-[11px] uppercase tracking-wide text-[var(--text)] transition hover:bg-[var(--panel-strong)]"
-                  title="Filter detail cards"
-                >
-                  <span className="truncate text-left">{artifactFilterLabel(hideArtifactDetails, artifactFilters)}</span>
-                  <span className={`text-[10px] text-[var(--muted)] transition ${showArtifactFilterMenu ? 'rotate-180' : ''}`}>⌃</span>
-                </button>
+                <div className={`inline-flex w-[320px] items-center overflow-hidden rounded-full border font-mono text-[11px] uppercase tracking-wide transition ${artifactFilterEnabled ? 'border-cyan-300/40 bg-cyan-400/10 text-cyan-100' : 'border-rose-300/40 bg-rose-400/10 text-rose-100'}`}>
+                  <button
+                    type="button"
+                    onClick={() => setArtifactFilterEnabled((current) => !current)}
+                    className={`inline-flex w-[92px] items-center gap-2 px-2.5 py-1.5 transition ${artifactFilterEnabled ? 'hover:bg-cyan-400/10' : 'hover:bg-rose-400/10'}`}
+                    title={`Details ${artifactFilterEnabled ? 'On' : 'Off'}`}
+                  >
+                    <span>Details</span>
+                    <span
+                      className={`relative block h-5 w-9 shrink-0 rounded-full border transition ${artifactFilterEnabled ? 'border-cyan-300/50 bg-cyan-400/25' : 'border-[var(--border-soft)] bg-[var(--panel-strong)]'}`}
+                    >
+                      <span
+                        className={`pointer-events-none absolute top-1/2 h-3.5 w-3.5 -translate-y-1/2 rounded-full shadow-sm transition-all ${artifactFilterEnabled ? 'left-[18px] bg-cyan-100' : 'left-[2px] bg-[var(--muted)]'}`}
+                      />
+                    </span>
+                  </button>
+                  <span className="h-5 w-px bg-[var(--border-soft)]/70" />
+                  <button
+                    ref={artifactFilterButtonRef}
+                    type="button"
+                    onClick={() => setShowArtifactFilterMenu((current) => !current)}
+                    className="inline-flex min-w-0 flex-1 items-center justify-between gap-2 px-3 py-1.5 text-[var(--text)] transition hover:bg-[var(--panel-strong)]"
+                    title="Filter detail cards"
+                  >
+                    <span className="truncate text-left">{artifactFilterLabel(artifactFilters, artifactFilterEnabled)}</span>
+                    <span className={`text-[10px] text-[var(--muted)] transition ${showArtifactFilterMenu ? 'rotate-180' : ''}`}>⌃</span>
+                  </button>
+                </div>
                 {showArtifactFilterMenu && (
                   <div
                     ref={artifactFilterMenuRef}
                     className="absolute right-0 top-[calc(100%+8px)] z-30 min-w-[220px] rounded-2xl border border-[var(--border-soft)] bg-[color:color-mix(in_srgb,var(--panel)_96%,black)] p-2 shadow-[0_18px_48px_rgba(0,0,0,0.42)] backdrop-blur-sm"
                   >
-                    <div className="mb-2 px-2 pt-1 font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--muted)]">Detail cards</div>
-                    <button
-                      type="button"
-                      onClick={() => setHideArtifactDetails((current) => !current)}
-                      className={`flex w-full items-center justify-between rounded-xl px-3 py-2 text-left font-mono text-[11px] transition ${hideArtifactDetails ? 'bg-rose-400/10 text-rose-100' : 'text-[var(--text)] hover:bg-white/5'}`}
-                    >
-                      <span>Hide details</span>
-                      <span className={`inline-flex h-4 w-4 items-center justify-center rounded border text-[10px] ${hideArtifactDetails ? 'border-rose-300/50 bg-rose-300/20 text-rose-100' : 'border-[var(--border-soft)] text-transparent'}`}>✓</span>
-                    </button>
-                    <div className="my-2 h-px bg-[var(--border-soft)]" />
+                    <div className="mb-2 px-2 pt-1 font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--muted)]">Detail filter</div>
                     {([
                       ['web', 'Web'],
                       ['shell', 'Shell'],
@@ -1544,14 +1666,12 @@ export function CollaborationRoomsView({
                         <button
                           key={value}
                           type="button"
-                          onClick={() => {
-                            setHideArtifactDetails(false)
-                            setArtifactFilters((current) => (
-                              current.includes(value)
-                                ? current.filter((entry) => entry !== value)
-                                : [...current, value]
-                            ))
-                          }}
+                          onClick={() => setArtifactFilters((current) => {
+                            if (current.includes(value)) {
+                              return current.filter((entry) => entry !== value)
+                            }
+                            return [...current, value]
+                          })}
                           className={`mt-1 flex w-full items-center justify-between rounded-xl px-3 py-2 text-left font-mono text-[11px] transition ${selected ? 'bg-cyan-400/10 text-cyan-100' : 'text-[var(--text)] hover:bg-white/5'}`}
                         >
                           <span>{label}</span>
@@ -2071,7 +2191,7 @@ export function CollaborationRoomsView({
                           Retry failed
                         </button>
                       )}
-                      {primaryRunningSession && <span>{primeName} is {processingVerb}…</span>}
+                      {primaryRunningSession && !hasVisibleLiveArtifact && <span>{primeName} is {processingVerb}…</span>}
                     </div>
                   )}
                 </div>

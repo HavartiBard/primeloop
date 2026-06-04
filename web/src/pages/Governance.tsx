@@ -46,7 +46,7 @@ function Header({ eyebrow, title, detail }: { eyebrow: string; title: string; de
   return (<div className="mb-4 flex items-start justify-between gap-3"><div><div className="text-[10px] font-medium uppercase tracking-[0.28em] text-[var(--muted)]">{eyebrow}</div><h2 className="mt-1 text-lg font-semibold text-[var(--text)]">{title}</h2></div>{detail ? <div className="rounded-full border border-[var(--border-soft)] bg-[var(--panel-subtle)] px-3 py-1 text-[11px] text-[var(--muted)]">{detail}</div> : null}</div>)
 }
 
-export function Governance() {
+export function Governance({ embedded = false }: { embedded?: boolean } = {}) {
   const qc = useQueryClient()
   const [tab, setTab] = useState<SettingsTab>('system')
 
@@ -199,7 +199,7 @@ export function Governance() {
   const CAT_OPT = [{ v: 'all', l: 'All folders' }, { v: 'prompts', l: 'Prompts' }, { v: 'agents', l: 'Agents' }, { v: 'skills', l: 'Skills' }, { v: 'policies', l: 'Policies' }, { v: 'memory', l: 'Memory' }, { v: 'config', l: 'Config' }] as const
 
   return (
-    <div className="min-h-screen px-4 py-4 sm:px-6 lg:px-8">
+    <div className={embedded ? 'h-full overflow-y-auto px-4 py-4' : 'min-h-screen px-4 py-4 sm:px-6 lg:px-8'}>
       <section className="space-y-5">
         <div className={card('p-5 sm:p-6')}>
           <Header eyebrow="Settings" title="Control Plane Settings" detail={SETTINGS_TABS.find((t) => t.id === tab)?.label} />

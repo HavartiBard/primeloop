@@ -10,6 +10,7 @@ import {
   fetchModelCapability,
 } from '../api'
 import type { CodexAuthStatus, Provider, ModelCapabilityAssessment } from '../types'
+import { AppModal } from '../components/AppModal'
 
 // ─── Provider add/edit modal ──────────────────────────────────────────────────
 
@@ -57,12 +58,17 @@ function ProviderModal({ mode, provider, onClose, onSubmit }: {
   }, [form.model])
 
   return (
-    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
-      <div className="bg-[var(--panel)] border border-[var(--border-soft)] rounded-lg p-6 w-full max-w-md">
-        <h2 className="text-sm font-semibold text-[var(--text)] mb-4">
-          {mode === 'add' ? 'Add Provider' : 'Edit Provider'}
-        </h2>
-        <form onSubmit={(e) => { e.preventDefault(); onSubmit(form) }} className="flex flex-col gap-3">
+    <AppModal
+      open
+      onClose={onClose}
+      eyebrow="Providers"
+      title={mode === 'add' ? 'Add Provider' : 'Edit Provider'}
+      tone="queued"
+      widthClassName="w-[min(620px,100%)]"
+      heightClassName="h-[min(88vh,760px)]"
+      bodyClassName="min-h-0 flex-1 overflow-y-auto bg-[var(--panel)] p-6"
+    >
+      <form onSubmit={(e) => { e.preventDefault(); onSubmit(form) }} className="flex flex-col gap-3">
           <div>
             <label className="block text-xs text-[var(--muted)] mb-1">Name *</label>
             <input required value={form.name} onChange={set('name')} placeholder="e.g. openai-prod"
@@ -153,9 +159,8 @@ function ProviderModal({ mode, provider, onClose, onSubmit }: {
               {mode === 'add' ? 'Add' : 'Save'}
             </button>
           </div>
-        </form>
-      </div>
-    </div>
+      </form>
+    </AppModal>
   )
 }
 
@@ -270,16 +275,21 @@ function CodexAuthModal({ provider, onClose }: { provider: Provider; onClose: ()
   const isAuthed = authStatus?.status === 'chatgpt' || authStatus?.status === 'api_key'
 
   return (
-    <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
-      <div className="bg-[var(--panel)] border border-[var(--border-soft)] rounded-xl p-6 w-full max-w-lg shadow-2xl">
+    <AppModal
+      open
+      onClose={onClose}
+      eyebrow="Providers"
+      title={`Codex Auth · ${provider.name}`}
+      tone={isAuthed ? 'running' : 'queued'}
+      widthClassName="w-[min(760px,100%)]"
+      heightClassName="h-[min(88vh,820px)]"
+      bodyClassName="min-h-0 flex-1 overflow-y-auto bg-[var(--panel)] p-6"
+    >
 
         {/* Header */}
-        <div className="flex items-center justify-between mb-5">
-          <div>
-            <div className="text-sm font-semibold text-[var(--text)]">{provider.name}</div>
-            <div className="mt-0.5 font-mono text-xs text-[var(--muted)]">{provider.base_url}</div>
-          </div>
-          <button onClick={onClose} className="text-[var(--muted)] hover:text-[var(--text)] text-lg leading-none">✕</button>
+        <div className="mb-5">
+          <div className="text-sm font-semibold text-[var(--text)]">{provider.name}</div>
+          <div className="mt-0.5 font-mono text-xs text-[var(--muted)]">{provider.base_url}</div>
         </div>
 
         {/* Current status */}
@@ -406,8 +416,7 @@ function CodexAuthModal({ provider, onClose }: { provider: Provider; onClose: ()
           </div>
         )}
 
-      </div>
-    </div>
+    </AppModal>
   )
 }
 

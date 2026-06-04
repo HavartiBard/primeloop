@@ -5,6 +5,7 @@
 
 import React from 'react'
 import type { ToolbarActionType, ToolbarDraftAction } from '../../types'
+import { AppModal } from '../AppModal'
 import {
   getToolbarActionLabel,
   getToolbarActionShortcut,
@@ -44,56 +45,45 @@ export function ToolbarActionComposer({
   if (!isOpen) return null
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-sm p-4">
-      <div className="w-[480px] max-w-[90vw] max-h-[90vh] overflow-y-auto rounded-lg bg-[var(--panel)]
-        border border-[var(--border-soft)] shadow-xl animate-in fade-in zoom-in-95 duration-200">
-        <div className="p-6">
-          {/* Header */}
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-semibold text-[var(--text)]">
-              {getToolbarActionLabel(actionType)}
-            </h2>
-            <button
-              type="button"
-              onClick={onClose}
-              className="text-[var(--muted)] hover:text-[var(--text)] p-1 rounded hover:bg-[var(--panel-subtle)]"
-              aria-label="Close dialog"
-            >
-              ✕
-            </button>
-          </div>
+    <AppModal
+      open={isOpen}
+      onClose={onClose}
+      eyebrow="Composer"
+      title={getToolbarActionLabel(actionType)}
+      tone="queued"
+      widthClassName="w-[min(560px,100%)]"
+      heightClassName="h-[min(88vh,760px)]"
+      bodyClassName="min-h-0 flex-1 overflow-y-auto bg-[var(--panel)] p-6"
+    >
+      {/* Form */}
+      <form onSubmit={(e) => { e.preventDefault(); onSubmit() }} className="space-y-4">
+        {actionType === 'spawn_agent' && <SpawnAgentForm draft={draft} onUpdateDraft={onUpdateDraft} />}
+        {actionType === 'tool_call' && <ToolCallForm draft={draft} onUpdateDraft={onUpdateDraft} />}
+        {actionType === 'create_goal' && <CreateGoalForm draft={draft} onUpdateDraft={onUpdateDraft} />}
+        {actionType === 'capture_artifact' && <CaptureArtifactForm draft={draft} onUpdateDraft={onUpdateDraft} />}
+        {actionType === 'add_note' && <AddNoteForm draft={draft} onUpdateDraft={onUpdateDraft} />}
+      </form>
 
-          {/* Form */}
-          <form onSubmit={(e) => { e.preventDefault(); onSubmit() }} className="space-y-4">
-            {actionType === 'spawn_agent' && <SpawnAgentForm draft={draft} onUpdateDraft={onUpdateDraft} />}
-            {actionType === 'tool_call' && <ToolCallForm draft={draft} onUpdateDraft={onUpdateDraft} />}
-            {actionType === 'create_goal' && <CreateGoalForm draft={draft} onUpdateDraft={onUpdateDraft} />}
-            {actionType === 'capture_artifact' && <CaptureArtifactForm draft={draft} onUpdateDraft={onUpdateDraft} />}
-            {actionType === 'add_note' && <AddNoteForm draft={draft} onUpdateDraft={onUpdateDraft} />}
-          </form>
-
-          {/* Footer */}
-          <div className="mt-6 flex items-center justify-end gap-2">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-4 py-2 rounded-md text-sm font-medium text-[var(--muted)]
-                hover:text-[var(--text)] hover:bg-[var(--panel-subtle)] transition-colors"
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              onClick={onSubmit}
-              className="px-4 py-2 rounded-md text-sm font-medium bg-[var(--sel-bg)]
-                text-[var(--sel-tx)] hover:bg-opacity-80 transition-colors"
-            >
-              {draft.status === 'submitting' ? 'Creating...' : 'Create'}
-            </button>
-          </div>
-        </div>
+      {/* Footer */}
+      <div className="mt-6 flex items-center justify-end gap-2">
+        <button
+          type="button"
+          onClick={onClose}
+          className="px-4 py-2 rounded-md text-sm font-medium text-[var(--muted)]
+            hover:text-[var(--text)] hover:bg-[var(--panel-subtle)] transition-colors"
+        >
+          Cancel
+        </button>
+        <button
+          type="button"
+          onClick={onSubmit}
+          className="px-4 py-2 rounded-md text-sm font-medium bg-[var(--sel-bg)]
+            text-[var(--sel-tx)] hover:bg-opacity-80 transition-colors"
+        >
+          {draft.status === 'submitting' ? 'Creating...' : 'Create'}
+        </button>
       </div>
-    </div>
+    </AppModal>
   )
 }
 

@@ -40,7 +40,7 @@ const PRIME_NAV: NavItem[] = [
   { label: 'Learning', icon: <BookOpen className={ICON_SM} />,       href: '/learning' },
   { label: 'Sessions', icon: <MessageSquare className={ICON_SM} />,  href: '#', disabled: true },
   { label: 'Modules',  icon: <PuzzleIcon className={ICON_SM} />,     href: '#', disabled: true },
-  { label: 'Config',   icon: <Sliders className={ICON_SM} />,        href: '#', disabled: true },
+  { label: 'Config',   icon: <Sliders className={ICON_SM} />,        href: '/prime/config' },
 ]
 
 const ALL_NAV = [...NAV, ...PRIME_NAV]
@@ -159,8 +159,11 @@ function LoopChip({ status }: { status: ReturnType<typeof useLoopStatus> }) {
 }
 
 const INSPECTOR_WINDOW_KEY = 'global-inspector-window'
+const PRIME_CONFIG_WINDOW_KEY = 'prime-config-window'
 const DEFAULT_INSPECTOR_POSITION = { x: 96, y: 88 }
 const DEFAULT_INSPECTOR_SIZE = { width: 620, height: 560 }
+const DEFAULT_PRIME_CONFIG_POSITION = { x: 120, y: 96 }
+const DEFAULT_PRIME_CONFIG_SIZE = { width: 960, height: 760 }
 
 const THEMES = [
   { id: 'dark', label: 'Dark' },
@@ -220,8 +223,35 @@ function Layout() {
   })
   const [isDraggingInspector, setIsDraggingInspector] = useState(false)
   const [isResizingInspector, setIsResizingInspector] = useState(false)
+  const [primeConfigOpen, setPrimeConfigOpen] = useState(false)
+  const [primeConfigWindow, setPrimeConfigWindow] = useState(() => {
+    if (typeof window === 'undefined') {
+      return { minimized: false, position: DEFAULT_PRIME_CONFIG_POSITION, size: DEFAULT_PRIME_CONFIG_SIZE }
+    }
+    try {
+      const raw = window.localStorage.getItem(PRIME_CONFIG_WINDOW_KEY)
+      const saved = raw ? JSON.parse(raw) as Partial<{ minimized: boolean; position: { x: number; y: number }; size: { width: number; height: number } }> : {}
+      return {
+        minimized: saved.minimized === true,
+        position: {
+          x: typeof saved.position?.x === 'number' ? saved.position.x : DEFAULT_PRIME_CONFIG_POSITION.x,
+          y: typeof saved.position?.y === 'number' ? saved.position.y : DEFAULT_PRIME_CONFIG_POSITION.y,
+        },
+        size: {
+          width: typeof saved.size?.width === 'number' ? saved.size.width : DEFAULT_PRIME_CONFIG_SIZE.width,
+          height: typeof saved.size?.height === 'number' ? saved.size.height : DEFAULT_PRIME_CONFIG_SIZE.height,
+        },
+      }
+    } catch {
+      return { minimized: false, position: DEFAULT_PRIME_CONFIG_POSITION, size: DEFAULT_PRIME_CONFIG_SIZE }
+    }
+  })
   const inspectorDragRef = useRef<{ offsetX: number; offsetY: number } | null>(null)
   const inspectorResizeRef = useRef<{ startX: number; startY: number; startWidth: number; startHeight: number } | null>(null)
+  const [isDraggingPrimeConfig, setIsDraggingPrimeConfig] = useState(false)
+  const [isResizingPrimeConfig, setIsResizingPrimeConfig] = useState(false)
+  const primeConfigDragRef = useRef<{ offsetX: number; offsetY: number } | null>(null)
+  const primeConfigResizeRef = useRef<{ startX: number; startY: number; startWidth: number; startHeight: number } | null>(null)
   const { approvals } = useApprovals()
   const loopStatus = useLoopStatus()
 
@@ -240,6 +270,10 @@ function Layout() {
   useEffect(() => {
     window.localStorage.setItem(INSPECTOR_WINDOW_KEY, JSON.stringify(inspectorState))
   }, [inspectorState])
+
+  useEffect(() => {
+    window.localStorage.setItem(PRIME_CONFIG_WINDOW_KEY, JSON.stringify(primeConfigWindow))
+  }, [primeConfigWindow])
 
   useEffect(() => {
     if (!isDraggingInspector) return
@@ -305,6 +339,48 @@ function Layout() {
     return ALL_NAV.find((item) => item.href === page)?.label ?? 'Portal'
   }, [page, primeName])
 
+  useEffect(() => {
+    if (!isDraggingPrimeConfig) return
+    const handleMove = (event: MouseEvent) => {
+      const drag = primeConfigDragRef.current
+      if (!drag) return
+      const nextX = Math.min(Math.max(12, event.clientX - drag.offsetX), Math.max(12, window.innerWidth - primeConfigWindow.size.width - 12))
+      const nextY = Math.min(Math.max(12, event.clientY - drag.offsetY), Math.max(12, window.innerHeight - primeConfigWindow.size.height - 12))
+      setPrimeConfigWindow((current) => ({ ...current, position: { x: nextX, y: nextY } }))
+    }
+    const handleUp = () => {
+      primeConfigDragRef.current = null
+      setIsDraggingPrimeConfig(false)
+    }
+    window.addEventListener('mousemove', handleMove)
+    window.addEventListener('mouseup', handleUp)
+    return () => {
+      window.removeEventListener('mousemove', handleMove)
+      window.removeEventListener('mouseup', handleUp)
+    }
+  }, [isDraggingPrimeConfig, primeConfigWindow.size.height, primeConfigWindow.size.width])
+
+  useEffect(() => {
+    if (!isResizingPrimeConfig) return
+    const handleMove = (event: MouseEvent) => {
+      const resize = primeConfigResizeRef.current
+      if (!resize) return
+      const width = Math.min(Math.max(720, resize.startWidth + (event.clientX - resize.startX)), window.innerWidth - primeConfigWindow.position.x - 12)
+      const height = Math.min(Math.max(520, resize.startHeight + (event.clientY - resize.startY)), window.innerHeight - primeConfigWindow.position.y - 12)
+      setPrimeConfigWindow((current) => ({ ...current, size: { width, height } }))
+    }
+    const handleUp = () => {
+      primeConfigResizeRef.current = null
+      setIsResizingPrimeConfig(false)
+    }
+    window.addEventListener('mousemove', handleMove)
+    window.addEventListener('mouseup', handleUp)
+    return () => {
+      window.removeEventListener('mousemove', handleMove)
+      window.removeEventListener('mouseup', handleUp)
+    }
+  }, [isResizingPrimeConfig, primeConfigWindow.position.x, primeConfigWindow.position.y])
+
   const pendingApprovals = approvals.filter((a) => a.status === 'pending').length
 
   const settingsTab: SettingsTabId | undefined =
@@ -312,6 +388,45 @@ function Layout() {
     : page === '/agents'     ? 'agents'
     : page === '/mcp-servers' ? 'integrations'
     : undefined
+
+  const handleNavigate = (href: string) => {
+    if (href === '/prime/config') {
+      setPrimeConfigOpen(true)
+      setPrimeConfigWindow((current) => ({ ...current, minimized: false }))
+      return
+    }
+    setPrimeConfigOpen(false)
+    setPage(href)
+  }
+
+  useEffect(() => {
+    if (!primeConfigOpen) return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setPrimeConfigOpen(false)
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [primeConfigOpen])
+
+  const beginPrimeConfigDrag = (event: { clientX: number; clientY: number; preventDefault?: () => void }) => {
+    event.preventDefault?.()
+    primeConfigDragRef.current = {
+      offsetX: event.clientX - primeConfigWindow.position.x,
+      offsetY: event.clientY - primeConfigWindow.position.y,
+    }
+    setIsDraggingPrimeConfig(true)
+  }
+
+  const beginPrimeConfigResize = (event: { clientX: number; clientY: number; preventDefault?: () => void }) => {
+    event.preventDefault?.()
+    primeConfigResizeRef.current = {
+      startX: event.clientX,
+      startY: event.clientY,
+      startWidth: primeConfigWindow.size.width,
+      startHeight: primeConfigWindow.size.height,
+    }
+    setIsResizingPrimeConfig(true)
+  }
 
   const Page =
     page === '/'             ? OperationsPortal
@@ -368,8 +483,9 @@ function Layout() {
         primeItems={PRIME_NAV}
         primeName={primeName}
         current={page}
-        onNavigate={setPage}
+        onNavigate={handleNavigate}
         theme={theme}
+        primeConfigOpen={primeConfigOpen}
         onToggleTheme={() => {
           const currentIndex = THEMES.findIndex(t => t.id === theme)
           const nextIndex = (currentIndex + 1) % THEMES.length
@@ -425,7 +541,7 @@ function Layout() {
             {ALL_NAV.filter((item) => !item.disabled).map((item) => (
               <button
                 key={item.href}
-                onClick={() => setPage(item.href)}
+                onClick={() => handleNavigate(item.href)}
                 className={`shrink-0 rounded-full border px-3 py-1.5 text-xs transition ${
                   page === item.href
                     ? 'border-[var(--accent)] bg-[color-mix(in_srgb,var(--accent)_16%,transparent)] text-[var(--text)]'
@@ -439,12 +555,32 @@ function Layout() {
         </div>
 
         {page === '/circuit'
-          ? <CircuitView onNavigate={setPage} />
+          ? <CircuitView onNavigate={handleNavigate} />
           : page === '/'
             ? <OperationsPortal onOpenInspector={openInspector} activeInspectorId={inspectorState.activeTabId} />
             : <Page />
         }
       </main>
+      {primeConfigOpen && (
+        <FloatingTabbedWindow
+          title="Prime"
+          tabs={[{ id: 'prime-config', title: 'Prime Agent Config', tone: 'running' }]}
+          activeTabId="prime-config"
+          minimized={primeConfigWindow.minimized}
+          minimizedLabel="Prime · Config"
+          position={primeConfigWindow.position}
+          size={primeConfigWindow.size}
+          onSelectTab={() => {}}
+          onCloseTab={() => setPrimeConfigOpen(false)}
+          onMinimize={() => setPrimeConfigWindow((current) => ({ ...current, minimized: true }))}
+          onRestore={() => setPrimeConfigWindow((current) => ({ ...current, minimized: false }))}
+          onClose={() => setPrimeConfigOpen(false)}
+          onDragStart={beginPrimeConfigDrag}
+          onResizeStart={beginPrimeConfigResize}
+        >
+          <Governance embedded />
+        </FloatingTabbedWindow>
+      )}
       {activeInspectorTab && inspectorState.tabs.length > 0 && (
         <FloatingTabbedWindow
           title="Inspector"
