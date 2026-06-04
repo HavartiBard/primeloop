@@ -73,7 +73,7 @@ are repository-relative (worktree root).
 - [ ] T019 [US1] Implement tiered restart recovery (durable → resume in place; ephemeral → re-dispatch fresh) in `backend/src/recovery/service.ts` per contracts/harness-wake.md
 - [ ] T020 [US1] Wire recovery at boot behind `RESUME_ON_RESTART`, replacing the unconditional fail in `recoverLifecycleState`, in `backend/src/opencode/process-manager.ts`
 - [ ] T021 [US1] Emit `session.resumed` / `delegation.recovered` / `delegation.recovered_failed` for every outcome; guarantee no delegation left silently failed, in `backend/src/recovery/service.ts`
-- [ ] T022 [US1] Surface `resumed`/`recovered` status labels using existing delegation/agent status components in `web/src/hooks/useLoopStatus.ts` and the delegation status UI
+- [ ] T022 [US1] Surface `resumed`/`recovered` status labels using existing delegation/agent status components in `web/src/hooks/useLoopStatus.ts` and the delegation status UI, covering loading/empty/success/error states with existing patterns
 
 **Checkpoint**: US1 independently testable — restart resumes work; MVP complete
 
@@ -99,7 +99,9 @@ are repository-relative (worktree root).
 - [ ] T029 [US2] Inject broker env vars at spawn and REMOVE all secret/key writes from `writeConfigFiles`/config (env-only, FR-009) in `backend/src/opencode/process-manager.ts`
 - [ ] T030 [US2] Replace the long-lived control-plane token with a broker-issued scoped token in `backend/src/opencode/process-manager.ts` and validate it in `backend/src/mcp/server.ts`
 - [ ] T031 [US2] Emit `credential.issued|rotated|revoked|risk_flagged` events in `backend/src/credentials/broker.ts`
-- [ ] T032 [US2] Add a risky-credential badge using existing status components in `web/src/components/` (agent/credential surface)
+- [ ] T032 [US2] Add a risky-credential badge using existing status components in `web/src/components/` (agent/credential surface), handling the no-risk (empty) and load/error states consistently
+- [ ] T058 [US2] Issue Gitea **scoped/derived** tokens (repo/capability-scoped, distinct from named-secret pass-through) in `backend/src/credentials/broker.ts` (FR-011)
+- [ ] T059 [US2] Route assigned MCP-server secrets through the broker and stop writing their `env_vars` into `opencode.json`/config (env-only injection) in `backend/src/opencode/process-manager.ts` (FR-009, FR-011) — covered by the no-disk scan in T023
 
 **Checkpoint**: US1 + US2 both independently functional
 
@@ -167,7 +169,7 @@ are repository-relative (worktree root).
 
 - [ ] T050 [US4] Extend `SessionStore.getSession`/`getEvents` to merge `thread_messages`, `delegations.trace`, and `checkpoint_continuations` into the ordered timeline in `backend/src/session/store.ts`
 - [ ] T051 [US4] Expose a session timeline + bounded-slice read endpoint in `backend/src/routes/` (new route) wired in `backend/src/app.ts`
-- [ ] T052 [US4] Build the operator session-timeline view consuming bounded slices in `web/src/pages/prime/LoopPage.tsx` (or the global inspector window)
+- [ ] T052 [US4] Build the operator session-timeline view consuming bounded slices in `web/src/pages/prime/LoopPage.tsx` (or the global inspector window), with loading, empty, success, and error states reusing existing UI patterns
 
 **Checkpoint**: All user stories independently functional
 
@@ -178,6 +180,7 @@ are repository-relative (worktree root).
 - [ ] T053 [P] Document new feature flags, runtime model, and broker/proxy ops in `README.md` and `HANDOFF.md`
 - [ ] T054 Review audit trails and observability completeness across all new `runtime_events` types
 - [ ] T055 Regression gate: run full `npm test` with all flags OFF and confirm legacy paths pass unchanged (SC-006)
+- [ ] T060 Add a threshold-measurement harness enforcing SC-001 (≥99% of N in-flight delegations resume, zero silent loss) and SC-004 (provisioning p95 ≤5s / p99 ≤10s) in `backend/tests/perf.restart-provision.test.ts`; failing thresholds fail the gate
 - [ ] T056 Run `specs/024-managed-agent-runtime/quickstart.md` validation across all stories
 - [ ] T057 After validation, remove the legacy fail-and-requeue and eager-boot paths and retire their flags (FR-017 cleanup) in `backend/src/opencode/process-manager.ts`
 
