@@ -3,7 +3,11 @@
 Issues short-lived scoped credentials; never writes secret values to disk.
 
 ```ts
-type CredentialKind = 'provider_proxy_token' | 'gitea_token' | 'named_secret'
+type CredentialKind =
+  | 'provider_proxy_token'   // authorizes calling the LLM proxy (FR-008)
+  | 'gitea_token'            // derived/scoped (FR-011)
+  | 'named_secret'           // operator-defined (FR-011)
+  | 'launcher_token'         // authenticates the backend→launcher socket (contracts/launcher.md)
 
 interface IssuedCredential {
   id: string

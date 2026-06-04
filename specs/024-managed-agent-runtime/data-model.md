@@ -26,7 +26,7 @@ stored here** — only metadata + a reference into the existing encrypted store.
 |--------|------|-------|
 | `id` | `UUID PK` | |
 | `agent_id` | `UUID REFERENCES agents(id) ON DELETE CASCADE` | Owner |
-| `kind` | `TEXT CHECK (kind IN ('provider_proxy_token','gitea_token','named_secret'))` | FR-011 |
+| `kind` | `TEXT CHECK (kind IN ('provider_proxy_token','gitea_token','named_secret','launcher_token'))` | FR-011; `launcher_token` authenticates the backend→launcher socket (contracts/launcher.md) and rotates like other brokered creds |
 | `scope` | `JSONB` | Derived scope (repos, hosts, capabilities) |
 | `secret_ref` | `TEXT` | Pointer into encrypted store; never the value |
 | `status` | `TEXT CHECK (status IN ('active','rotating','revoked','risky'))` | |

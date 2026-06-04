@@ -125,7 +125,7 @@ are repository-relative (worktree root).
 ### Implementation for User Story 5
 
 - [ ] T061 [US5] Build the single configurable runtime image (`runtime-image/Dockerfile`) bundling operator-selected runtimes + per-process sandbox tooling, and the launcher service (`RuntimeLauncher`: `startAgent`/`stopAgent`/`health`, UID-isolated spawn, bearer-token auth) in `runtime-image/launcher/` per contracts/launcher.md (FR-023, FR-024, FR-025)
-- [ ] T062 [US5] Switch the harness transport to **ACP over an authenticated TCP socket** to the launcher (backend connects out; bearer token) instead of spawning a child, with the HTTP adapter as the per-family fallback, behind `EGRESS_SANDBOX`, in `backend/src/acp/client.ts`, `backend/src/fleet-executor/acp-harness.ts`, and `backend/src/opencode/process-manager.ts` (FR-023)
+- [ ] T062 [US5] Switch the harness transport to **ACP over an authenticated TCP socket** to the launcher (backend connects out; bearer token) instead of spawning a child, with the HTTP adapter as the per-family fallback, behind `EGRESS_SANDBOX`, in `backend/src/acp/client.ts`, `backend/src/fleet-executor/acp-harness.ts`, and `backend/src/opencode/process-manager.ts` (FR-023). MUST preserve the US1 resume path (`wake`/`session/load`) across the transport swap — re-run T013–T015 over the socket transport.
 - [ ] T066 [US5] Relocate ACP client-fs handling: serve `fs/read_text_file`/`fs/write_text_file` in the launcher against the Landlock-scoped workspace and remove the backend from the agent's fs path, in `runtime-image/launcher/` and `backend/src/acp/fs-handler.ts` (FR-025)
 
 - [ ] T036 [P] [US5] Implement `EgressAllowlist` (`list`/`deriveDefaults` from capabilities+MCP assignments/`requestHost`→approval queue, default-deny) over `egress_allowlist` in `backend/src/proxy/egress.ts` per contracts/egress-allowlist.md
@@ -201,7 +201,7 @@ are repository-relative (worktree root).
 - **Foundational (Phase 2)**: Depends on Setup — BLOCKS all user stories (schema + session substrate)
 - **US1 (Phase 3, P1)**: Depends on Foundational (uses `wake`, `recovery_epoch`, SessionStore)
 - **US2 (Phase 4, P2)**: Depends on Foundational. Co-developed with US5: the broker (T027) and the control-plane proxy (T037) are mutually dependent (proxy validates the broker's token; Prime/agents call the proxy), and Prime-via-proxy (T063) needs the proxy — build the broker + proxy together
-- **US5 (Phase 5, P2)**: Depends on Foundational; co-developed with US2 (broker + proxy). Adds the runtime image + launcher (T061/T062) and per-process isolation; the runtime container is the new home for agents
+- **US5 (Phase 5, P2)**: Depends on Foundational; co-developed with US2 (broker + proxy). Adds the runtime image + launcher (T061/T062) and per-process isolation; the runtime container is the new home for agents. **Because T062 swaps the harness transport, the US1 resume path (T016–T021) MUST be re-validated over the ACP socket once T062 lands** — wake works against both stdio (MVP) and socket transports
 - **US3 (Phase 6, P3)**: Depends on Foundational **and** on the US5 launcher (T061/T062), since the slot-lease provisions agents via the launcher; integrates with US1 `wake` on re-acquire but independently testable
 - **US4 (Phase 7, P3)**: Depends on Foundational SessionStore core; independent of US1–US3, US5
 - **Polish (Phase 8)**: Depends on all targeted stories complete

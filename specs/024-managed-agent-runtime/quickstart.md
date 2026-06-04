@@ -12,7 +12,15 @@ npm run test:db:up        # disposable Postgres on :55432
 ```
 
 Feature flags (default off → legacy behavior; turn on per phase):
-`RESUME_ON_RESTART`, `LAZY_PROVISIONING`, plus broker/proxy enablement.
+`RESUME_ON_RESTART`, `LAZY_PROVISIONING`, `CREDENTIAL_BROKER`, `EGRESS_SANDBOX`.
+
+For the topology phases (US5/US3), build the runtime container and generate the compose:
+
+```sh
+scripts/setup.sh --runtimes opencode,pi   # builds the single configurable runtime image
+                                           # + docker-compose (primary + runtime container)
+docker compose up -d                       # primary + runtime container on a private network
+```
 
 ## US1 — In-flight work survives a restart (P1)
 
@@ -33,19 +41,26 @@ npm test -- recovery
 2. **Expect**: `grep -r` of the agent worktree/workdir/config finds zero secret values
    (SC-002); provider access works only via the LLM proxy token.
 3. Tear the agent down; confirm `credential.revoked` and the token is rejected (401).
+4. **Sole key holder (SC-008)**: scan the runtime container and Prime's config/env — no
+   raw provider key is present anywhere but the proxy; Prime and subagents reach the
+   provider only via the proxy.
 
 ```sh
-npm test -- credentials
+npm test -- credentials prime-proxy
 ```
 
 ## US5 — Containment of a subverted agent (P2)
 
-Run the isolation test from inside a provisioned sandbox:
+Run the isolation tests against an agent in the runtime container (per-process
+UID/Landlock/egress; launched via the launcher over the authenticated ACP socket):
 
 1. Attempt write outside the working dir → denied, `fs.denied` recorded.
 2. Attempt read of a secret path / another agent's workspace → denied.
 3. Attempt connect to a non-allowlisted host → blocked, `egress.denied` recorded.
 4. Attempt an allowlisted host → succeeds.
+5. **Container boundary (SC-009)**: from inside the runtime container, attempt to reach
+   the primary container's secrets/filesystem and a sibling agent's workspace/token →
+   all fail (the container wall + per-process UID isolation both hold).
 
 ```sh
 npm test -- isolation
