@@ -38,4 +38,8 @@
   runtime isolation (scoped filesystem + default-deny egress, blast-radius
   containment), per sandbox research and constitution v1.2.0. All checklist items
   re-validated and still pass.
-- Spec is ready for `/speckit-clarify` (optional) or `/speckit-plan`.
+- Topology decision (2026-06-04): added FR-023–FR-027, SC-008/009, and Clarifications
+  for the runtime-container topology (single configurable image, separate from the
+  control plane, per-process isolation inside), the proxy as sole raw-key holder, and
+  Prime capability-confinement (no OS sandbox). Plan/research/tasks synced.
+- Spec is ready for `/speckit-plan` (already run) / `/speckit-implement`.

@@ -17,6 +17,8 @@
 - Q: Which in-flight work resumes after a restart, durable vs ephemeral? → A: Durable-staff delegations resume in place from the durable record; ephemeral in-flight delegations are re-dispatched as a fresh ephemeral from their last durable continuation (the torn-down ephemeral runtime is not resumed). Both record a recovery outcome; neither is silently lost.
 - Q: Brokered credential lifespan / rotation bound? → A: Durable-agent credentials rotate on a ≤24h TTL, conditional on automatic rotation. Any credential that cannot be automatically rotated — or that remains valid beyond its TTL — MUST be flagged as risky and surfaced to the operator. Ephemeral credentials stay bound to agent lifespan, revoked at teardown.
 - Q: Idle threshold before a durable runtime is reclaimed to the cattle pool? → A: 10 minutes with no work; re-provision on next work within the ≤5s/p95 budget.
+- Q: Runtime topology and packaging? → A: Agent runtimes run in a runtime container **separate** from the primary control-plane container. The runtime container is built from a **single configurable runtime image**; the operator selects which runtimes (e.g., opencode, pi) to include at provision time, and a setup script generates the docker-compose wiring (primary + runtime container, private network, default-deny egress to the proxy). Inside the runtime container, each agent is isolated **per-process** (distinct UID, scoped filesystem via Landlock/mount namespace, per-agent default-deny egress, per-agent injected scoped token). The control plane, credential broker, raw provider keys, and proxy stay in the primary container, so a runtime-container compromise cannot reach secrets. A userspace-kernel sandbox (gVisor-class) at the runtime-container level is optional and proportionate (apply to lower-trust runtimes); per-agent containers and per-task microVMs are not required at this trust level. Supersedes the earlier per-agent / per-family-image sketches.
+- Q: Does the Prime/orchestrator agent need an OS sandbox? → A: No, not today. Prime is a native control-plane service whose risk is logical (issuing delegations/policy changes), not syscall-level — it has no raw shell/filesystem/network tool. It is confined by **capability**: an enumerated action set with risky actions gated by the approval queue. Prime also calls the LLM **via the proxy** (holding no raw provider key), so the key boundary holds even for the orchestrator. Prime moves into a sandboxed runtime only if it ever gains direct tool execution.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -192,6 +194,11 @@ must fail and be recorded; an allowlisted operation must succeed.
 - An agent attempts to reach the upstream provider directly instead of via the
   control-plane proxy — the direct egress MUST be blocked, leaving the proxy as the
   only working path.
+- The runtime container is compromised — the blast radius is bounded to that
+  container's agents; the control plane, credential broker, raw keys, and proxy in the
+  primary container MUST remain unreachable (FR-023).
+- Two agents share the runtime container — one agent MUST NOT be able to read the
+  other's workspace, environment, or injected token (per-process isolation, FR-025).
 
 ## Constitution Alignment *(mandatory)*
 
@@ -222,11 +229,13 @@ must fail and be recorded; an allowlisted operation must succeed.
   components.
 - **Primeloop Architecture Constraints**: Reinforces them. Durable records remain the
   source of truth and become the *resumable* source of truth; Prime stays the sole
-  steering interface; per-agent isolation is strengthened, not changed; single-tenant
-  scope is unchanged. Implements Core Principle VI (decoupled, replaceable runtimes)
-  and the resumable-session-log, brokered-credential, and two-dimension
-  runtime-isolation (scoped filesystem + default-deny egress, blast-radius
-  containment) constraints.
+  steering interface (confined by capability + approval gates, holding no raw key);
+  per-agent isolation is strengthened by separating agent runtimes into their own
+  container (FR-023) with per-process isolation inside (FR-025), while the control
+  plane and secrets stay in the primary container; single-tenant scope is unchanged.
+  Implements Core Principle VI (decoupled, replaceable runtimes) and the
+  resumable-session-log, brokered-credential, and two-dimension runtime-isolation
+  (scoped filesystem + default-deny egress, blast-radius containment) constraints.
 
 ## Requirements *(mandatory)*
 
@@ -315,11 +324,14 @@ must fail and be recorded; an allowlisted operation must succeed.
   recorded as an observable event.
 - **FR-022**: Agent runtimes are treated as semi-trusted (they run the operator's own
   tasks but are exposed to prompt injection from untrusted data). The baseline
-  isolation MUST therefore be a userspace-kernel sandbox (gVisor-class) combined with
-  the scoped filesystem (FR-018) and default-deny egress proxy (FR-019); per-task
-  microVM isolation is NOT required at this trust level. If agents later execute
+  isolation MUST therefore be (a) a runtime container separate from the control plane
+  (FR-023) and (b) per-process isolation of each agent within it (FR-025) — the scoped
+  filesystem (FR-018) and default-deny egress proxy (FR-019). A userspace-kernel
+  sandbox (gVisor-class) at the runtime-container level MAY be applied proportionate to
+  a runtime's trust but is NOT required per agent; per-agent containers and per-task
+  microVM isolation are NOT required at this trust level. If agents later execute
   untrusted or third-party code, the trust level MUST be re-evaluated and a stronger
-  boundary (e.g., microVM) adopted.
+  boundary (e.g., per-runtime or per-agent gVisor/microVM) adopted.
 
 **Cross-cutting**
 
@@ -333,6 +345,32 @@ must fail and be recorded; an allowlisted operation must succeed.
   provisioning) MUST remain available as a fallback/rollback path until the new paths
   are validated in operation.
 
+**Runtime topology & provisioning (US3, US5)**
+
+- **FR-023**: Agent runtimes MUST run in a runtime container separate from the primary
+  control-plane container. The control plane, credential broker, raw provider keys,
+  and proxy MUST reside only in the primary container, so a compromise of the runtime
+  container cannot reach secrets or the control-plane filesystem.
+- **FR-024**: The runtime container MUST be built from a single configurable runtime
+  image in which the operator selects the included runtimes (e.g., opencode, pi) at
+  provision time. A setup script MUST generate the docker-compose wiring (primary +
+  runtime container, private network, default-deny egress whose only route is the
+  proxy) for the selected runtimes.
+- **FR-025**: Within the runtime container, each agent MUST be isolated per-process:
+  a distinct UID, a scoped filesystem (Landlock and/or mount namespace) limited to its
+  working directory, per-agent default-deny egress, and a per-agent injected scoped
+  token — so one agent cannot read another agent's workspace or token. A stronger
+  boundary (gVisor at the runtime-container level, or per-runtime/per-agent containers)
+  MAY be applied proportionate to a runtime's trust.
+- **FR-026**: The control-plane proxy MUST be the sole holder of raw provider API
+  keys. Every brain and hand — including the Prime orchestrator — MUST make provider
+  calls via the proxy using a scoped token, never a raw key.
+- **FR-027**: The Prime orchestrator MUST be confined to its enumerated control-plane
+  action set with risky actions gated by approval, and MUST NOT hold a raw provider
+  key or execute raw shell/filesystem/network tools. If Prime gains direct tool
+  execution, it MUST run in a sandboxed runtime under the same containment as
+  subagents (FR-025).
+
 ### Key Entities *(include if feature involves data)*
 
 - **Session**: The durable, append-only record of one agent or delegation
@@ -345,7 +383,12 @@ must fail and be recorded; an allowlisted operation must succeed.
 - **Brokered Credential**: A short-lived, scoped secret issued to an agent for its
   lifespan, with issuance, rotation, and revocation lifecycle; never persisted to disk.
 - **Runtime Lease**: The on-demand provisioning record binding a durable agent's
-  identity to a currently-running (or reclaimable) runtime instance.
+  identity to a currently-running (or reclaimable) runtime instance (a process slot in
+  the runtime container).
+- **Runtime Container / Image**: The single configurable runtime image and the
+  separate container it runs as, hosting the operator-selected runtimes and the
+  per-process agent sandboxes; deployed apart from the control plane. Its included
+  runtimes and wiring are produced by the setup script.
 
 ## Success Criteria *(mandatory)*
 
@@ -373,6 +416,12 @@ must fail and be recorded; an allowlisted operation must succeed.
   directory, read secrets or another agent's workspace, or connect to a
   non-allowlisted host all fail and are recorded, while allowlisted operations
   succeed — demonstrated by a repeatable isolation test.
+- **SC-008**: No component other than the control-plane proxy holds a raw provider API
+  key (verified by config/secret scan); Prime and all subagents reach providers only
+  through the proxy.
+- **SC-009**: A simulated compromise inside the runtime container cannot read the
+  primary container's secrets or filesystem, and cannot read a sibling agent's
+  workspace or token — the container and per-process boundaries both hold.
 
 ## Assumptions
 
@@ -398,11 +447,21 @@ must fail and be recorded; an allowlisted operation must succeed.
   control-plane proxy: agents receive a scoped, short-lived token to call the proxy,
   and the raw upstream secret never leaves the control plane. This is the larger-scope
   but strongest-boundary option and is an accepted cost of this feature.
-- Today's isolation is a git worktree plus a bare subprocess, with no kernel-level
-  sandbox and no network egress allowlist. Reaching FR-018–FR-021 requires adding a
-  userspace-kernel sandbox (gVisor-class) and an egress control point/proxy — the
-  agreed semi-trusted baseline (see Clarifications). Filesystem and network
-  containment are treated as jointly mandatory — neither alone is sufficient.
+- Today's isolation is a git worktree plus a bare subprocess inside the backend
+  container, with no separation from the control plane, no per-process sandbox, and no
+  egress allowlist. The agreed semi-trusted baseline (see Clarifications) moves agents
+  into a separate runtime container (FR-023) built from one configurable image
+  (FR-024) and isolates each agent per-process inside it (distinct UID + Landlock/mount
+  namespace + default-deny egress to the proxy + per-agent scoped token, FR-025).
+  Filesystem and network containment are jointly mandatory — neither alone suffices.
+- Runtime selection happens at provision time and is materialized by a setup script
+  (not yet built) that generates the docker-compose for the primary + runtime
+  container. gVisor at the runtime-container level is optional and applied
+  proportionate to a runtime's trust, not per agent.
+- The Prime orchestrator stays in the primary container as a native service, confined
+  by its enumerated action set + approval gates rather than an OS sandbox, and reaches
+  providers through the proxy (no raw key). It would only need a sandboxed runtime if
+  it gained direct shell/filesystem/network tool execution.
 - Per-agent egress allowlists default to deny-all and are derived from the agent's
   declared capabilities and assigned tools; new destinations require an explicit
   allowlist decision rather than silent permitting.

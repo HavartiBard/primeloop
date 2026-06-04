@@ -14,17 +14,23 @@ addressable session interface** over the currently fragmented stores; (3) add a
 **credential broker** that issues short-lived scoped secrets and fronts un-scopable
 provider keys behind a control-plane proxy so secrets never touch the workdir;
 (4) provision durable staff **on demand** (cattle) with idle reclamation instead of
-eager boot; (5) **contain** each runtime on two dimensions — scoped filesystem +
-default-deny egress — under a semi-trusted (gVisor-class) baseline.
+eager boot; (5) **contain** agents in a separate runtime container (built from one
+configurable image, secrets kept in the primary container) with per-process isolation
+inside — scoped filesystem + default-deny egress — under a semi-trusted baseline.
 
 Technical approach: extend existing primitives rather than replace them. Add a
 `session_id` + per-session `seq` to `runtime_events` and a read-model
 `SessionStore` over events/messages/traces/checkpoints; add `wake(sessionId)` to the
 harness contract backed by ACP `loadSession` (already negotiated) with
 checkpoint re-dispatch fallback; add `CredentialBroker` + control-plane LLM proxy +
-per-agent egress allowlist; add a `RuntimeLease` manager driving on-demand
-provisioning in `OpenCodeProcessManager`; wrap agent runtimes in a gVisor-class
-sandbox with the egress proxy as the only outbound path.
+per-agent egress allowlist (the proxy is the **sole** holder of raw provider keys,
+used by Prime and subagents alike); move agent runtimes into a **separate runtime
+container** built from one configurable image (operator-selected runtimes; a setup
+script generates the compose), reached via a launcher, with **per-process** isolation
+(distinct UID + Landlock + default-deny egress + scoped token) inside it; add a
+`RuntimeLease` manager (a process slot in the runtime container) driving on-demand
+provisioning. Prime stays in the primary container, confined by its enumerated action
+set rather than an OS sandbox.
 
 ## Technical Context
 
@@ -126,19 +132,29 @@ backend/
 │   │   └── egress.ts              # default-deny allowlist enforcement
 │   ├── runtime/                   # NEW — on-demand provisioning
 │   │   └── lease.ts               # RuntimeLease acquire/release + idle reclaim
-│   ├── opencode/process-manager.ts# EXTEND — lazy provisioning, sandbox wrap, broker wiring
+│   ├── opencode/process-manager.ts# EXTEND — lease via launcher (no child spawn), broker wiring
+│   ├── prime-agent/llm-router.ts  # EXTEND — Prime calls LLM via proxy (no raw key)
 │   ├── mcp/server.ts              # EXTEND — broker-issued token instead of long-lived
 │   ├── runtime.ts                 # EXTEND — insertRuntimeEvent writes session_id+seq
 │   └── db.ts                      # EXTEND — idempotent migrations (see data-model.md)
 └── tests/                         # Vitest unit + DB-backed integration + isolation tests
 
+runtime-image/                     # NEW — single configurable agent-runtime image
+├── Dockerfile                     # selected runtimes (opencode/pi/…) + per-process sandbox tooling
+└── launcher/                      # ACP/HTTP launcher: starts UID-isolated agent processes
+
+scripts/
+└── setup.sh                       # NEW — generate docker-compose (primary + runtime container)
+
 web/
-└── src/                           # MINOR — resumed/recovered status labels, risky-cred badge
+└── src/                           # MINOR — resumed/recovered labels, risky-cred badge, session timeline
 ```
 
-**Structure Decision**: Web-application layout; nearly all work is in `backend/src`
-under new cohesive modules (`session/`, `credentials/`, `proxy/`, `runtime/`) plus
-targeted extensions to existing files. Web changes are limited to status labeling.
+**Structure Decision**: Web-application layout. Most work is in `backend/src` under new
+cohesive modules (`session/`, `credentials/`, `proxy/`, `runtime/`) plus targeted
+extensions. New deployment infra: a separate `runtime-image/` (single configurable
+image + launcher) and a `scripts/setup.sh` compose generator. Web changes are status
+labels plus the session-timeline view.
 
 ## Implementation Phasing
 
@@ -150,15 +166,18 @@ Ordered by spec priority, with US4's session substrate first because US1 depends
   `loadSession` + checkpoint re-dispatch fallback); tiered restart recovery (durable
   resume / ephemeral re-dispatch); idempotency guard; feature flag vs legacy fail-requeue.
 - **Phase C — Broker + containment (US2 + US5, P2, coupled)**: `CredentialBroker`;
-  control-plane LLM proxy; per-agent egress allowlist; gVisor-class sandbox wrap +
-  scoped FS; route `mcp/server.ts` + provider calls through brokered tokens/proxy.
-- **Phase D — Cattle provisioning (US3, P3)**: `RuntimeLease`; lazy provisioning in
-  `OpenCodeProcessManager`; 10-min idle reclaim; flag vs legacy eager boot.
+  control-plane LLM proxy as sole key holder (Prime + subagents route through it);
+  separate runtime container (single configurable image) + launcher + setup script;
+  per-process isolation inside (UID + Landlock + default-deny egress + scoped token);
+  route `mcp/server.ts` + Prime `llm-router` through brokered tokens/proxy.
+- **Phase D — Cattle provisioning (US3, P3)**: `RuntimeLease` as a process slot in the
+  runtime container; lazy provisioning via the launcher; 10-min idle reclaim of agent
+  processes (stop the runtime container when empty); flag vs legacy eager boot.
 
 ## Complexity Tracking
 
 | Violation | Why Needed | Simpler Alternative Rejected Because |
 |-----------|------------|-------------------------------------|
 | New subsystem: control-plane LLM proxy | FR-008 + clarification: un-scopable provider keys must never reach the runtime | Injecting a short-lived key into the runtime env (rejected in clarify) still exposes the raw key to a subverted agent; provider keys cannot be per-agent scoped upstream |
-| New dependency: gVisor-class sandbox + egress proxy | FR-018/019/022 + constitution v1.2.0 two-dimension isolation | Today's worktree+subprocess has no kernel isolation and no egress control; namespaces-only (Option C) was rejected as too weak against escape for the prompt-injection threat |
+| New infra: separate runtime container (single configurable image) + launcher + setup script | FR-018/019/022/023/024/025 + constitution v1.2.0 two-dimension isolation; secret boundary must be a hard container wall | Co-residing agents with the control plane leaves keys reachable on sandbox escape; per-agent containers are O(agents) overhead. Per-process isolation (UID+Landlock+egress) inside one separate runtime container is proportionate to the semi-trusted/prompt-injection threat; gVisor at the container level stays optional |
 | New read-model `SessionStore` over existing stores | FR-005/006 require one replayable, sliceable timeline; resume (US1) needs it as substrate | Querying each store ad hoc per resume is the current fragile state; no single ordered record means resume can't reconstruct reliably |

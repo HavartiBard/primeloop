@@ -30,6 +30,7 @@ are repository-relative (worktree root).
 - [ ] T001 [P] Create backend module skeletons with `types.ts`/`index.ts` stubs in `backend/src/session/`, `backend/src/credentials/`, `backend/src/proxy/`, `backend/src/runtime/`
 - [ ] T002 [P] Add feature-flag plumbing (`RESUME_ON_RESTART`, `LAZY_PROVISIONING`, `CREDENTIAL_BROKER`, `EGRESS_SANDBOX`) read from env in `backend/src/index.ts` config wiring
 - [ ] T003 [P] Add typed runtime-event constants for new event types (`session.resumed`, `delegation.recovered`, `delegation.recovered_failed`, `credential.issued|rotated|revoked|risk_flagged`, `runtime.leased|reclaimed`, `egress.denied`, `fs.denied`, `llm.proxied`) in `backend/src/runtime-event-types.ts`
+- [ ] T064 [P] Author `scripts/setup.sh` to generate the docker-compose (primary + runtime container on a private network, default-deny egress to the proxy) parameterized by operator-selected runtimes (FR-024); pairs with the runtime image (T061)
 
 ---
 
@@ -102,6 +103,7 @@ are repository-relative (worktree root).
 - [ ] T032 [US2] Add a risky-credential badge using existing status components in `web/src/components/` (agent/credential surface), handling the no-risk (empty) and load/error states consistently
 - [ ] T058 [US2] Issue Gitea **scoped/derived** tokens (repo/capability-scoped, distinct from named-secret pass-through) in `backend/src/credentials/broker.ts` (FR-011)
 - [ ] T059 [US2] Route assigned MCP-server secrets through the broker and stop writing their `env_vars` into `opencode.json`/config (env-only injection) in `backend/src/opencode/process-manager.ts` (FR-009, FR-011) — covered by the no-disk scan in T023
+- [ ] T063 [US2] Route Prime's LLM calls through the control-plane proxy (no raw provider key) in `backend/src/prime-agent/llm-router.ts`, and add a test asserting the proxy is the **sole** raw-key holder and Prime stays within its enumerated action set + approval gates in `backend/tests/prime-proxy.test.ts` (FR-026, FR-027, SC-008)
 
 **Checkpoint**: US1 + US2 both independently functional
 
@@ -118,13 +120,17 @@ are repository-relative (worktree root).
 - [ ] T033 [P] [US5] Isolation test: write outside the working directory is denied and emits `fs.denied` in `backend/tests/isolation.fs.test.ts`
 - [ ] T034 [P] [US5] Isolation test: non-allowlisted host blocked (`egress.denied`), allowlisted host succeeds in `backend/tests/isolation.egress.test.ts`
 - [ ] T035 [P] [US5] Isolation test: reading a secret path / another agent's workspace is denied in `backend/tests/isolation.secrets.test.ts`
+- [ ] T065 [P] [US5] Boundary test: a simulated compromise inside the runtime container cannot read the primary container's secrets/filesystem nor a sibling agent's workspace/token in `backend/tests/isolation.container-boundary.test.ts` (SC-009)
 
 ### Implementation for User Story 5
 
+- [ ] T061 [US5] Build the single configurable runtime image (`runtime-image/Dockerfile`) bundling the operator-selected runtimes + per-process sandbox tooling, and a launcher service that starts UID-isolated agent processes in `runtime-image/launcher/` (FR-023, FR-024, FR-025)
+- [ ] T062 [US5] Connect the harness to the runtime-container launcher (ACP/HTTP over the private network) instead of spawning a child process, behind `EGRESS_SANDBOX`, in `backend/src/fleet-executor/acp-harness.ts` and `backend/src/opencode/process-manager.ts` (FR-023)
+
 - [ ] T036 [P] [US5] Implement `EgressAllowlist` (`list`/`deriveDefaults` from capabilities+MCP assignments/`requestHost`→approval queue, default-deny) over `egress_allowlist` in `backend/src/proxy/egress.ts` per contracts/egress-allowlist.md
 - [ ] T037 [US5] Implement the control-plane LLM proxy (validate broker proxy token, attach provider key server-side, forward/stream, emit `llm.proxied`) in `backend/src/proxy/llm-proxy.ts` per contracts/llm-proxy.md
-- [ ] T038 [US5] Wrap runtime spawn in a gVisor-class (`runsc`) sandbox: scoped working-dir bind, no credential/other-workspace mounts, in `backend/src/opencode/process-manager.ts` behind `EGRESS_SANDBOX`
-- [ ] T039 [US5] Configure the sandbox network namespace (no DNS, no raw outbound TCP; egress only via the proxy) and block direct-to-provider egress in `backend/src/opencode/process-manager.ts` / `backend/src/proxy/egress.ts`
+- [ ] T038 [US5] Implement per-process isolation for each agent inside the runtime container — distinct UID, scoped working-dir via Landlock/mount namespace (no credential/other-workspace access), `no_new_privs` + seccomp — in the launcher (`runtime-image/launcher/`) and wired from `backend/src/opencode/process-manager.ts` behind `EGRESS_SANDBOX`; optionally run the runtime container itself under `runsc` (compose-level)
+- [ ] T039 [US5] Enforce per-UID default-deny egress (no DNS / no raw outbound TCP; only route = the control-plane proxy) and block direct-to-provider egress, in `runtime-image/launcher/` + `backend/src/proxy/egress.ts`
 - [ ] T040 [US5] Emit `egress.denied` / `fs.denied` on blocked attempts in the sandbox/proxy enforcement path in `backend/src/proxy/egress.ts`
 
 **Checkpoint**: US1, US2, US5 independently functional — secrets brokered AND containment enforced
@@ -145,8 +151,8 @@ are repository-relative (worktree root).
 
 ### Implementation for User Story 3
 
-- [ ] T044 [P] [US3] Implement `RuntimeLease` (`acquire`/`touch`/`release`/`reclaimIdle`; concurrent acquire coalesces; queue work during provisioning) over `runtime_leases` in `backend/src/runtime/lease.ts` per contracts/runtime-lease.md
-- [ ] T045 [US3] Remove eager durable-agent spawning from `initialize()` and acquire a lease on work routing behind `LAZY_PROVISIONING` in `backend/src/opencode/process-manager.ts` and the dispatcher (`backend/src/dispatch.ts`)
+- [ ] T044 [P] [US3] Implement `RuntimeLease` as a **process slot in the runtime container** (`acquire`/`touch`/`release`/`reclaimIdle`; concurrent acquire coalesces; queue work during provisioning; start the runtime container on first use, stop it when empty) over `runtime_leases` in `backend/src/runtime/lease.ts` per contracts/runtime-lease.md
+- [ ] T045 [US3] Remove eager durable-agent spawning from `initialize()`; on work routing, acquire a lease that asks the launcher to start the agent (behind `LAZY_PROVISIONING`) in `backend/src/opencode/process-manager.ts` and the dispatcher (`backend/src/dispatch.ts`)
 - [ ] T046 [US3] Add the `node-cron` idle-reclaim sweep (≥10 min `last_activity_at`) tearing down the sandbox while preserving DB identity in `backend/src/runtime/lease.ts`
 - [ ] T047 [US3] Map lease lifecycle onto `agents.state` and emit `runtime.leased`/`runtime.reclaimed` in `backend/src/runtime/lease.ts`
 
@@ -193,9 +199,9 @@ are repository-relative (worktree root).
 - **Setup (Phase 1)**: No dependencies — start immediately
 - **Foundational (Phase 2)**: Depends on Setup — BLOCKS all user stories (schema + session substrate)
 - **US1 (Phase 3, P1)**: Depends on Foundational (uses `wake`, `recovery_epoch`, SessionStore)
-- **US2 (Phase 4, P2)**: Depends on Foundational; independent of US1
-- **US5 (Phase 5, P2)**: Depends on Foundational; pairs with US2 (proxy uses broker proxy token from T027) — sequence US2 before US5, or stub the token in tests
-- **US3 (Phase 6, P3)**: Depends on Foundational; integrates with US1 `wake` on re-acquire but independently testable
+- **US2 (Phase 4, P2)**: Depends on Foundational. Co-developed with US5: the broker (T027) and the control-plane proxy (T037) are mutually dependent (proxy validates the broker's token; Prime/agents call the proxy), and Prime-via-proxy (T063) needs the proxy — build the broker + proxy together
+- **US5 (Phase 5, P2)**: Depends on Foundational; co-developed with US2 (broker + proxy). Adds the runtime image + launcher (T061/T062) and per-process isolation; the runtime container is the new home for agents
+- **US3 (Phase 6, P3)**: Depends on Foundational **and** on the US5 launcher (T061/T062), since the slot-lease provisions agents via the launcher; integrates with US1 `wake` on re-acquire but independently testable
 - **US4 (Phase 7, P3)**: Depends on Foundational SessionStore core; independent of US1–US3, US5
 - **Polish (Phase 8)**: Depends on all targeted stories complete
 
