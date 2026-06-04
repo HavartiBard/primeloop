@@ -105,9 +105,13 @@ allowlist decision surfaced through the existing approval queue.
 **Decision**: Agent runtimes run in a runtime container **separate** from the primary
 control-plane container, built from one configurable image (`primeloop-runtime`) whose
 included runtimes the operator selects at provision (R8). The backend no longer spawns
-agents as child processes; it asks a **launcher** in the runtime container (an ACP/HTTP
-endpoint on the private compose network) to start an agent, and the harness connects to
-it. Inside the runtime container each agent is isolated **per-process**: a distinct
+agents as child processes; it connects to a **launcher** in the runtime container over
+**ACP (JSON-RPC) on an authenticated TCP socket on the private compose network** (bearer
+token, optional mTLS), and the launcher starts/relays the agent. Non-ACP families
+(`opencode`/`generic-http`) use the existing HTTP adapter to the runtime container as a
+fallback. The ACP client-fs methods are served by the launcher against the
+runtime-container workspace, so the backend leaves the agent's filesystem path. See
+`contracts/launcher.md`. Inside the runtime container each agent is isolated **per-process**: a distinct
 UID, a scoped filesystem via Landlock (kernel ≥6.7 on the Unraid 6.12 host) and/or a
 mount namespace bound to its working directory, per-UID default-deny egress
 (`iptables`/`nftables` owner-match) whose only route is the R4 proxy, `no_new_privs` +

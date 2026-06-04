@@ -103,7 +103,8 @@ specs/024-managed-agent-runtime/
 │   ├── credential-broker.md
 │   ├── llm-proxy.md
 │   ├── runtime-lease.md
-│   └── egress-allowlist.md
+│   ├── egress-allowlist.md
+│   └── launcher.md          # ACP-over-TCP transport bridge + runtime-container process mgmt
 ├── checklists/
 │   └── requirements.md  # Spec quality checklist (done)
 └── tasks.md             # Phase 2 output (/speckit-tasks — NOT created here)
