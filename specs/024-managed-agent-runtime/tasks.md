@@ -47,7 +47,7 @@ are repository-relative (worktree root).
 - [X] T008 [P] Idempotent migration in `backend/src/db.ts`: add `delegations.recovery_epoch INT NOT NULL DEFAULT 0`
 - [X] T009 Assign `session_id` + monotonic `seq` on every event write in `insertRuntimeEvent` in `backend/src/runtime.ts`
 - [X] T010 Implement `SessionStore` core (`appendEvent`, `getSession`, `getEvents({from,to,last})` bounded range queries) in `backend/src/session/store.ts` and `backend/src/session/types.ts` per contracts/session-store.md
-- [ ] T011 [P] DB-backed test for the session substrate (session_id/seq assignment, bounded `getEvents`) in `backend/tests/session-store.test.ts`
+- [X] T011 [P] DB-backed test for the session substrate (session_id/seq assignment, bounded `getEvents`) in `backend/tests/session-store.test.ts`
 - [X] T012 Define observability + rollback wiring: emit-helper for new event types and confirm both legacy and new paths are flag-gated, in `backend/src/runtime.ts`
 
 **Checkpoint**: Schema migrated, session log is sliceable and authoritative — user stories can begin

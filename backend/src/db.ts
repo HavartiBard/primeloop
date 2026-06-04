@@ -326,7 +326,7 @@ export async function runMigrations(pool: pg.Pool): Promise<void> {
       explanation TEXT NOT NULL DEFAULT '',
       suggested_remediations JSONB NOT NULL DEFAULT '[]',
       thread_id UUID REFERENCES threads(id) ON DELETE SET NULL,
-      work_item_id TEXT REFERENCES work_items(id) ON DELETE SET NULL,
+      work_item_id UUID REFERENCES work_items(id) ON DELETE SET NULL,
       status TEXT NOT NULL DEFAULT 'active',
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now()

@@ -40,94 +40,80 @@ export class SessionStore {
   }
 
   async getSession(sessionId: SessionId): Promise<SessionHeader | null> {
+    // Header derived from the session's events. A session_id equals either a
+    // delegation_id or a thread_id; owner_type follows from which one is present.
     const { rows } = await this.pool.query(
-      `SELECT 
-        session_id,
-        owner_type,
-        owner_id,
-        agent_id,
-        MIN(seq) AS first_seq,
-        MAX(seq) AS last_seq,
-        MAX(status) AS status
-      FROM (
-        SELECT 
-          session_id,
-          'delegation' AS owner_type,
-          delegation_id::text AS owner_id,
-          NULL::text AS agent_id,
-          seq,
-          'active' AS status
-        FROM runtime_events
-        WHERE session_id = $1
-        UNION ALL
-        SELECT 
-          thread_id::text AS session_id,
-          'prime_session' AS owner_type,
-          thread_id::text AS owner_id,
-          NULL::text AS agent_id,
-          0 AS seq,
-          'active' AS status
-        FROM thread_messages
-        WHERE thread_id = $1::uuid
-      ) combined
-      GROUP BY session_id, owner_type, owner_id, agent_id`,
+      `SELECT
+         session_id,
+         MIN(seq) AS first_seq,
+         MAX(seq) AS last_seq,
+         MAX(delegation_id::text) AS delegation_id,
+         MAX(thread_id::text) AS thread_id
+       FROM runtime_events
+       WHERE session_id = $1
+       GROUP BY session_id`,
       [sessionId]
     )
     if (rows.length === 0) return null
 
     const row = rows[0]
+    const ownerType: SessionHeader['owner_type'] = row.delegation_id ? 'delegation' : 'prime_session'
     return {
       session_id: row.session_id,
-      owner_type: row.owner_type,
-      owner_id: row.owner_id,
-      agent_id: row.agent_id || undefined,
+      owner_type: ownerType,
+      owner_id: row.delegation_id ?? row.thread_id ?? row.session_id,
+      agent_id: undefined,
       first_seq: Number(row.first_seq),
       last_seq: Number(row.last_seq),
-      status: row.status
+      status: 'active',
     }
   }
 
   async getEvents(sessionId: SessionId, range?: EventRange): Promise<SessionEvent[]> {
-    // Bounded query - never full-history unless explicitly unbounded
-    let sql = `
-      SELECT session_id, seq, event_type, actor, payload, created_at
-      FROM runtime_events
-      WHERE session_id = $1
-    `
-    const params: any[] = [sessionId]
-    let paramIndex = 2
+    const params: unknown[] = [sessionId]
+    let rows: Array<Record<string, unknown>>
 
     if (range?.last) {
-      // Last N events
-      sql += ` ORDER BY seq DESC LIMIT $${paramIndex}`
+      // Most-recent N, returned in ascending (replay) order. Bounded by LIMIT.
       params.push(range.last)
-    } else if (range?.from !== undefined && range?.to !== undefined) {
-      // Range query
-      sql += ` AND seq >= $${paramIndex} AND seq <= $${paramIndex + 1}`
-      params.push(range.from, range.to)
-    } else if (range?.from !== undefined) {
-      // From onwards
-      sql += ` AND seq >= $${paramIndex}`
-      params.push(range.from)
-    } else if (range?.to !== undefined) {
-      // To backwards
-      sql += ` AND seq <= $${paramIndex}`
-      params.push(range.to)
-    }
-
-    if (!range?.last) {
+      const res = await this.pool.query(
+        `SELECT session_id, seq, event_type, actor, payload, created_at
+           FROM (
+             SELECT session_id, seq, event_type, actor, payload, created_at
+               FROM runtime_events
+              WHERE session_id = $1
+              ORDER BY seq DESC
+              LIMIT $2
+           ) sub
+          ORDER BY seq ASC`,
+        params
+      )
+      rows = res.rows
+    } else {
+      // Optional inclusive [from, to] slice; bounded by the seq predicates.
+      let sql = `SELECT session_id, seq, event_type, actor, payload, created_at
+                   FROM runtime_events
+                  WHERE session_id = $1`
+      if (range?.from !== undefined) {
+        params.push(range.from)
+        sql += ` AND seq >= $${params.length}`
+      }
+      if (range?.to !== undefined) {
+        params.push(range.to)
+        sql += ` AND seq <= $${params.length}`
+      }
       sql += ' ORDER BY seq ASC'
+      const res = await this.pool.query(sql, params)
+      rows = res.rows
     }
 
-    const { rows } = await this.pool.query(sql, params)
-
-    return rows.map(row => ({
-      session_id: row.session_id,
+    return rows.map((row) => ({
+      session_id: row.session_id as string,
       seq: Number(row.seq),
-      event_type: row.event_type,
-      actor: row.actor,
-      payload: typeof row.payload === 'string' ? JSON.parse(row.payload) : row.payload,
-      created_at: row.created_at.toISOString()
+      event_type: row.event_type as string,
+      actor: row.actor as string,
+      payload: typeof row.payload === 'string' ? JSON.parse(row.payload) : (row.payload as Record<string, unknown>),
+      created_at: row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at),
     }))
   }
 }
