@@ -6,6 +6,8 @@ export interface EgressGuard {
 
 export interface LlmProxyRequest {
   provider: string
+  path: string
+  method: string
   headers: Record<string, string>
   body: unknown
 }
@@ -13,6 +15,7 @@ export interface LlmProxyRequest {
 export interface LlmProxyResponse {
   success: boolean
   statusCode: number
+  headers?: Record<string, string>
   body?: unknown
   error?: string
 }
