@@ -1,7 +1,5 @@
 <!-- SPECKIT START -->
-Completed specs:
-- specs/017-expand-agent-canvas-ux
-- specs/018-prime-onboarding-config
+Current Speckit plan: `specs/024-managed-agent-runtime/plan.md`
 
 Completed specs:
 - specs/017-expand-agent-canvas-ux
