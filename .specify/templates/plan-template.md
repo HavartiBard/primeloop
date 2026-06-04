@@ -53,6 +53,16 @@
 - **Primeloop architecture constraints**: Preserve Prime as the sole steering interface,
   Primeloop durable records as source of truth, per-agent isolation, and single-tenant
   scope where the feature touches those areas.
+- **Decoupled, replaceable runtime**: Where the change touches agent execution,
+  confirm brains stay model-agnostic and talk to runtimes only through the
+  harness/adapter contracts, runtimes are safe to kill and recreate, in-flight work
+  is recoverable from the durable session log (no silent loss on restart), and any
+  secrets are brokered short-lived and never written to the workdir.
+- **Runtime containment**: Where the change provisions or runs an agent runtime,
+  confirm two-dimension isolation (scoped filesystem + default-deny network egress
+  via an unbypassable control point), that secrets/out-of-scope paths/non-allowlisted
+  hosts stay unreachable even if the agent is subverted, and that isolation strength
+  is proportionate to the trust level of the executed code.
 - **Complexity tracking**: Record any constitutional tension in the table below
   before proceeding.
 

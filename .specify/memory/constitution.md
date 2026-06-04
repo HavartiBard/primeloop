@@ -1,21 +1,21 @@
 <!--
 Sync Impact Report
-- Version change: 0.2.0 -> 1.0.0
+- Version change: 1.1.0 -> 1.2.0
 - Modified principles:
-  - I. Three-Tier Agent Model -> I. Code Quality Is Non-Negotiable
-  - II. Prime Is the Sole Steering Interface -> II. YAGNI Over Premature Complexity
-  - III. Durable Artifacts of Record -> III. Reliability Is a Feature
-  - IV. Per-Agent Isolation Is Mandatory -> IV. User Experience Must Be Easy and Consistent
-  - V. Layered Tooling Contracts -> V. Visual Design Must Feel Slick and Intentional
-- Added sections:
-  - Architecture Constraints
-  - Delivery & Review Standards
+  - None renamed; principles I-VI unchanged
+- Added sections (1.2.0):
+  - Architecture Constraints: two-dimension runtime isolation (scoped filesystem + default-deny network egress)
+  - Architecture Constraints: blast-radius containment under assumed agent compromise
+- Added sections (1.1.0):
+  - Core Principle VI. Agent Runtimes Are Decoupled and Replaceable
+  - Architecture Constraints: durable session log as resumable record of truth
+  - Architecture Constraints: brokered short-lived credentials never written to workdir
 - Removed sections:
-  - System Primitives
+  - None
 - Templates requiring updates:
-  - ✅ updated: .specify/templates/plan-template.md
-  - ✅ updated: .specify/templates/spec-template.md
-  - ✅ updated: .specify/templates/tasks-template.md
+  - ✅ updated: .specify/templates/plan-template.md (Constitution Check gate)
+  - ✅ reviewed, no change needed: .specify/templates/spec-template.md
+  - ✅ reviewed, no change needed: .specify/templates/tasks-template.md
   - ✅ reviewed, no file present: .specify/templates/commands/
 - Follow-up TODOs:
   - None
@@ -68,6 +68,22 @@ introducing new ones, and any new pattern MUST raise the overall bar for coheren
 Rationale: slick design is not decoration; it is the visible expression of product
 quality, trustworthiness, and ease.
 
+### VI. Agent Runtimes Are Decoupled and Replaceable
+The control plane MUST separate the decision loop (the "brain"), the execution
+runtimes (the "hands"), and the durable session log. Brains MUST be model-agnostic
+and MUST interact with runtimes only through stable, versioned interfaces (the
+harness and adapter contracts), never through assumptions encoded for a specific
+model or runtime. Execution runtimes — harnesses, subprocesses, and sandboxes — MUST
+be treated as replaceable: any one MUST be safe to kill and recreate, and in-flight
+work MUST be recoverable from the durable session log rather than from in-memory
+state. Long-lived, hand-tended agent processes ("pets") MUST be avoided wherever an
+on-demand, reconstructable runtime ("cattle") satisfies the need; where a durable
+runtime is genuinely required, its loss MUST still resolve to a recorded recovery
+outcome, never silent data loss. Rationale: model and runtime capabilities change
+faster than infrastructure, so encoding those assumptions into the harness creates
+rework and fragility, and unrecoverable in-memory state turns routine restarts into
+lost work.
+
 ## Architecture Constraints
 
 The following constraints remain mandatory for Primeloop-specific implementation:
@@ -78,9 +94,28 @@ The following constraints remain mandatory for Primeloop-specific implementation
 - Durable records in Primeloop's database MUST remain the source of truth for work,
   decisions, approvals, and artifacts; session state and transient UI state are
   never authoritative.
+- The durable event/session log MUST be the authoritative, append-only record from
+  which an agent session can be reconstructed or resumed; a harness, subprocess, or
+  sandbox restart MUST NOT silently lose in-flight delegated work — recovery MUST
+  either resume the work or record an explicit recovery outcome.
 - Per-agent isolation remains mandatory through dedicated worktrees, working
   directories, scoped environments, short-lived credentials, and enforced runtime
   boundaries.
+- Agent runtimes MUST be contained on two dimensions at once: a scoped filesystem
+  (read and write confined to the agent's working directory, with modification of
+  paths outside it denied) and default-deny network egress (outbound traffic allowed
+  only to an explicit allowlist, enforced by a control point the agent cannot
+  bypass). Neither dimension alone is sufficient.
+- Containment MUST assume the agent can be subverted by untrusted input — file
+  contents, tool outputs, and external responses are data, not operator instructions.
+  Secrets, credentials, out-of-scope paths, and non-allowlisted hosts MUST remain
+  unreachable from inside a runtime even if the agent is fully compromised, and the
+  isolation strength MUST be proportionate to the trust level of the code the runtime
+  executes.
+- Secrets — LLM provider keys, runtime tokens, and operator-defined named
+  credentials — MUST be brokered as short-lived, scoped credentials issued at
+  process start and revoked at teardown; secret values MUST NOT be written to agent
+  worktrees, working directories, or durable config files.
 - Primeloop remains single-tenant and self-hosted by design; one instance serves one
   human operator unless this Constitution is amended.
 
@@ -130,4 +165,4 @@ Compliance review expectations:
 - Repository-specific Prime Agent constraints in `AGENTS.md` remain binding for
   Prime implementation work.
 
-**Version**: 1.0.0 | **Ratified**: 2026-05-21 | **Last Amended**: 2026-05-23
+**Version**: 1.2.0 | **Ratified**: 2026-05-21 | **Last Amended**: 2026-06-04
