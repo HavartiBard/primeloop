@@ -1,3 +1,3 @@
 // Credentials module entry point
-export * from './types'
-export * from './broker'
+export * from './types.js'
+export * from './broker.js'

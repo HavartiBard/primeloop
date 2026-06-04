@@ -1,3 +1,3 @@
 // Session module entry point
-export * from './types'
-export * from './store'
+export * from './types.js'
+export * from './store.js'

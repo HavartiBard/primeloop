@@ -2,8 +2,8 @@
 // Issues short-lived scoped credentials; never writes secret values to disk
 
 import { Pool } from 'pg'
-import { createCipheriv, randomBytes } from 'crypto'
-import { IssuedCredential, CredentialKind, CredentialRecord } from './types'
+import { createCipheriv, createDecipheriv, randomBytes } from 'crypto'
+import { IssuedCredential, CredentialKind, CredentialRecord } from './types.js'
 
 const ALGORITHM = 'aes-256-gcm'
 const AUTH_TAG_LENGTH = 16
@@ -40,7 +40,7 @@ export class CredentialBroker {
     const ivBuffer = Buffer.from(iv, 'hex')
     const authTagBuffer = Buffer.from(authTag, 'hex')
     
-    const decipher = createCipheriv(ALGORITHM, this.encryptionKey, ivBuffer)
+    const decipher = createDecipheriv(ALGORITHM, this.encryptionKey, ivBuffer)
     decipher.setAuthTag(authTagBuffer)
     const decrypted = Buffer.concat([decipher.update(cipherTextBuffer), decipher.final()])
     

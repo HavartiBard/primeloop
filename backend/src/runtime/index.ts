@@ -1,3 +1,3 @@
 // Runtime module entry point
-export * from './types'
-export * from './lease'
+export * from './types.js'
+export * from './lease.js'

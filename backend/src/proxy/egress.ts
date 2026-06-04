@@ -2,7 +2,7 @@
 // Per-agent default-deny network egress
 
 import { Pool } from 'pg'
-import { EgressGuard } from './types'
+import { EgressGuard } from './types.js'
 
 export class EgressAllowlist implements EgressGuard {
   private pool: Pool

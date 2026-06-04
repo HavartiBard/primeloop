@@ -578,58 +578,79 @@ export async function insertRuntimeEvent(
     payload?: Record<string, unknown>
   }
 ): Promise<RuntimeEvent> {
-  // Determine session_id from delegation_id or thread_id
-  let sessionId: string | null = null
-  if (data.delegation_id) {
-    sessionId = data.delegation_id
-  } else if (data.thread_id) {
-    sessionId = data.thread_id
+  // session_id groups events for positional reads; derive from delegation/thread.
+  const sessionId: string | null = data.delegation_id ?? data.thread_id ?? null
+
+  // No session grouping → no seq (the UNIQUE(session_id, seq) index ignores NULLs).
+  if (sessionId === null) {
+    const { rows } = await pool.query(
+      `INSERT INTO runtime_events (event_type, actor, thread_id, work_item_id, delegation_id, payload, session_id, seq)
+       VALUES ($1, $2, $3, $4, $5, $6, NULL, NULL)
+       RETURNING *`,
+      [
+        data.event_type,
+        data.actor,
+        data.thread_id ?? null,
+        data.work_item_id ?? null,
+        data.delegation_id ?? null,
+        JSON.stringify(data.payload ?? {}),
+      ]
+    )
+    return rows[0]
   }
 
-  // Get next seq for this session
-  const { rows: seqRow } = await pool.query(
-    `SELECT COALESCE(MAX(seq), 0) + 1 AS next_seq FROM runtime_events WHERE session_id = $1`,
-    [sessionId]
-  )
-  const seq = seqRow[0]?.next_seq ?? 1
-
-  const { rows } = await pool.query(
-    `INSERT INTO runtime_events (event_type, actor, thread_id, work_item_id, delegation_id, payload, session_id, seq)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-     RETURNING *`,
-    [
-      data.event_type,
-      data.actor,
-      data.thread_id ?? null,
-      data.work_item_id ?? null,
-      data.delegation_id ?? null,
-      JSON.stringify(data.payload ?? {}),
-      sessionId,
-      seq,
-    ]
-  )
-  return rows[0]
+  // Assign a monotonic per-session seq atomically. A per-session advisory lock held for
+  // the transaction serializes concurrent writers to the same session, so the
+  // MAX(seq)+1 read and the INSERT cannot interleave and collide on UNIQUE(session_id, seq).
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    await client.query('SELECT pg_advisory_xact_lock(hashtext($1), 0)', [sessionId])
+    const { rows: seqRow } = await client.query(
+      `SELECT COALESCE(MAX(seq), 0) + 1 AS next_seq FROM runtime_events WHERE session_id = $1`,
+      [sessionId]
+    )
+    const seq = Number(seqRow[0].next_seq)
+    const { rows } = await client.query(
+      `INSERT INTO runtime_events (event_type, actor, thread_id, work_item_id, delegation_id, payload, session_id, seq)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       RETURNING *`,
+      [
+        data.event_type,
+        data.actor,
+        data.thread_id ?? null,
+        data.work_item_id ?? null,
+        data.delegation_id ?? null,
+        JSON.stringify(data.payload ?? {}),
+        sessionId,
+        seq,
+      ]
+    )
+    await client.query('COMMIT')
+    return rows[0]
+  } catch (err) {
+    await client.query('ROLLBACK')
+    throw err
+  } finally {
+    client.release()
+  }
 }
 
-// Helper to emit runtime events with feature flag gating
+// Typed emit-helper for the new event types. Pass explicit linkage
+// (thread_id/delegation_id) — insertRuntimeEvent derives session_id from it. IDs are
+// UUIDs, so there is no prefix to infer from.
 export async function emitRuntimeEvent(
   pool: pg.Pool,
-  eventType: string,
-  actor: string,
-  sessionId?: string,
-  payload?: Record<string, unknown>
+  data: {
+    event_type: string
+    actor: string
+    thread_id?: string
+    work_item_id?: string
+    delegation_id?: string
+    payload?: Record<string, unknown>
+  }
 ): Promise<void> {
-  const threadId = sessionId?.startsWith('thread_') ? sessionId : undefined
-  const delegationId = sessionId?.startsWith('delegation_') ? sessionId : undefined
-  
-  await insertRuntimeEvent(pool, {
-    event_type: eventType,
-    actor,
-    thread_id: threadId ?? null,
-    work_item_id: null,
-    delegation_id: delegationId ?? null,
-    payload: payload ?? {},
-  })
+  await insertRuntimeEvent(pool, data)
 }
 
 export async function listRuntimeEvents(pool: pg.Pool, limit = 100): Promise<RuntimeEvent[]> {

@@ -2,7 +2,7 @@
 // Read model over runtime_events merged with thread_messages, delegations.trace, checkpoint_continuations
 
 import { Pool } from 'pg'
-import { SessionId, SessionEvent, SessionHeader, EventRange } from './types'
+import { SessionId, SessionEvent, SessionHeader, EventRange } from './types.js'
 
 export class SessionStore {
   private pool: Pool
@@ -12,21 +12,31 @@ export class SessionStore {
   }
 
   async appendEvent(sessionId: SessionId, e: Omit<SessionEvent, 'seq' | 'created_at'>): Promise<SessionEvent> {
-    // Get next seq for this session
-    const { rows } = await this.pool.query(
-      `SELECT COALESCE(MAX(seq), 0) + 1 AS next_seq FROM runtime_events WHERE session_id = $1`,
-      [sessionId]
-    )
-    const seq = rows[0].next_seq
-    const created_at = new Date().toISOString()
-
-    await this.pool.query(
-      `INSERT INTO runtime_events (session_id, seq, event_type, actor, payload, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6)`,
-      [sessionId, seq, e.event_type, e.actor, JSON.stringify(e.payload), created_at]
-    )
-
-    return { session_id: sessionId, seq, ...e, created_at }
+    // Atomic per-session seq: hold a per-session advisory lock for the transaction so
+    // the MAX(seq)+1 read and the INSERT cannot interleave (UNIQUE(session_id, seq)).
+    const client = await this.pool.connect()
+    try {
+      await client.query('BEGIN')
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1), 0)', [sessionId])
+      const { rows } = await client.query(
+        `SELECT COALESCE(MAX(seq), 0) + 1 AS next_seq FROM runtime_events WHERE session_id = $1`,
+        [sessionId]
+      )
+      const seq = Number(rows[0].next_seq)
+      const created_at = new Date().toISOString()
+      await client.query(
+        `INSERT INTO runtime_events (session_id, seq, event_type, actor, payload, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [sessionId, seq, e.event_type, e.actor, JSON.stringify(e.payload), created_at]
+      )
+      await client.query('COMMIT')
+      return { ...e, session_id: sessionId, seq, created_at }
+    } catch (err) {
+      await client.query('ROLLBACK')
+      throw err
+    } finally {
+      client.release()
+    }
   }
 
   async getSession(sessionId: SessionId): Promise<SessionHeader | null> {

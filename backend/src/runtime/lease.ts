@@ -2,7 +2,7 @@
 // Drives on-demand provisioning of durable runtimes and idle reclamation
 
 import { Pool } from 'pg'
-import { RuntimeLease, LeaseResult } from './types'
+import { RuntimeLease, LeaseResult } from './types.js'
 
 export class RuntimeLeaseManager {
   private pool: Pool
