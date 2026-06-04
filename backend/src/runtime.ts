@@ -578,9 +578,24 @@ export async function insertRuntimeEvent(
     payload?: Record<string, unknown>
   }
 ): Promise<RuntimeEvent> {
+  // Determine session_id from delegation_id or thread_id
+  let sessionId: string | null = null
+  if (data.delegation_id) {
+    sessionId = data.delegation_id
+  } else if (data.thread_id) {
+    sessionId = data.thread_id
+  }
+
+  // Get next seq for this session
+  const { rows: seqRow } = await pool.query(
+    `SELECT COALESCE(MAX(seq), 0) + 1 AS next_seq FROM runtime_events WHERE session_id = $1`,
+    [sessionId]
+  )
+  const seq = seqRow[0]?.next_seq ?? 1
+
   const { rows } = await pool.query(
-    `INSERT INTO runtime_events (event_type, actor, thread_id, work_item_id, delegation_id, payload)
-     VALUES ($1, $2, $3, $4, $5, $6)
+    `INSERT INTO runtime_events (event_type, actor, thread_id, work_item_id, delegation_id, payload, session_id, seq)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
      RETURNING *`,
     [
       data.event_type,
@@ -589,9 +604,32 @@ export async function insertRuntimeEvent(
       data.work_item_id ?? null,
       data.delegation_id ?? null,
       JSON.stringify(data.payload ?? {}),
+      sessionId,
+      seq,
     ]
   )
   return rows[0]
+}
+
+// Helper to emit runtime events with feature flag gating
+export async function emitRuntimeEvent(
+  pool: pg.Pool,
+  eventType: string,
+  actor: string,
+  sessionId?: string,
+  payload?: Record<string, unknown>
+): Promise<void> {
+  const threadId = sessionId?.startsWith('thread_') ? sessionId : undefined
+  const delegationId = sessionId?.startsWith('delegation_') ? sessionId : undefined
+  
+  await insertRuntimeEvent(pool, {
+    event_type: eventType,
+    actor,
+    thread_id: threadId ?? null,
+    work_item_id: null,
+    delegation_id: delegationId ?? null,
+    payload: payload ?? {},
+  })
 }
 
 export async function listRuntimeEvents(pool: pg.Pool, limit = 100): Promise<RuntimeEvent[]> {

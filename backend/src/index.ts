@@ -25,11 +25,22 @@ const {
   SSH_USER = 'root',
   PRIMELOOP_MINIMAL_BOOT = process.env['ACP_MINIMAL_BOOT'] ?? '0',
   PRIMELOOP_STARTUP_TRACE = process.env['ACP_STARTUP_TRACE'] ?? '0',
+  // Feature flags for managed-agent runtime alignment
+  RESUME_ON_RESTART = '0',
+  LAZY_PROVISIONING = '0',
+  CREDENTIAL_BROKER = '0',
+  EGRESS_SANDBOX = '0',
 } = process.env
 
 if (!DATABASE_URL) throw new Error('DATABASE_URL is required')
 const minimalBoot = PRIMELOOP_MINIMAL_BOOT === '1'
 const startupTrace = PRIMELOOP_STARTUP_TRACE === '1'
+
+// Feature flags for managed-agent runtime alignment
+const RESUME_ON_RESTART_ENABLED = RESUME_ON_RESTART === '1'
+const LAZY_PROVISIONING_ENABLED = LAZY_PROVISIONING === '1'
+const CREDENTIAL_BROKER_ENABLED = CREDENTIAL_BROKER === '1'
+const EGRESS_SANDBOX_ENABLED = EGRESS_SANDBOX === '1'
 
 function traceStep(message: string): void {
   if (startupTrace) {

@@ -279,11 +279,40 @@ export async function runMigrations(pool: pg.Pool): Promise<void> {
       work_item_id  UUID REFERENCES work_items(id) ON DELETE SET NULL,
       delegation_id UUID REFERENCES delegations(id) ON DELETE SET NULL,
       payload       JSONB NOT NULL DEFAULT '{}',
-      created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+      created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+      session_id    UUID,
+      seq           BIGINT
     );
 
     CREATE INDEX IF NOT EXISTS idx_runtime_events_created_at
       ON runtime_events (created_at DESC);
+
+    -- Add session_id and seq columns if not present (idempotent)
+    ALTER TABLE runtime_events ADD COLUMN IF NOT EXISTS session_id UUID;
+    ALTER TABLE runtime_events ADD COLUMN IF NOT EXISTS seq BIGINT;
+
+    -- Create unique index for session_id + seq (idempotent)
+    DROP INDEX IF EXISTS idx_runtime_events_session_seq;
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_runtime_events_session_seq
+      ON runtime_events (session_id, seq);
+
+    -- Backfill session_id and seq for existing rows (one-time, idempotent)
+    DO $$
+    BEGIN
+      -- Only run if session_id is NULL for any rows
+      IF EXISTS (SELECT 1 FROM runtime_events WHERE session_id IS NULL LIMIT 1) THEN
+        -- Update rows that have delegation_id to set session_id = delegation_id
+        UPDATE runtime_events
+        SET session_id = delegation_id,
+            seq = subseq.seq_num
+        FROM (
+          SELECT id, ROW_NUMBER() OVER (PARTITION BY delegation_id ORDER BY created_at, id) AS seq_num
+          FROM runtime_events
+          WHERE delegation_id IS NOT NULL AND session_id IS NULL
+        ) AS subseq
+        WHERE runtime_events.id = subseq.id;
+      END IF;
+    END $$;
 
     CREATE TABLE IF NOT EXISTS routing_outcomes (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -575,6 +604,61 @@ CREATE TABLE IF NOT EXISTS checkpoint_continuations (
 
 CREATE INDEX IF NOT EXISTS idx_checkpoint_continuations_owner_id_status
 ON checkpoint_continuations (owner_id, status);
+
+-- Add recovery_epoch column to delegations for idempotency (R2)
+ALTER TABLE delegations ADD COLUMN IF NOT EXISTS recovery_epoch INT NOT NULL DEFAULT 0;
+
+-- =============================================================
+-- Managed-Agent Runtime Alignment tables (Spec 024)
+-- Idempotent: safe to re-run. Uses CREATE TABLE IF NOT EXISTS.
+-- =============================================================
+
+-- brokered_credentials: Lifecycle record for every credential issued to an agent (R3)
+CREATE TABLE IF NOT EXISTS brokered_credentials (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  agent_id UUID NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+  kind TEXT NOT NULL CHECK (kind IN ('provider_proxy_token','gitea_token','named_secret','launcher_token')),
+  scope JSONB NOT NULL DEFAULT '{}',
+  secret_ref TEXT NOT NULL,
+  status TEXT NOT NULL CHECK (status IN ('active','rotating','revoked','risky')),
+  auto_rotatable BOOLEAN NOT NULL DEFAULT true,
+  issued_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  expires_at TIMESTAMPTZ,
+  rotated_at TIMESTAMPTZ,
+  revoked_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_brokered_credentials_agent_status
+ON brokered_credentials (agent_id, status);
+
+-- runtime_leases: Binds a durable agent's identity to a current (or reclaimable) runtime instance (R6)
+CREATE TABLE IF NOT EXISTS runtime_leases (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  agent_id UUID NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+  status TEXT NOT NULL CHECK (status IN ('provisioning','active','idle','reclaimed')),
+  sandbox_id TEXT,
+  acquired_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  last_activity_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  released_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_runtime_leases_agent_status
+ON runtime_leases (agent_id, status);
+
+CREATE INDEX IF NOT EXISTS idx_runtime_leases_status_activity
+ON runtime_leases (status, last_activity_at);
+
+-- egress_allowlist: Per-agent default-deny network egress allowlist (R4)
+CREATE TABLE IF NOT EXISTS egress_allowlist (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  agent_id UUID NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+  host TEXT NOT NULL,
+  source TEXT NOT NULL CHECK (source IN ('capability','mcp_assignment','operator')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_egress_allowlist_agent_host
+ON egress_allowlist (agent_id, host);
 
 ALTER TABLE prime_agent_sessions
   ADD COLUMN IF NOT EXISTS last_step TEXT;
