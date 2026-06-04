@@ -89,17 +89,17 @@ are repository-relative (worktree root).
 ### Tests for User Story 2
 
 - [ ] T023 [P] [US2] DB-backed test: after provisioning, no secret value appears in worktree/config files (scan) in `backend/tests/credentials.no-disk.test.ts`
-- [ ] T024 [P] [US2] DB-backed test: ephemeral teardown revokes credentials synchronously and rejects reuse in `backend/tests/credentials.revoke.test.ts`
-- [ ] T025 [P] [US2] DB-backed test: durable rotation within ≤24h TTL without restart; non-rotatable/over-TTL flagged `risky` with event in `backend/tests/credentials.rotate.test.ts`
+- [X] T024 [P] [US2] DB-backed test: ephemeral teardown revokes credentials synchronously and rejects reuse in `backend/tests/credentials.revoke.test.ts`
+- [X] T025 [P] [US2] DB-backed test: durable rotation within ≤24h TTL without restart; non-rotatable/over-TTL flagged `risky` with event in `backend/tests/credentials.rotate.test.ts`
 
 ### Implementation for User Story 2
 
-- [ ] T026 [P] [US2] Define `CredentialBroker` types (`IssuedCredential`, `CredentialKind`, scope) in `backend/src/credentials/types.ts`
-- [ ] T027 [US2] Implement `issueForAgent`/`rotate`/`revoke`/`revokeAllForAgent` over the encrypted store (`crypto.ts`/`SECRET_ENCRYPTION_KEY`) + `brokered_credentials` in `backend/src/credentials/broker.ts` per contracts/credential-broker.md
-- [ ] T028 [US2] Add the `node-cron` rotation job (≤24h TTL) and risky-credential flagging in `backend/src/credentials/broker.ts`
+- [X] T026 [P] [US2] Define `CredentialBroker` types (`IssuedCredential`, `CredentialKind`, scope) in `backend/src/credentials/types.ts`
+- [X] T027 [US2] Implement `issueForAgent`/`rotate`/`revoke`/`revokeAllForAgent` over the encrypted store (`crypto.ts`/`SECRET_ENCRYPTION_KEY`) + `brokered_credentials` in `backend/src/credentials/broker.ts` per contracts/credential-broker.md
+- [X] T028 [US2] Add the `node-cron` rotation job (≤24h TTL) and risky-credential flagging in `backend/src/credentials/broker.ts`
 - [ ] T029 [US2] Inject broker env vars at spawn and REMOVE all secret/key writes from `writeConfigFiles`/config (env-only, FR-009) in `backend/src/opencode/process-manager.ts`
 - [ ] T030 [US2] Replace the long-lived control-plane token with a broker-issued scoped token in `backend/src/opencode/process-manager.ts` and validate it in `backend/src/mcp/server.ts`
-- [ ] T031 [US2] Emit `credential.issued|rotated|revoked|risk_flagged` events in `backend/src/credentials/broker.ts`
+- [X] T031 [US2] Emit `credential.issued|rotated|revoked|risk_flagged` events in `backend/src/credentials/broker.ts`
 - [ ] T032 [US2] Add a risky-credential badge using existing status components in `web/src/components/` (agent/credential surface), handling the no-risk (empty) and load/error states consistently
 - [ ] T058 [US2] Issue Gitea **scoped/derived** tokens (repo/capability-scoped, distinct from named-secret pass-through) in `backend/src/credentials/broker.ts` (FR-011)
 - [ ] T059 [US2] Route assigned MCP-server secrets through the broker and stop writing their `env_vars` into `opencode.json`/config (env-only injection) in `backend/src/opencode/process-manager.ts` (FR-009, FR-011) — covered by the no-disk scan in T023

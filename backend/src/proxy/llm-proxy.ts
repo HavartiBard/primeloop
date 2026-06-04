@@ -3,30 +3,21 @@
 // scoped token and never receive the raw key.
 
 import { Pool } from 'pg'
+import { CredentialBroker } from '../credentials/broker.js'
 import { LlmProxyRequest, LlmProxyResponse } from './types.js'
 
 export class LlmProxy {
-  private pool: Pool
+  private broker: CredentialBroker
 
   constructor(pool: Pool) {
-    this.pool = pool
+    this.broker = new CredentialBroker(pool)
   }
 
-  // Validate the broker-issued provider_proxy_token: active, unexpired, and (if scoped)
-  // permitted for this provider.
-  async authorize(token: string, provider: string): Promise<boolean> {
-    const { rows } = await this.pool.query(
-      `SELECT 1
-         FROM brokered_credentials
-        WHERE kind = 'provider_proxy_token'
-          AND status = 'active'
-          AND secret_ref = $1
-          AND (expires_at IS NULL OR expires_at > now())
-          AND (scope->>'provider' IS NULL OR scope->>'provider' = $2)
-        LIMIT 1`,
-      [token, provider]
-    )
-    return rows.length > 0
+  // Validate the broker-issued provider_proxy_token via the broker (hash-matched,
+  // active, unexpired). Agents/Prime present this token; they never hold the raw key.
+  async authorize(token: string, _provider: string): Promise<boolean> {
+    const cred = await this.broker.validate(token)
+    return cred?.kind === 'provider_proxy_token'
   }
 
   // Forward a provider call with the real key attached server-side. The raw key never

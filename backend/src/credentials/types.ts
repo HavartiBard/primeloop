@@ -6,6 +6,16 @@ export type CredentialKind =
   | 'named_secret'           // operator-defined (FR-011)
   | 'launcher_token'         // authenticates the backend→launcher socket
 
+export interface NamedSecretSpec {
+  envName: string
+  value: string
+}
+
+export interface AgentScope {
+  namedSecrets?: NamedSecretSpec[]
+  [key: string]: unknown
+}
+
 export interface IssuedCredential {
   id: string
   kind: CredentialKind
