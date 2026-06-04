@@ -52,6 +52,7 @@ describe('app smoke tests', () => {
         event_log,
         approvals,
         agent_heartbeat
+      CASCADE
     `)
     await pool.end()
   })

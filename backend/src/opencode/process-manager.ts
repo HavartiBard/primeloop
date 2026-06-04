@@ -525,12 +525,12 @@ export class OpenCodeProcessManager {
       const recoveryMessage = 'failed during harness restart recovery'
       const { rows: interrupted } = await this.pool.query<{ id: string; to_agent_id: string | null }>(
         `UPDATE delegations
-         SET status = 'failed',
-             result = jsonb_build_object('error', $1::text),
-             completed_at = now(),
-             updated_at = now()
-         WHERE status = 'in_progress'
-         RETURNING id, to_agent_id`,
+       SET status = 'failed',
+           result = jsonb_build_object('error', $1::text),
+           completed_at = now(),
+           updated_at = now()
+       WHERE status = 'in_progress'
+       RETURNING id, to_agent_id`,
         [recoveryMessage],
       )
 
