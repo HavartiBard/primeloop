@@ -62,18 +62,18 @@ are repository-relative (worktree root).
 
 ### Tests for User Story 1
 
-- [ ] T013 [P] [US1] DB-backed integration test: durable delegation resumes in place after restart, emits `session.resumed` in `backend/tests/recovery.resume.test.ts`
-- [ ] T014 [P] [US1] DB-backed integration test: ephemeral delegation re-dispatched from continuation, emits `delegation.recovered` in `backend/tests/recovery.redispatch.test.ts`
-- [ ] T015 [P] [US1] DB-backed integration test: duplicate recovery pass is a no-op (`recovery_epoch`), no double side effects in `backend/tests/recovery.idempotent.test.ts`
+- [X] T013 [P] [US1] DB-backed integration test: durable delegation resumes in place after restart, emits `session.resumed` in `backend/tests/recovery.resume.test.ts`
+- [X] T014 [P] [US1] DB-backed integration test: ephemeral delegation re-dispatched from continuation, emits `delegation.recovered` in `backend/tests/recovery.redispatch.test.ts`
+- [X] T015 [P] [US1] DB-backed integration test: duplicate recovery pass is a no-op (`recovery_epoch`), no double side effects in `backend/tests/recovery.idempotent.test.ts`
 
 ### Implementation for User Story 1
 
-- [ ] T016 [US1] Add `wake(sessionId): Promise<WakeResult>` to the `AgentHarness` interface in `backend/src/fleet-executor/harness.ts`
-- [ ] T017 [US1] Implement `wake` in `AcpHarness` via ACP `session/load` (when `load_session` advertised) with `checkpoint_continuations` re-dispatch fallback in `backend/src/fleet-executor/acp-harness.ts`
-- [ ] T018 [US1] Implement idempotent recovery claim (`FOR UPDATE SKIP LOCKED` + `recovery_epoch` bump; already-completed/resumed short-circuit) in `backend/src/recovery/service.ts`
-- [ ] T019 [US1] Implement tiered restart recovery (durable → resume in place; ephemeral → re-dispatch fresh) in `backend/src/recovery/service.ts` per contracts/harness-wake.md
-- [ ] T020 [US1] Wire recovery at boot behind `RESUME_ON_RESTART`, replacing the unconditional fail in `recoverLifecycleState`, in `backend/src/opencode/process-manager.ts`
-- [ ] T021 [US1] Emit `session.resumed` / `delegation.recovered` / `delegation.recovered_failed` for every outcome; guarantee no delegation left silently failed, in `backend/src/recovery/service.ts`
+- [X] T016 [US1] Add `wake(sessionId): Promise<WakeResult>` to the `AgentHarness` interface in `backend/src/fleet-executor/harness.ts`
+- [X] T017 [US1] Implement `wake` in `AcpHarness` via ACP `session/load` (when `load_session` advertised) with `checkpoint_continuations` re-dispatch fallback in `backend/src/fleet-executor/acp-harness.ts`
+- [X] T018 [US1] Implement idempotent recovery claim (`FOR UPDATE SKIP LOCKED` + `recovery_epoch` bump; already-completed/resumed short-circuit) in `backend/src/recovery/service.ts`
+- [X] T019 [US1] Implement tiered restart recovery (durable → resume in place; ephemeral → re-dispatch fresh) in `backend/src/recovery/service.ts` per contracts/harness-wake.md
+- [X] T020 [US1] Wire recovery at boot behind `RESUME_ON_RESTART`, replacing the unconditional fail in `recoverLifecycleState`, in `backend/src/opencode/process-manager.ts`
+- [X] T021 [US1] Emit `session.resumed` / `delegation.recovered` / `delegation.recovered_failed` for every outcome; guarantee no delegation left silently failed, in `backend/src/recovery/service.ts`
 - [ ] T022 [US1] Surface `resumed`/`recovered` status labels using existing delegation/agent status components in `web/src/hooks/useLoopStatus.ts` and the delegation status UI, covering loading/empty/success/error states with existing patterns
 
 **Checkpoint**: US1 independently testable — restart resumes work; MVP complete

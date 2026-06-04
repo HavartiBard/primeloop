@@ -5,7 +5,7 @@ import { updateMapper, mapTaskEnd } from '../acp/update-mapper.js';
 import { FsHandler } from '../acp/fs-handler.js';
 import { PermissionPolicy, type PermissionConfig } from '../acp/permission.js';
 import { updateAgent } from '../registry.js';
-import type { AgentHarness, HarnessEvent, ModelRef, TaskHandle, TaskPrompt, TaskResult } from './harness.js';
+import type { AgentHarness, HarnessEvent, ModelRef, TaskHandle, TaskPrompt, TaskResult, WakeResult } from './harness.js';
 
 export class AcpHarness implements AgentHarness {
   private client: AcpClient | null = null;
@@ -15,6 +15,7 @@ export class AcpHarness implements AgentHarness {
   private eventEmitter = new EventEmitter();
   private promptPromise: Promise<any> | null = null;
   private currentDelegationId: string | null = null;
+  private supportsLoadSession = false;
 
   constructor(
     private agentId: string,
@@ -78,7 +79,7 @@ export class AcpHarness implements AgentHarness {
       if (caps) {
         const negotiatedCapabilities: string[] = []
         if (caps.auth?.logout)             negotiatedCapabilities.push('auth')
-        if (caps.loadSession)              negotiatedCapabilities.push('load_session')
+        if (caps.loadSession)              { negotiatedCapabilities.push('load_session'); this.supportsLoadSession = true }
         if (caps.mcpCapabilities)          negotiatedCapabilities.push('mcp')
         if (caps.promptCapabilities?.image) negotiatedCapabilities.push('prompt_image')
         if (caps.promptCapabilities?.audio) negotiatedCapabilities.push('prompt_audio')
@@ -205,6 +206,28 @@ export class AcpHarness implements AgentHarness {
     }
 
     return { id: taskId, events: generateEvents(), done };
+  }
+
+  async wake(sessionId: string): Promise<WakeResult> {
+    // Re-attach to a prior session after a restart (US1). Native ACP reload when the
+    // agent supports it; otherwise signal the caller to re-dispatch from the checkpoint.
+    if (!this.client) return { outcome: 'redispatched', reason: 'harness_not_started' };
+    if (!this.supportsLoadSession) return { outcome: 'redispatched', reason: 'load_session_unsupported' };
+    try {
+      await this.client.sessionLoad({ sessionId });
+      this.sessionId = sessionId;
+      await this.recordRuntimeEvent('acp.session.resumed', {
+        agent_id: this.agentId,
+        payload: { session_id: sessionId },
+      });
+      return { outcome: 'resumed' };
+    } catch (error) {
+      await this.recordRuntimeEvent('acp.session.resume_failed', {
+        agent_id: this.agentId,
+        payload: { session_id: sessionId, error: error instanceof Error ? error.message : String(error) },
+      });
+      return { outcome: 'redispatched', reason: 'load_session_failed' };
+    }
   }
 
   async abort(taskId: string): Promise<void> {

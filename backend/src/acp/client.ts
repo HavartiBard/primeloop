@@ -90,6 +90,15 @@ export class AcpClient extends EventEmitter {
     this.rejectAllPending(new Error('Session cancelled'));
   }
 
+  // Re-attach to a previously-created session (ACP `session/load`). Requires the
+  // agent to advertise the load_session capability.
+  public async sessionLoad(request: { sessionId: string }): Promise<void> {
+    if (!this.state) throw new Error('Client not initialized');
+    await this.sendRequest('session/load', request);
+    this.state.sessionId = request.sessionId;
+    this.state.status = 'ready';
+  }
+
   public async terminate(): Promise<void> {
     if (this.process) {
       this.process.kill('SIGTERM');

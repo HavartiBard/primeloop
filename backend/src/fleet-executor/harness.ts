@@ -33,9 +33,23 @@ export interface TaskHandle {
   done: Promise<TaskResult>
 }
 
+export type WakeOutcome = 'resumed' | 'redispatched' | 'noop'
+
+export interface WakeResult {
+  outcome: WakeOutcome
+  reason?: string
+}
+
 export interface AgentHarness {
   start(opts: { cwd: string; model: ModelRef }): Promise<void>
   dispatch(prompt: TaskPrompt): Promise<TaskHandle>
   abort(taskId: string): Promise<void>
   close(): Promise<void>
+  /**
+   * Re-attach to an existing agent session after a restart (US1). Returns
+   * `resumed` when the runtime natively reloaded the session (ACP `session/load`),
+   * `redispatched` when the caller should re-dispatch from the durable checkpoint,
+   * or `noop` when there is nothing to resume.
+   */
+  wake(sessionId: string): Promise<WakeResult>
 }

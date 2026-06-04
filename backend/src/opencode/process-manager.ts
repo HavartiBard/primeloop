@@ -19,6 +19,7 @@ import { bootstrapDurableStaff } from '../durable-staff.js'
 
 import { AcpHarness } from '../fleet-executor/acp-harness.js'
 import type { AgentHarness } from '../fleet-executor/harness.js'
+import { recoverInflight } from '../recovery/restart.js'
 
 const execFileAsync = promisify(execFile)
 const DEFAULT_PORT_START = 4200
@@ -514,29 +515,37 @@ export class OpenCodeProcessManager {
   }
 
   private async recoverLifecycleState(): Promise<void> {
-    const recoveryMessage = 'failed during harness restart recovery'
-    const { rows: interrupted } = await this.pool.query<{ id: string; to_agent_id: string | null }>(
-      `UPDATE delegations
-       SET status = 'failed',
-           result = jsonb_build_object('error', $1::text),
-           completed_at = now(),
-           updated_at = now()
-       WHERE status = 'in_progress'
-       RETURNING id, to_agent_id`,
-      [recoveryMessage],
-    )
+    let interruptedAgentIds: string[] = []
+    if (process.env.RESUME_ON_RESTART === '1') {
+      // US1: resume durable / re-dispatch ephemeral in-flight delegations from the
+      // durable log instead of failing them. recoverInflight emits its own events and
+      // leaves resumed agents to re-provision on dispatch (not marked 'error').
+      await recoverInflight(this.pool)
+    } else {
+      const recoveryMessage = 'failed during harness restart recovery'
+      const { rows: interrupted } = await this.pool.query<{ id: string; to_agent_id: string | null }>(
+        `UPDATE delegations
+         SET status = 'failed',
+             result = jsonb_build_object('error', $1::text),
+             completed_at = now(),
+             updated_at = now()
+         WHERE status = 'in_progress'
+         RETURNING id, to_agent_id`,
+        [recoveryMessage],
+      )
 
-    for (const delegation of interrupted) {
-      await this.recordRuntimeEvent('delegation.recovered_failed', {
-        actor: 'process-manager',
-        delegation_id: delegation.id,
-        payload: { error: recoveryMessage },
-      })
+      for (const delegation of interrupted) {
+        await this.recordRuntimeEvent('delegation.recovered_failed', {
+          actor: 'process-manager',
+          delegation_id: delegation.id,
+          payload: { error: recoveryMessage },
+        })
+      }
+
+      interruptedAgentIds = interrupted
+        .map((delegation) => delegation.to_agent_id)
+        .filter((agentId): agentId is string => typeof agentId === 'string')
     }
-
-    const interruptedAgentIds = interrupted
-      .map((delegation) => delegation.to_agent_id)
-      .filter((agentId): agentId is string => typeof agentId === 'string')
 
     const { rows: unstableAgents } = await this.pool.query<{ id: string }>(
       `SELECT id
