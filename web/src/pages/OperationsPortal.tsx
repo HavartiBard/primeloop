@@ -1,8 +1,10 @@
+import { useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import {
   fetchAgents,
   fetchRuntimeAuditLoops,
   fetchRuntimeDelegations,
+  fetchRuntimeEvents,
   fetchRuntimeMemory,
   fetchRuntimeOverview,
   fetchRuntimeWorkItems,
@@ -11,7 +13,7 @@ import {
 import { useApprovals } from '../hooks/useApprovals'
 import { useAgentRegistry } from '../hooks/useAgentRegistry'
 import { useWebSocket } from '../hooks/useWebSocket'
-import { CollaborationRoomsView } from '../components/CollaborationRoomsView'
+import { CollaborationRoomsView, type InspectorTabSnapshot } from '../components/CollaborationRoomsView'
 import type { PrimeProfile } from '../types'
 
 const DEFAULT_PROFILE: PrimeProfile = {
@@ -35,7 +37,7 @@ const DEFAULT_PROFILE: PrimeProfile = {
   ],
 }
 
-export function OperationsPortal() {
+export function OperationsPortal({ onOpenInspector, activeInspectorId }: { onOpenInspector?: (tab: InspectorTabSnapshot) => void; activeInspectorId?: string | null } = {}) {
   const { approvals } = useApprovals()
   const { agents } = useAgentRegistry()
   const { connected, events } = useWebSocket('/ws')
@@ -82,6 +84,12 @@ export function OperationsPortal() {
     refetchInterval: 30_000,
   })
 
+  const { data: persistedEvents = [] } = useQuery({
+    queryKey: ['runtime-events'],
+    queryFn: () => fetchRuntimeEvents(500),
+    refetchInterval: 15_000,
+  })
+
   const profile: PrimeProfile = runtimeOverview?.prime
     ? {
         name: runtimeOverview.prime.name,
@@ -97,6 +105,23 @@ export function OperationsPortal() {
   if (profile.recurringDuties.length === 0) profile.recurringDuties = DEFAULT_PROFILE.recurringDuties
   if (profile.priorDecisions.length === 0) profile.priorDecisions = DEFAULT_PROFILE.priorDecisions
 
+  const mergedEvents = useMemo(() => {
+    const normalizedPersisted = persistedEvents.map((event) => ({
+      id: event.id,
+      agent: event.actor,
+      type: event.event_type,
+      payload: {
+        ...event.payload,
+        ...(event.thread_id ? { thread_id: event.thread_id } : {}),
+        ...(event.work_item_id ? { work_item_id: event.work_item_id } : {}),
+        ...(event.delegation_id ? { delegation_id: event.delegation_id } : {}),
+      },
+      created_at: event.created_at,
+    }))
+    const byId = new Map([...normalizedPersisted, ...events].map((event) => [event.id, event]))
+    return [...byId.values()].sort((a, b) => a.created_at.localeCompare(b.created_at))
+  }, [persistedEvents, events])
+
   const pendingApprovals = approvals.filter((approval) => approval.status === 'pending').length
 
   return (
@@ -105,7 +130,7 @@ export function OperationsPortal() {
         <CollaborationRoomsView
           primeName={profile.name}
           connected={connected}
-          events={events}
+          events={mergedEvents}
           agents={agents}
           healthData={healthData}
           workItems={workItems}
@@ -113,6 +138,8 @@ export function OperationsPortal() {
           threads={threads}
           pendingApprovals={pendingApprovals}
           auditLoops={auditLoops}
+          onOpenInspector={onOpenInspector}
+          activeInspectorId={activeInspectorId}
         />
       </section>
     </div>

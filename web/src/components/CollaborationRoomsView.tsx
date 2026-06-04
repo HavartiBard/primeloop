@@ -1,16 +1,35 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Globe, Menu, Paperclip, TerminalSquare, Wand2 } from 'lucide-react'
-import { fetchPrimeSessions, fetchProviders, fetchSetupProviderModels, fetchThreadMessages, sendPrimeMessage } from '../api'
-import { BottomActionToolbar } from './agentCanvas/BottomActionToolbar'
-import type { AgentEvent, Provider, RegistryAgent, RuntimeAuditLoop, RuntimeDelegation, RuntimeThread, RuntimeWorkItem, ToolbarDraftAction } from '../types'
-import { useToolbarActions } from '../hooks/useToolbarActions'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { abortPrimeSession, fetchPrimeSessions, fetchProviders, fetchSetupProviderModels, fetchThreadMessages, sendPrimeMessage } from '../api'
+import type { AgentEvent, Provider, RegistryAgent, RuntimeAuditLoop, RuntimeDelegation, RuntimeThread, RuntimeWorkItem } from '../types'
 import type { ChatDraft } from '../types/composer'
 type AgentHealth = {
   agent: string
   last_seen: string
   healthy: boolean
+}
+
+export type InspectorTabSnapshot = {
+  id: string
+  title: string
+  kind: string
+  status: string
+  lane: string
+  actionType?: string
+  owner: string
+  createdAt?: string
+  updatedAt?: string
+  externalTicket?: string
+  messageId?: string
+  sourceSessionId?: string
+  workItemId?: string
+  delegationId?: string
+  details?: string
+  request?: string
+  result?: string
+  metadata?: string
 }
 
 type CollaborationRoomsViewProps = {
@@ -24,6 +43,8 @@ type CollaborationRoomsViewProps = {
   threads: RuntimeThread[]
   pendingApprovals: number
   auditLoops: RuntimeAuditLoop[]
+  onOpenInspector?: (tab: InspectorTabSnapshot) => void
+  activeInspectorId?: string | null
 }
 
 type RoomState = 'active' | 'attention' | 'blocked' | 'archived'
@@ -54,7 +75,18 @@ type WorkFocus = {
   messageId?: string
   sourceSessionId?: string
   actionType?: string
+  createdAt?: string
   updatedAt?: string
+}
+
+type QueuedComposerMessage = {
+  id: string
+  roomId: string
+  content: string
+  sender: string
+  queuedAt: string
+  status: 'queued' | 'sending' | 'error'
+  error?: string
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
@@ -139,8 +171,38 @@ type TerminalLine = {
   kind: 'thinking' | 'turn' | 'tool' | 'result' | 'error'
 }
 
+type ArtifactAction = {
+  type: string
+  reason?: string
+  payload?: Record<string, unknown>
+}
+
+type ArtifactStep = {
+  module_id: string
+  status: string
+  detail?: string
+  mode?: string
+}
+
+type ArtifactSessionView = {
+  id: string
+  occurredAt: string
+  summary: string
+  live: boolean
+  actor: string
+  lines: TerminalLine[]
+  reasoning?: string
+  actions: ArtifactAction[]
+  model?: string
+  provider?: string
+  steps: ArtifactStep[]
+  error?: string
+}
+
+type ArtifactFilterOption = 'web' | 'shell' | 'tool' | 'thinking' | 'error'
+
 type ChatTimelineEntry =
-  | { kind: 'message'; key: string; occurredAt: string; speaker: string; text: string; at: string }
+  | { kind: 'message'; key: string; occurredAt: string; speaker: string; text: string; at: string; queued?: boolean; failed?: boolean }
   | {
       kind: 'artifact'
       key: string
@@ -148,22 +210,43 @@ type ChatTimelineEntry =
       summary: string
       live: boolean
       lines: TerminalLine[]
+      artifact: ArtifactSessionView
     }
 
 function asText(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined
 }
 
-function asActionSummary(payload: Record<string, unknown>): string | undefined {
-  const actions = Array.isArray(payload.actions) ? payload.actions : []
-  if (actions.length === 0) return 'no actions proposed'
+function normalizeActions(actions: unknown[]): ArtifactAction[] {
   return actions.map((action) => {
-    if (!action || typeof action !== 'object') return 'action'
+    if (!action || typeof action !== 'object') return { type: 'action' }
     const record = action as Record<string, unknown>
-    const type = asText(record.type) ?? 'action'
-    const reason = asText(record.reason)
-    return reason ? `${type} (${reason})` : type
-  }).join(' | ')
+    return {
+      type: asText(record.type) ?? 'action',
+      reason: asText(record.reason),
+      payload: record.payload && typeof record.payload === 'object' ? record.payload as Record<string, unknown> : undefined,
+    }
+  })
+}
+
+function asActionSummary(payload: Record<string, unknown>): string | undefined {
+  const actions = Array.isArray(payload.actions) ? normalizeActions(payload.actions) : []
+  if (actions.length === 0) return 'no actions proposed'
+  return actions.map((action) => action.reason ? `${action.type} (${action.reason})` : action.type).join(' | ')
+}
+
+function formatPayload(value: unknown): string {
+  try {
+    return JSON.stringify(value, null, 2)
+  } catch {
+    return String(value)
+  }
+}
+
+function typesSummary(actions: ArtifactAction[]): string | undefined {
+  if (actions.length === 0) return undefined
+  const labels = Array.from(new Set(actions.map((action) => action.type))).slice(0, 2)
+  return labels.join(' + ')
 }
 
 function toneClass(tone?: TerminalLine['tone']): string {
@@ -185,18 +268,117 @@ function artifactLabel(line: TerminalLine): string {
   if (line.kind === 'tool') return 'Tool'
   if (line.kind === 'result') return 'Update'
   if (line.kind === 'error') return 'Error'
-  return 'Turn'
+  return 'Step'
+}
+
+function artifactKindLabel(artifact: ArtifactSessionView): string {
+  const types = artifact.actions.map((action) => action.type.toLowerCase())
+  const joined = `${types.join(' ')} ${artifact.summary.toLowerCase()}`
+  if (joined.includes('web') || joined.includes('search')) return 'Web Search'
+  if (joined.includes('shell') || joined.includes('bash') || joined.includes('command')) return 'Shell Command'
+  if (joined.includes('approval')) return 'Approval'
+  if (joined.includes('delegate')) return 'Delegation'
+  if (joined.includes('profile')) return 'Profile Update'
+  if (types.length > 0) return 'Tool Run'
+  if (artifact.reasoning) return 'Thinking'
+  if (artifact.error) return 'Error'
+  return 'Activity'
+}
+
+function artifactKindIcon(label: string): string {
+  if (label === 'Web Search') return '◉'
+  if (label === 'Shell Command') return '▸'
+  if (label === 'Approval') return '!'
+  if (label === 'Delegation') return '⇢'
+  if (label === 'Profile Update') return '✎'
+  if (label === 'Tool Run') return '⚙'
+  if (label === 'Thinking') return '…'
+  if (label === 'Error') return '✕'
+  return '•'
+}
+
+function matchesArtifactFilter(session: ArtifactSessionView, filter: ArtifactFilterOption): boolean {
+  const label = artifactKindLabel(session).toLowerCase()
+  if (filter === 'web') return label.includes('web')
+  if (filter === 'shell') return label.includes('shell')
+  if (filter === 'tool') return label.includes('tool') || label.includes('delegation') || label.includes('approval') || label.includes('profile')
+  if (filter === 'thinking') return label.includes('thinking')
+  return label.includes('error') || Boolean(session.error) || session.steps.some((step) => step.status === 'failed')
+}
+
+function artifactFilterLabel(hideDetails: boolean, filters: ArtifactFilterOption[]): string {
+  if (hideDetails) return 'Hide details'
+  const allFilters: ArtifactFilterOption[] = ['web', 'shell', 'tool', 'thinking', 'error']
+  if (filters.length === allFilters.length) return 'All details'
+  const labels: Record<ArtifactFilterOption, string> = {
+    web: 'Web',
+    shell: 'Shell',
+    tool: 'Tool',
+    thinking: 'Think',
+    error: 'Errors',
+  }
+  return filters.map((filter) => labels[filter]).join(', ')
+}
+
+function workFocusCardClass(status: string, selected: boolean): string {
+  if (status === 'blocked' || status === 'approval') {
+    return selected
+      ? 'border-rose-400/60 bg-rose-400/15 ring-1 ring-rose-400/40'
+      : 'border-[var(--s-blk-bd)] bg-[var(--s-blk-bg)] hover:bg-rose-500/10'
+  }
+  if (status === 'active' || status === 'running') {
+    return selected
+      ? 'border-cyan-400/60 bg-cyan-400/12 ring-1 ring-cyan-400/35'
+      : 'border-cyan-400/20 bg-cyan-400/6 hover:bg-cyan-400/10'
+  }
+  if (status === 'queued' || status === 'pending') {
+    return selected
+      ? 'border-blue-400/60 bg-blue-400/12 ring-1 ring-blue-400/35'
+      : 'border-blue-400/20 bg-blue-400/6 hover:bg-blue-400/10'
+  }
+  return selected
+    ? 'border-[var(--sel-bd)] bg-[var(--sel-bg)] ring-1 ring-[var(--sel-bd)]/30'
+    : 'border-[var(--border-soft)] bg-[var(--panel-subtle)] hover:bg-[var(--panel-strong)]'
+}
+
+function workFocusBadgeClass(status: string): string {
+  if (status === 'blocked' || status === 'approval') return 'border-rose-400/30 bg-rose-400/10 text-rose-200'
+  if (status === 'active' || status === 'running') return 'border-cyan-400/30 bg-cyan-400/10 text-cyan-200'
+  if (status === 'queued' || status === 'pending') return 'border-blue-400/30 bg-blue-400/10 text-blue-200'
+  return 'border-[var(--border-soft)] text-[var(--muted)]'
+}
+
+function extractExternalTicket(metadata: Record<string, unknown> | undefined): string | undefined {
+  if (!metadata) return undefined
+  const direct = [metadata['external_ticket'], metadata['ticket'], metadata['issue_url'], metadata['issue'], metadata['tracker']]
+    .find((value) => typeof value === 'string' && value.trim())
+  if (typeof direct === 'string') return direct.trim()
+  const tracker = metadata['tracker']
+  if (tracker && typeof tracker === 'object') {
+    try {
+      const record = tracker as Record<string, unknown>
+      const type = typeof record.type === 'string' ? record.type : 'ticket'
+      const id = typeof record.id === 'string' ? record.id : typeof record.key === 'string' ? record.key : undefined
+      const url = typeof record.url === 'string' ? record.url : undefined
+      if (id && url) return `${type}:${id} · ${url}`
+      if (id) return `${type}:${id}`
+      if (url) return url
+    } catch {
+      // ignore
+    }
+  }
+  return undefined
 }
 
 function eventToTerminalLine(event: AgentEvent): TerminalLine | null {
   const payload = event.payload ?? {}
-  const sessionId = asText(payload.session_id)
+  const speaker = asText(event.agent) ?? 'agent'
 
   switch (event.type) {
     case 'prime.turn.started':
       return {
         key: event.id,
-        speaker: 'prime',
+        speaker,
         command: 'turn started',
         detail: `trigger=${asText(payload.trigger_type) ?? 'prime.message'}`,
         occurredAt: event.created_at,
@@ -209,7 +391,7 @@ function eventToTerminalLine(event: AgentEvent): TerminalLine | null {
       const mode = asText(payload.mode)
       return {
         key: event.id,
-        speaker: 'prime',
+        speaker,
         command: `${moduleId}${mode === 'shadow' ? ' [shadow]' : ''}`,
         detail: [status, asText(payload.detail)].filter(Boolean).join(' · '),
         occurredAt: event.created_at,
@@ -220,7 +402,7 @@ function eventToTerminalLine(event: AgentEvent): TerminalLine | null {
     case 'prime.turn.reasoning':
       return {
         key: event.id,
-        speaker: 'prime',
+        speaker,
         command: 'reasoning',
         detail: asText(payload.reasoning) ?? 'reasoning unavailable',
         occurredAt: event.created_at,
@@ -230,7 +412,7 @@ function eventToTerminalLine(event: AgentEvent): TerminalLine | null {
     case 'prime.turn.actions':
       return {
         key: event.id,
-        speaker: 'prime',
+        speaker,
         command: 'actions',
         detail: asActionSummary(payload),
         occurredAt: event.created_at,
@@ -244,7 +426,7 @@ function eventToTerminalLine(event: AgentEvent): TerminalLine | null {
       ].filter(Boolean).join(' ')
       return {
         key: event.id,
-        speaker: 'prime',
+        speaker,
         command: 'turn complete',
         detail,
         occurredAt: event.created_at,
@@ -255,7 +437,7 @@ function eventToTerminalLine(event: AgentEvent): TerminalLine | null {
     case 'prime.turn.failed':
       return {
         key: event.id,
-        speaker: 'prime',
+        speaker,
         command: 'turn failed',
         detail: asText(payload.error) ?? 'unknown error',
         occurredAt: event.created_at,
@@ -342,15 +524,14 @@ export function CollaborationRoomsView({
   delegations,
   threads,
   pendingApprovals,
+  onOpenInspector,
+  activeInspectorId,
 }: CollaborationRoomsViewProps) {
   const queryClient = useQueryClient()
   const [selectedRoomId, setSelectedRoomId] = useState<string | null>(null)
   const [filter, setFilter] = useState<FilterTab>('active')
   const [search, setSearch] = useState('')
-  const [draftMessage, setDraftMessage] = useState('')
-  const [toolbarDrafts, setToolbarDrafts] = useState<Record<string, ToolbarDraftAction>>({})
-  const [composerDraft, setComposerDraft] = useState<ToolbarDraftAction | null>(null)
-  const { handleOpenDraft, handleCancelDraft } = useToolbarActions(setToolbarDrafts, setComposerDraft)
+  const [roomsCollapsed, setRoomsCollapsed] = useState(false)
   const [selectedWorkId, setSelectedWorkId] = useState<string | null>(null)
   const [clockNow, setClockNow] = useState(() => Date.now())
   const [unreadMessages, setUnreadMessages] = useState(0)
@@ -370,14 +551,23 @@ export function CollaborationRoomsView({
   const [showComposerMenu, setShowComposerMenu] = useState(false)
   const [showCompanionPrompt, setShowCompanionPrompt] = useState(false)
   const [showModelMenu, setShowModelMenu] = useState(false)
+  const [showArtifactFilterMenu, setShowArtifactFilterMenu] = useState(false)
+  const [hideArtifactDetails, setHideArtifactDetails] = useState(false)
+  const [artifactFilters, setArtifactFilters] = useState<ArtifactFilterOption[]>(['web', 'shell', 'tool', 'thinking', 'error'])
   const [modelSearch, setModelSearch] = useState('')
   const [providerModels, setProviderModels] = useState<Record<string, string[]>>({})
   const [modelMenuPosition, setModelMenuPosition] = useState<{ top: number; left: number; width: number }>({ top: 0, left: 0, width: 260 })
   const [composerToast, setComposerToast] = useState<string | null>(null)
+  const [queuedMessages, setQueuedMessages] = useState<QueuedComposerMessage[]>([])
+  const [interruptingSessionId, setInterruptingSessionId] = useState<string | null>(null)
   const chatScrollRef = useRef<HTMLDivElement | null>(null)
   const chatInputRef = useRef<HTMLInputElement | null>(null)
   const modelButtonRef = useRef<HTMLButtonElement | null>(null)
   const modelMenuRef = useRef<HTMLDivElement | null>(null)
+  const artifactFilterButtonRef = useRef<HTMLButtonElement | null>(null)
+  const artifactFilterMenuRef = useRef<HTMLDivElement | null>(null)
+  const composerMenuButtonRef = useRef<HTMLButtonElement | null>(null)
+  const composerMenuRef = useRef<HTMLDivElement | null>(null)
   const companionPromptRef = useRef<HTMLInputElement | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const imageInputRef = useRef<HTMLInputElement | null>(null)
@@ -508,11 +698,47 @@ export function CollaborationRoomsView({
   }, [showModelMenu])
 
   useEffect(() => {
+    if (!showComposerMenu) return
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as Node
+      if (composerMenuButtonRef.current?.contains(target) || composerMenuRef.current?.contains(target)) return
+      setShowComposerMenu(false)
+    }
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setShowComposerMenu(false)
+    }
+    document.addEventListener('mousedown', handlePointerDown)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [showComposerMenu])
+
+  useEffect(() => {
+    if (!showArtifactFilterMenu) return
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as Node
+      if (artifactFilterButtonRef.current?.contains(target) || artifactFilterMenuRef.current?.contains(target)) return
+      setShowArtifactFilterMenu(false)
+    }
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setShowArtifactFilterMenu(false)
+    }
+    document.addEventListener('mousedown', handlePointerDown)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [showArtifactFilterMenu])
+
+  useEffect(() => {
     if (!showModelMenu) return
     const updatePosition = () => {
       const rect = modelButtonRef.current?.getBoundingClientRect()
       if (!rect) return
-      const width = Math.max(260, rect.width + 120)
+      const width = Math.min(560, Math.max(360, rect.width + 220))
       const estimatedHeight = 320
       setModelMenuPosition({
         top: Math.max(12, rect.top - estimatedHeight - 8),
@@ -540,12 +766,12 @@ export function CollaborationRoomsView({
     })
     window.addEventListener('resize', updatePosition)
     window.addEventListener('scroll', updatePosition, true)
-    document.addEventListener('mousedown', handlePointerDown)
+    document.addEventListener('pointerdown', handlePointerDown)
     document.addEventListener('keydown', handleKeyDown)
     return () => {
       window.removeEventListener('resize', updatePosition)
       window.removeEventListener('scroll', updatePosition, true)
-      document.removeEventListener('mousedown', handlePointerDown)
+      document.removeEventListener('pointerdown', handlePointerDown)
       document.removeEventListener('keydown', handleKeyDown)
     }
   }, [showModelMenu])
@@ -573,7 +799,20 @@ export function CollaborationRoomsView({
     refetchInterval: runningPrimeSessions.length > 0 ? 1_000 : 3_000,
   })
 
-  const displayMessages = rawMessages.length >= 1
+  const optimisticMessages = queuedMessages
+    .filter((message) => message.roomId === activeRoomId)
+    .map((message) => ({
+      speaker: message.sender,
+      text: message.content,
+      at: formatShortTime(message.queuedAt),
+      occurredAt: message.queuedAt,
+      key: `queued:${message.id}`,
+      sessionId: undefined,
+      queued: true,
+      failed: message.status === 'error',
+    }))
+
+  const persistedMessages = rawMessages.length >= 1
     ? rawMessages.map(msg => ({
         speaker: msg.sender || msg.role,
         text: msg.content,
@@ -581,13 +820,19 @@ export function CollaborationRoomsView({
         occurredAt: msg.created_at,
         key: msg.id,
         sessionId: typeof msg.metadata?.['session_id'] === 'string' ? msg.metadata['session_id'] : undefined,
+        queued: false,
+        failed: false,
       }))
     : (selectedRoom?.messages ?? []).map((msg, index) => ({
         ...msg,
         occurredAt: `${Date.now() + index}`,
         key: `${selectedRoom?.id ?? 'room'}-${index}`,
         sessionId: undefined,
+        queued: false,
+        failed: false,
       }))
+
+  const displayMessages = [...persistedMessages, ...optimisticMessages].sort((a, b) => a.occurredAt.localeCompare(b.occurredAt))
 
   useEffect(() => {
     lastMessageCountRef.current = 0
@@ -604,6 +849,10 @@ export function CollaborationRoomsView({
     })
   }, [activeRoomId, selectedRoomId])
 
+  useEffect(() => {
+    setSelectedWorkId(null)
+  }, [activeRoomId])
+
   const activeAgents = selectedRoom
     ? Array.from(new Set([
         ...selectedRoom.workItems.map((i) => i.owner_label).filter(Boolean) as string[],
@@ -615,7 +864,22 @@ export function CollaborationRoomsView({
   const attentionWork = selectedRoom
     ? selectedRoom.workItems.filter((item) => item.status === 'blocked' || item.status === 'approval')
     : []
-  const activeWork = selectedRoom
+  const attentionFocus = selectedRoom
+    ? attentionWork.map((item): WorkFocus => ({
+        id: item.id,
+        title: item.title,
+        status: item.status,
+        lane: item.lane,
+        owner: item.owner_label || primeName,
+        kind: 'work',
+        messageId: typeof item.metadata?.['message_id'] === 'string' ? item.metadata['message_id'] : undefined,
+        sourceSessionId: typeof item.metadata?.['source_session_id'] === 'string' ? item.metadata['source_session_id'] : undefined,
+        actionType: typeof item.metadata?.['action_type'] === 'string' ? item.metadata['action_type'] : undefined,
+        createdAt: item.created_at,
+        updatedAt: item.updated_at ?? item.created_at,
+      }))
+    : []
+  const runningWork = selectedRoom
     ? [
         ...selectedRoom.workItems
           .filter((item) => item.status === 'active')
@@ -629,6 +893,7 @@ export function CollaborationRoomsView({
             messageId: typeof item.metadata?.['message_id'] === 'string' ? item.metadata['message_id'] : undefined,
             sourceSessionId: typeof item.metadata?.['source_session_id'] === 'string' ? item.metadata['source_session_id'] : undefined,
             actionType: typeof item.metadata?.['action_type'] === 'string' ? item.metadata['action_type'] : undefined,
+            createdAt: item.created_at,
             updatedAt: item.updated_at ?? item.created_at,
           })),
         ...selectedRoom.delegations
@@ -646,15 +911,16 @@ export function CollaborationRoomsView({
               messageId: typeof item?.metadata?.['message_id'] === 'string' ? item.metadata['message_id'] : undefined,
               sourceSessionId: typeof item?.metadata?.['source_session_id'] === 'string' ? item.metadata['source_session_id'] : undefined,
               actionType: typeof item?.metadata?.['action_type'] === 'string' ? item.metadata['action_type'] : undefined,
+              createdAt: delegation.created_at,
               updatedAt: delegation.updated_at ?? delegation.created_at,
             }
           }),
       ]
     : []
-  const pendingWork = selectedRoom
+  const queuedWork = selectedRoom
     ? [
         ...selectedRoom.workItems
-          .filter((item) => item.status !== 'active' && item.status !== 'blocked' && item.status !== 'approval')
+          .filter((item) => item.status === 'queued')
           .map((item): WorkFocus => ({
             id: item.id,
             title: item.title,
@@ -665,6 +931,7 @@ export function CollaborationRoomsView({
             messageId: typeof item.metadata?.['message_id'] === 'string' ? item.metadata['message_id'] : undefined,
             sourceSessionId: typeof item.metadata?.['source_session_id'] === 'string' ? item.metadata['source_session_id'] : undefined,
             actionType: typeof item.metadata?.['action_type'] === 'string' ? item.metadata['action_type'] : undefined,
+            createdAt: item.created_at,
             updatedAt: item.updated_at ?? item.created_at,
           })),
         ...selectedRoom.delegations
@@ -682,12 +949,14 @@ export function CollaborationRoomsView({
               messageId: typeof item?.metadata?.['message_id'] === 'string' ? item.metadata['message_id'] : undefined,
               sourceSessionId: typeof item?.metadata?.['source_session_id'] === 'string' ? item.metadata['source_session_id'] : undefined,
               actionType: typeof item?.metadata?.['action_type'] === 'string' ? item.metadata['action_type'] : undefined,
+              createdAt: delegation.created_at,
               updatedAt: delegation.updated_at ?? delegation.created_at,
             }
           }),
       ]
     : []
-  const selectedFocus = [...activeWork, ...pendingWork].find((item) => item.id === selectedWorkId)
+  const workFocusIndex = useMemo(() => new Map([...attentionFocus, ...runningWork, ...queuedWork].map((item) => [item.id, item])), [attentionFocus, runningWork, queuedWork])
+  const highlightedInspectorId = activeInspectorId ?? selectedWorkId
   const latestPrimeSession = roomPrimeSessions[0]
   const latestPrimeResponseVisible = latestPrimeSession
     ? rawMessages.some((message) => message.metadata?.['session_id'] === latestPrimeSession.id)
@@ -726,7 +995,6 @@ export function CollaborationRoomsView({
   const processingElapsed = displayStartRef.current
     ? formatElapsed(Math.max(0, clockNow - displayStartRef.current.ts))
     : '0s'
-  const processingTimeLabel = formatShortTime(primaryRunningSession?.started_at)
   const processingVerb = primaryRunningSession?.status && primaryRunningSession.status !== 'running'
     ? 'finalizing'
     : primaryRunningSession?.last_step === 'deciding'
@@ -734,22 +1002,109 @@ export function CollaborationRoomsView({
       : primaryRunningSession?.last_step === 'dispatching'
         ? 'taking action'
         : 'processing'
-  const activeArtifactSession = latestPrimeSession ?? null
+  const roomArtifactSessions = useMemo(() => {
+    if (!activeRoomId) return [] as ArtifactSessionView[]
 
-  const roomTerminalLines = useMemo(() => {
-    if (!activeRoomId || !activeArtifactSession) return []
-    return events
-      .filter((event) => {
-        if (!event.type.startsWith('prime.turn.')) return false
-        const threadId = typeof event.payload?.['thread_id'] === 'string' ? event.payload['thread_id'] : null
-        if (threadId && threadId !== activeRoomId) return false
-        const sessionId = typeof event.payload?.['session_id'] === 'string' ? event.payload['session_id'] : null
-        return sessionId === activeArtifactSession.id
+    const linesBySession = new Map<string, TerminalLine[]>()
+    const reasoningBySession = new Map<string, string>()
+    const modelBySession = new Map<string, { model?: string; provider?: string }>()
+    const actionsBySession = new Map<string, ArtifactAction[]>()
+    const stepBySession = new Map<string, Map<string, ArtifactStep>>()
+    const stepStatusRank: Record<string, number> = { started: 0, completed: 1, failed: 1 }
+
+    for (const event of events) {
+      if (!event.type.startsWith('prime.turn.')) continue
+      const threadId = typeof event.payload?.['thread_id'] === 'string' ? event.payload['thread_id'] : null
+      if (threadId && threadId !== activeRoomId) continue
+      const sessionId = typeof event.payload?.['session_id'] === 'string' ? event.payload['session_id'] : null
+      if (!sessionId) continue
+
+      const line = eventToTerminalLine(event)
+      if (line) {
+        const current = linesBySession.get(sessionId) ?? []
+        current.push(line)
+        linesBySession.set(sessionId, current)
+      }
+
+      if (event.type === 'prime.turn.reasoning') {
+        const reasoning = asText(event.payload?.['reasoning'])
+        if (reasoning) reasoningBySession.set(sessionId, reasoning)
+        modelBySession.set(sessionId, {
+          model: asText(event.payload?.['model_used']),
+          provider: asText(event.payload?.['provider_used']),
+        })
+      }
+
+      if (event.type === 'prime.turn.actions') {
+        const rawActions = Array.isArray(event.payload?.['actions']) ? event.payload['actions'] as unknown[] : []
+        actionsBySession.set(sessionId, normalizeActions(rawActions))
+      }
+
+      if (event.type === 'prime.turn.step') {
+        const moduleId = asText(event.payload?.['module_id']) ?? 'module'
+        const step: ArtifactStep = {
+          module_id: moduleId,
+          status: asText(event.payload?.['status']) ?? 'completed',
+          detail: asText(event.payload?.['detail']),
+          mode: asText(event.payload?.['mode']),
+        }
+        const byModule = stepBySession.get(sessionId) ?? new Map<string, ArtifactStep>()
+        const existing = byModule.get(moduleId)
+        const nextRank = stepStatusRank[step.status] ?? 0
+        const existingRank = existing ? (stepStatusRank[existing.status] ?? 0) : -1
+        if (!existing || nextRank >= existingRank) byModule.set(moduleId, step)
+        stepBySession.set(sessionId, byModule)
+      }
+    }
+
+    return roomPrimeSessions
+      .map((session) => {
+        const lines = (linesBySession.get(session.id) ?? []).sort((a, b) => a.occurredAt.localeCompare(b.occurredAt))
+        const stepsFromSession = (session.module_runs ?? []).map((run) => ({
+          module_id: run.module_id,
+          status: run.status,
+          detail: run.detail,
+          mode: run.mode,
+        }))
+        const stepMap = new Map<string, ArtifactStep>(stepsFromSession.map((step) => [step.module_id, step]))
+        for (const [moduleId, step] of (stepBySession.get(session.id) ?? new Map<string, ArtifactStep>()).entries()) {
+          stepMap.set(moduleId, step)
+        }
+        const steps = [...stepMap.values()]
+        const latestLine = lines[lines.length - 1]
+        const reasoning = reasoningBySession.get(session.id) ?? session.reasoning_summary
+        const actions = actionsBySession.get(session.id) ?? normalizeActions(Array.isArray(session.actions_taken) ? session.actions_taken : [])
+        const model = modelBySession.get(session.id)?.model ?? session.model_used
+        const provider = modelBySession.get(session.id)?.provider ?? session.provider_used
+        if (lines.length === 0 && steps.length === 0 && !reasoning && !session.error) return null
+        const failedSteps = steps.filter((step) => step.status === 'failed').length
+        const runningSteps = steps.filter((step) => step.status !== 'completed' && step.status !== 'failed').length
+        const summaryBits = [
+          failedSteps > 0 ? 'failed' : runningSteps > 0 ? 'running' : undefined,
+          typesSummary(actions),
+          reasoning ? 'reasoned' : undefined,
+          model ? truncate(model, 32) : undefined,
+        ].filter(Boolean)
+        return {
+          id: session.id,
+          occurredAt: session.started_at || latestLine?.occurredAt || new Date().toISOString(),
+          summary: summaryBits.length > 0
+            ? summaryBits.join(' · ')
+            : latestLine?.detail ? `${latestLine.command} · ${truncate(latestLine.detail, 88)}` : latestLine?.command ?? session.status,
+          live: session.status === 'running',
+          actor: lines[0]?.speaker ?? primeName,
+          lines,
+          reasoning,
+          actions,
+          model,
+          provider,
+          steps,
+          error: session.error,
+        }
       })
-      .map(eventToTerminalLine)
-      .filter((line): line is TerminalLine => Boolean(line))
+      .filter((entry): entry is ArtifactSessionView => Boolean(entry))
       .sort((a, b) => a.occurredAt.localeCompare(b.occurredAt))
-  }, [activeRoomId, activeArtifactSession, events])
+  }, [activeRoomId, events, roomPrimeSessions])
 
   const chatTimelineEntries = useMemo<ChatTimelineEntry[]>(() => {
     const messageEntries: ChatTimelineEntry[] = displayMessages.map((msg) => ({
@@ -761,29 +1116,40 @@ export function CollaborationRoomsView({
       at: msg.at,
     }))
 
-    if (!activeArtifactSession || roomTerminalLines.length === 0) return messageEntries
+    if (hideArtifactDetails || roomArtifactSessions.length === 0) return messageEntries
 
-    const latestLine = roomTerminalLines[roomTerminalLines.length - 1]
-    const artifactEntry: ChatTimelineEntry = {
-      kind: 'artifact',
-      key: `artifact-session:${activeArtifactSession.id}`,
-      occurredAt: activeArtifactSession.started_at || latestLine.occurredAt,
-      summary: latestLine.detail ? `${latestLine.command} · ${truncate(latestLine.detail, 88)}` : latestLine.command,
-      live: activeArtifactSession.status === 'running',
-      lines: roomTerminalLines,
+    const filteredArtifactSessions = roomArtifactSessions.filter((session) => (
+      artifactFilters.some((filter) => matchesArtifactFilter(session, filter))
+    ))
+
+    if (filteredArtifactSessions.length === 0) return messageEntries
+
+    let timeline = [...messageEntries]
+    for (const session of filteredArtifactSessions) {
+      const artifactEntry: ChatTimelineEntry = {
+        kind: 'artifact',
+        key: `artifact-session:${session.id}`,
+        occurredAt: session.occurredAt,
+        summary: session.summary,
+        live: session.live,
+        lines: session.lines,
+        artifact: session,
+      }
+      const responseIndex = displayMessages.findIndex((msg) => msg.sessionId === session.id)
+      if (responseIndex >= 0) {
+        const insertIndex = Math.min(responseIndex, timeline.length)
+        timeline = [
+          ...timeline.slice(0, insertIndex),
+          artifactEntry,
+          ...timeline.slice(insertIndex),
+        ]
+      } else {
+        timeline = [...timeline, artifactEntry]
+      }
     }
 
-    const responseIndex = displayMessages.findIndex((msg) => msg.sessionId === activeArtifactSession.id)
-    if (responseIndex >= 0) {
-      return [
-        ...messageEntries.slice(0, responseIndex),
-        artifactEntry,
-        ...messageEntries.slice(responseIndex),
-      ]
-    }
-
-    return [...messageEntries, artifactEntry]
-  }, [activeArtifactSession, displayMessages, roomTerminalLines])
+    return timeline.sort((a, b) => a.occurredAt.localeCompare(b.occurredAt))
+  }, [artifactFilters, displayMessages, hideArtifactDetails, roomArtifactSessions])
 
   useEffect(() => {
     const node = chatScrollRef.current
@@ -807,48 +1173,102 @@ export function CollaborationRoomsView({
   }, [chatTimelineEntries.length, followBottom, activeRoomId, visiblePrimeSessions.length])
 
   const sendMessage = useMutation({
-    mutationFn: async () => {
-      if (!activeRoomId) throw new Error('No active room')
-      const content = composerState.text.trim()
-      if (!content && composerState.attachments.length === 0 && !composerState.companionPrompt) {
-        throw new Error('At least one of text, attachment, or companion prompt is required.')
-      }
-      // TODO: Map composerState to message payload with modelId, mode, tools
-      return sendPrimeMessage(activeRoomId, { content: composerState.text, sender: 'james' })
+    mutationFn: async (message: QueuedComposerMessage) => {
+      return sendPrimeMessage(message.roomId, { content: message.content, sender: message.sender })
     },
-    onSuccess: async () => {
-      setComposerState({
-        text: '',
-        modelId: null,
-        mode: 'agent',
-        attachments: [],
-        companionPrompt: null,
-        tools: { webSearch: false, shell: true, imageProcessing: false },
-        validationState: 'valid',
-        sendState: 'idle',
-      })
-      setShowCompanionPrompt(false)
-      setShowComposerMenu(false)
-      setShowModelMenu(false)
+    onMutate: (message) => {
+      setQueuedMessages((current) => current.map((entry) => (
+        entry.id === message.id ? { ...entry, status: 'sending', error: undefined } : entry
+      )))
+    },
+    onSuccess: async (result, message) => {
       setFollowBottom(true)
       setUnreadMessages(0)
+      queryClient.setQueryData(['thread-messages', message.roomId], (current: unknown) => {
+        const messages = Array.isArray(current) ? current as Array<{ id: string }> : []
+        const userMessage = result.user_message
+        if (!userMessage || messages.some((entry) => entry.id === userMessage.id)) return current
+        return [...messages, userMessage]
+      })
+      setQueuedMessages((current) => current.filter((entry) => entry.id !== message.id))
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ['thread-messages', activeRoomId] }),
+        queryClient.invalidateQueries({ queryKey: ['thread-messages', message.roomId] }),
         queryClient.invalidateQueries({ queryKey: ['threads'] }),
         queryClient.invalidateQueries({ queryKey: ['runtime-work-items'] }),
         queryClient.invalidateQueries({ queryKey: ['runtime-delegations'] }),
         queryClient.invalidateQueries({ queryKey: ['runtime-overview'] }),
-        queryClient.invalidateQueries({ queryKey: ['prime-agent-sessions', activeRoomId] }),
+        queryClient.invalidateQueries({ queryKey: ['prime-agent-sessions', message.roomId] }),
       ])
-      // Restore focus to the chat input after re-renders complete
       requestAnimationFrame(() => chatInputRef.current?.focus())
     },
+    onError: (error, message) => {
+      setQueuedMessages((current) => current.map((entry) => (
+        entry.id === message.id
+          ? { ...entry, status: 'error', error: error instanceof Error ? error.message : 'Failed to send message' }
+          : entry
+      )))
+    },
   })
-  const canSendMessage = !!activeRoomId && (composerState.text.trim().length > 0 || composerState.attachments.length > 0 || composerState.companionPrompt !== null) && !sendMessage.isPending
+
+  useEffect(() => {
+    if (sendMessage.isPending) return
+    const nextQueued = queuedMessages.find((message) => message.status === 'queued')
+    if (!nextQueued) return
+    sendMessage.mutate(nextQueued)
+  }, [queuedMessages, sendMessage])
+
+  const canSendMessage = !!activeRoomId && (composerState.text.trim().length > 0 || composerState.attachments.length > 0 || composerState.companionPrompt !== null)
 
   function submitMessage() {
-    if (!canSendMessage) return
-    sendMessage.mutate()
+    if (!activeRoomId) return
+    const content = composerState.text.trim()
+    if (!content && composerState.attachments.length === 0 && !composerState.companionPrompt) return
+
+    const queuedAt = new Date().toISOString()
+    const messageId = `${activeRoomId}-${queuedAt}-${Math.random().toString(36).slice(2, 8)}`
+    setQueuedMessages((current) => [...current, {
+      id: messageId,
+      roomId: activeRoomId,
+      content: composerState.text,
+      sender: 'james',
+      queuedAt,
+      status: 'queued',
+    }])
+    setComposerState({
+      text: '',
+      modelId: composerState.modelId,
+      mode: composerState.mode,
+      attachments: [],
+      companionPrompt: null,
+      tools: composerState.tools,
+      validationState: 'valid',
+      sendState: 'idle',
+    })
+    setShowCompanionPrompt(false)
+    setShowComposerMenu(false)
+    setShowModelMenu(false)
+    setFollowBottom(true)
+    setUnreadMessages(0)
+    requestAnimationFrame(() => chatInputRef.current?.focus())
+  }
+
+  async function interruptCurrentRun() {
+    if (!primaryRunningSession || interruptingSessionId) return
+    setInterruptingSessionId(primaryRunningSession.id)
+    try {
+      await abortPrimeSession(primaryRunningSession.id)
+      await queryClient.invalidateQueries({ queryKey: ['prime-agent-sessions', activeRoomId] })
+    } finally {
+      setInterruptingSessionId(null)
+    }
+  }
+
+  function retryFailedMessages() {
+    setQueuedMessages((current) => current.map((message) => (
+      message.roomId === activeRoomId && message.status === 'error'
+        ? { ...message, status: 'queued', error: undefined }
+        : message
+    )))
   }
 
   function appendAttachments(files: FileList | null, type: 'file' | 'image') {
@@ -888,6 +1308,36 @@ export function CollaborationRoomsView({
 
   function selectWork(id: string) {
     setSelectedWorkId(id)
+    const focus = workFocusIndex.get(id)
+    if (!focus) return
+    const runtimeWorkItem = focus.kind === 'work'
+      ? selectedRoom?.workItems.find((item) => item.id === focus.id)
+      : focus.messageId
+        ? selectedRoom?.workItems.find((item) => item.metadata?.['message_id'] === focus.messageId)
+        : undefined
+    const delegation = focus.kind === 'delegation'
+      ? selectedRoom?.delegations.find((entry) => entry.id === focus.id)
+      : undefined
+    onOpenInspector?.({
+      id: focus.id,
+      title: focus.title,
+      kind: focus.kind,
+      status: focus.status,
+      lane: focus.lane,
+      actionType: focus.actionType,
+      owner: focus.owner,
+      createdAt: focus.createdAt,
+      updatedAt: focus.updatedAt,
+      externalTicket: extractExternalTicket(runtimeWorkItem?.metadata),
+      messageId: focus.messageId,
+      sourceSessionId: focus.sourceSessionId,
+      workItemId: runtimeWorkItem?.id,
+      delegationId: delegation?.id,
+      details: runtimeWorkItem?.description,
+      request: !runtimeWorkItem?.description && delegation?.request ? formatPayload(delegation.request) : undefined,
+      result: delegation?.result && Object.keys(delegation.result).length > 0 ? formatPayload(delegation.result) : undefined,
+      metadata: runtimeWorkItem?.metadata && Object.keys(runtimeWorkItem.metadata).length > 0 ? formatPayload(runtimeWorkItem.metadata) : undefined,
+    })
   }
 
   function handleChatScroll() {
@@ -919,11 +1369,7 @@ export function CollaborationRoomsView({
         key={`${selectedRoom?.id}-work-${item.kind}-${item.id}`}
         type="button"
         onClick={() => selectWork(item.id)}
-        className={`w-full rounded border px-3 py-2 text-left transition ${
-          selectedWorkId === item.id
-            ? 'border-[var(--sel-bd)] bg-[var(--sel-bg)]'
-            : 'border-[var(--border-soft)] bg-[var(--panel-subtle)] hover:bg-[var(--panel-strong)]'
-        }`}
+        className={`w-full rounded border px-3 py-2 text-left transition ${workFocusCardClass(item.status, highlightedInspectorId === item.id)}`}
       >
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0">
@@ -932,7 +1378,7 @@ export function CollaborationRoomsView({
               {item.owner} · {laneLabel(item.lane)}
             </div>
           </div>
-          <span className="shrink-0 rounded-full border border-[var(--border-soft)] px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide text-[var(--muted)]">
+          <span className={`shrink-0 rounded-full border px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide ${workFocusBadgeClass(item.status)}`}>
             {laneLabel(item.status)}
           </span>
         </div>
@@ -947,38 +1393,54 @@ export function CollaborationRoomsView({
     <div className="flex h-full min-h-0" style={GRID_BG}>
 
       {/* ── Left: Room list panel ─────────────────────────────────────── */}
-      <div className="flex w-[360px] shrink-0 flex-col border-r border-[var(--border-soft)] bg-[var(--panel)]">
+      <div className={`flex shrink-0 flex-col border-r border-[var(--border-soft)] bg-[var(--panel)] transition-[width] duration-200 ${roomsCollapsed ? 'w-[56px]' : 'w-[360px]'}`}>
 
         {/* Panel header */}
         <div className="shrink-0 border-b border-[var(--border-soft)] px-[18px] py-[14px]">
-          <div className="mb-3 flex items-center justify-between">
-            <span className="font-mono text-sm uppercase tracking-widest text-[var(--muted)]">Rooms</span>
-            <span className="rounded-full border border-[var(--border-soft)] bg-[var(--panel-subtle)] px-2.5 py-0.5 font-mono text-xs text-[var(--muted)]">
-              {filteredRooms.length}
-            </span>
+          <div className={`mb-3 flex items-center ${roomsCollapsed ? 'justify-center' : 'justify-between'}`}>
+            {!roomsCollapsed && (
+              <>
+                <span className="font-mono text-sm uppercase tracking-widest text-[var(--muted)]">Rooms</span>
+                <span className="rounded-full border border-[var(--border-soft)] bg-[var(--panel-subtle)] px-2.5 py-0.5 font-mono text-xs text-[var(--muted)]">
+                  {filteredRooms.length}
+                </span>
+              </>
+            )}
+            <button
+              type="button"
+              onClick={() => setRoomsCollapsed((current) => !current)}
+              className="rounded-full border border-[var(--border-soft)] bg-[var(--panel-subtle)] px-2.5 py-0.5 font-mono text-xs text-[var(--muted)] transition hover:bg-[var(--panel-strong)] hover:text-[var(--text)]"
+              title={roomsCollapsed ? 'Expand room list' : 'Collapse room list'}
+            >
+              {roomsCollapsed ? '»' : '«'}
+            </button>
           </div>
 
-          {/* Filter tabs */}
-          <div className="mb-2.5 flex gap-1.5">
-            {(['active','blocked','all','archived'] as FilterTab[]).map((tab) => (
-              <button
-                key={tab}
-                type="button"
-                onClick={() => setFilter(tab)}
-                className={`rounded-full border px-2.5 py-1 font-mono text-[11px] uppercase tracking-wide transition ${filterTabCls(filter, tab)}`}
-              >
-                {tab}
-              </button>
-            ))}
-          </div>
+          {!roomsCollapsed && (
+            <>
+              {/* Filter tabs */}
+              <div className="mb-2.5 flex gap-1.5">
+                {(['active','blocked','all','archived'] as FilterTab[]).map((tab) => (
+                  <button
+                    key={tab}
+                    type="button"
+                    onClick={() => setFilter(tab)}
+                    className={`rounded-full border px-2.5 py-1 font-mono text-[11px] uppercase tracking-wide transition ${filterTabCls(filter, tab)}`}
+                  >
+                    {tab}
+                  </button>
+                ))}
+              </div>
 
-          {/* Search */}
-          <input
-            className="w-full rounded border border-[var(--border-soft)] bg-[var(--panel-subtle)] px-3 py-2 font-mono text-sm text-[var(--text)] outline-none placeholder:text-[var(--muted)] focus:border-[var(--sel-bd)]"
-            placeholder="search rooms…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
+              {/* Search */}
+              <input
+                className="w-full rounded border border-[var(--border-soft)] bg-[var(--panel-subtle)] px-3 py-2 font-mono text-sm text-[var(--text)] outline-none placeholder:text-[var(--muted)] focus:border-[var(--sel-bd)]"
+                placeholder="search rooms…"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+            </>
+          )}
         </div>
 
         {/* Room rows */}
@@ -996,19 +1458,24 @@ export function CollaborationRoomsView({
               key={room.id}
               type="button"
               onClick={() => setSelectedRoomId(room.id)}
-              className={`relative flex w-full items-center gap-2.5 px-[18px] py-[11px] text-left transition hover:bg-[var(--panel-subtle)] ${selectedRoom?.id === room.id ? 'bg-[var(--sel-bg)]' : ''} ${room.state === 'archived' ? 'opacity-50' : ''}`}
+              title={roomsCollapsed ? room.title : undefined}
+              className={`relative flex w-full items-center text-left transition hover:bg-[var(--panel-subtle)] ${roomsCollapsed ? 'justify-center px-2 py-3' : 'gap-2.5 px-[18px] py-[11px]'} ${selectedRoom?.id === room.id ? 'bg-[var(--sel-bg)]' : ''} ${room.state === 'archived' ? 'opacity-50' : ''}`}
             >
               {selectedRoom?.id === room.id && (
                 <span className="absolute bottom-2 left-0 top-2 w-[3px] rounded-r bg-[var(--sel-bd)]" />
               )}
               <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${stateDot(room.state)}`} />
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-sm font-medium text-[var(--text)]">{room.title}</div>
-                <div className="mt-0.5 font-mono text-xs text-[var(--muted)]">updated {room.lastUpdated}</div>
-              </div>
-              <span className={`shrink-0 rounded-full border px-2 py-0.5 font-mono text-[11px] uppercase tracking-wide ${stateChip(room.state)}`}>
-                {stateLabel(room.state)}
-              </span>
+              {!roomsCollapsed && (
+                <>
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-sm font-medium text-[var(--text)]">{room.title}</div>
+                    <div className="mt-0.5 font-mono text-xs text-[var(--muted)]">updated {room.lastUpdated}</div>
+                  </div>
+                  <span className={`shrink-0 rounded-full border px-2 py-0.5 font-mono text-[11px] uppercase tracking-wide ${stateChip(room.state)}`}>
+                    {stateLabel(room.state)}
+                  </span>
+                </>
+              )}
             </button>
           ))}
         </div>
@@ -1016,7 +1483,7 @@ export function CollaborationRoomsView({
 
       {/* ── Right: Workspace ──────────────────────────────────────────── */}
       {selectedRoom ? (
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-[var(--panel)]">
+        <div className="relative flex min-h-0 min-w-0 flex-1 flex-col bg-[var(--panel)]">
 
           {/* Workspace header */}
           <div className="shrink-0 border-b border-[var(--border-soft)] px-5 py-3.5">
@@ -1038,6 +1505,71 @@ export function CollaborationRoomsView({
                     </span>
                   ))}
                 </div>
+              </div>
+              <div className="relative shrink-0">
+                <button
+                  ref={artifactFilterButtonRef}
+                  type="button"
+                  onClick={() => setShowArtifactFilterMenu((current) => !current)}
+                  className="inline-flex min-w-[170px] items-center justify-between gap-2 rounded-full border border-[var(--border-soft)] bg-[var(--panel-subtle)] px-3 py-1.5 font-mono text-[11px] uppercase tracking-wide text-[var(--text)] transition hover:bg-[var(--panel-strong)]"
+                  title="Filter detail cards"
+                >
+                  <span className="truncate text-left">{artifactFilterLabel(hideArtifactDetails, artifactFilters)}</span>
+                  <span className={`text-[10px] text-[var(--muted)] transition ${showArtifactFilterMenu ? 'rotate-180' : ''}`}>⌃</span>
+                </button>
+                {showArtifactFilterMenu && (
+                  <div
+                    ref={artifactFilterMenuRef}
+                    className="absolute right-0 top-[calc(100%+8px)] z-30 min-w-[220px] rounded-2xl border border-[var(--border-soft)] bg-[color:color-mix(in_srgb,var(--panel)_96%,black)] p-2 shadow-[0_18px_48px_rgba(0,0,0,0.42)] backdrop-blur-sm"
+                  >
+                    <div className="mb-2 px-2 pt-1 font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--muted)]">Detail cards</div>
+                    <button
+                      type="button"
+                      onClick={() => setHideArtifactDetails((current) => !current)}
+                      className={`flex w-full items-center justify-between rounded-xl px-3 py-2 text-left font-mono text-[11px] transition ${hideArtifactDetails ? 'bg-rose-400/10 text-rose-100' : 'text-[var(--text)] hover:bg-white/5'}`}
+                    >
+                      <span>Hide details</span>
+                      <span className={`inline-flex h-4 w-4 items-center justify-center rounded border text-[10px] ${hideArtifactDetails ? 'border-rose-300/50 bg-rose-300/20 text-rose-100' : 'border-[var(--border-soft)] text-transparent'}`}>✓</span>
+                    </button>
+                    <div className="my-2 h-px bg-[var(--border-soft)]" />
+                    {([
+                      ['web', 'Web'],
+                      ['shell', 'Shell'],
+                      ['tool', 'Tool'],
+                      ['thinking', 'Think'],
+                      ['error', 'Errors'],
+                    ] as Array<[ArtifactFilterOption, string]>).map(([value, label]) => {
+                      const selected = artifactFilters.includes(value)
+                      return (
+                        <button
+                          key={value}
+                          type="button"
+                          onClick={() => {
+                            setHideArtifactDetails(false)
+                            setArtifactFilters((current) => (
+                              current.includes(value)
+                                ? current.filter((entry) => entry !== value)
+                                : [...current, value]
+                            ))
+                          }}
+                          className={`mt-1 flex w-full items-center justify-between rounded-xl px-3 py-2 text-left font-mono text-[11px] transition ${selected ? 'bg-cyan-400/10 text-cyan-100' : 'text-[var(--text)] hover:bg-white/5'}`}
+                        >
+                          <span>{label}</span>
+                          <span className={`inline-flex h-4 w-4 items-center justify-center rounded border text-[10px] ${selected ? 'border-cyan-300/50 bg-cyan-300/20 text-cyan-100' : 'border-[var(--border-soft)] text-transparent'}`}>✓</span>
+                        </button>
+                      )
+                    })}
+                    <div className="mt-2 flex items-center justify-end px-2 pt-1">
+                      <button
+                        type="button"
+                        onClick={() => setShowArtifactFilterMenu(false)}
+                        className="font-mono text-[10px] uppercase tracking-[0.18em] text-[var(--muted)] transition hover:text-[var(--text)]"
+                      >
+                        Done
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
               <span className={`shrink-0 rounded-full border px-2.5 py-1 font-mono text-[11px] uppercase tracking-wide ${stateChip(selectedRoom.state)}`}>
                 {stateLabel(selectedRoom.state)}
@@ -1077,8 +1609,15 @@ export function CollaborationRoomsView({
                           style={{ gridTemplateColumns: '92px 132px 1fr' }}
                         >
                           <span className="whitespace-nowrap text-[var(--terminal-time)]">{entry.at}</span>
-                          <span className={`whitespace-nowrap font-semibold ${speakerCls(entry.speaker)}`}>{speakerGlyph(entry.speaker)} {entry.speaker}</span>
-                          <span className={entry.speaker === 'system' ? 'text-[var(--s-blk-tx)]' : 'text-[var(--text)]'}>{entry.text}</span>
+                          <span className={`whitespace-nowrap font-semibold ${speakerCls(entry.speaker)}`}>
+                            {speakerGlyph(entry.speaker)} {entry.speaker}
+                            {entry.failed
+                              ? <span className="ml-2 rounded-full border border-[var(--s-blk-bd)] bg-[var(--s-blk-bg)] px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-[var(--s-blk-tx)]">failed</span>
+                              : entry.queued
+                                ? <span className="ml-2 rounded-full border border-[var(--border-soft)] bg-[var(--panel)] px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-[var(--muted)]">queued</span>
+                                : null}
+                          </span>
+                          <span className={entry.speaker === 'system' ? 'text-[var(--s-blk-tx)]' : entry.failed ? 'text-[var(--s-blk-tx)]' : entry.queued ? 'text-[var(--muted)]' : 'text-[var(--text)]'}>{entry.text}</span>
                         </div>
                       )
                     }
@@ -1086,9 +1625,21 @@ export function CollaborationRoomsView({
                     const expanded = expandedArtifactIds[entry.key] === true
                     const activeLine = entry.lines[entry.lines.length - 1]
                     const integrityError = entry.lines.some((line) => /approval_id|foreign key|foreign-key|_fkey\b/i.test(`${line.command} ${line.detail ?? ''}`))
+                    const artifact = entry.artifact
+                    const kindLabel = artifactKindLabel(artifact)
+                    const hasFailure = Boolean(artifact.error) || artifact.steps.some((step) => step.status === 'failed') || activeLine?.tone === 'error'
+                    const hasWarning = !hasFailure && (activeLine?.tone === 'warning' || artifact.steps.some((step) => step.status !== 'completed' && step.status !== 'failed'))
                     return (
                       <div key={entry.key} className="ml-[92px] pl-[22px]">
-                        <div className={`relative rounded-md border px-3 py-2 text-xs ${entry.live ? 'border-emerald-400/15 bg-emerald-400/5 text-emerald-200' : 'border-white/6 bg-white/3 text-[var(--muted)]'}`}>
+                        <div className={`relative rounded-md border px-3 py-2 text-xs ${
+                          entry.live
+                            ? 'border-emerald-400/15 bg-emerald-400/5 text-emerald-200'
+                            : hasFailure
+                              ? 'border-rose-400/30 bg-rose-400/10 text-rose-100'
+                              : hasWarning
+                                ? 'border-amber-400/25 bg-amber-400/10 text-amber-100'
+                                : 'border-white/6 bg-white/3 text-[var(--muted)]'
+                        }`}>
                           <span className={`absolute left-0 top-2.5 h-2 w-2 -translate-x-[13px] rounded-full ${entry.live ? 'bg-emerald-400 animate-pulse' : artifactRailClass(activeLine?.tone)}`} />
                           <span className={`absolute left-0 top-3 bottom-3 -translate-x-[10px] w-px ${entry.live ? 'bg-emerald-400/50' : `${artifactRailClass(activeLine?.tone)} opacity-50`}`} />
                           <button
@@ -1096,33 +1647,138 @@ export function CollaborationRoomsView({
                             onClick={() => toggleArtifact(entry.key)}
                             className="flex w-full items-start gap-3 text-left"
                           >
-                            <span className={`min-w-[52px] whitespace-nowrap text-[10px] uppercase tracking-[0.18em] ${entry.live ? 'text-emerald-300/80' : 'text-[var(--terminal-time)]'}`}>
-                              {entry.live ? 'Live' : 'Turn'}
+                            <span className={`min-w-[52px] whitespace-nowrap text-[10px] uppercase tracking-[0.18em] ${
+                              entry.live
+                                ? 'text-emerald-300/80'
+                                : hasFailure
+                                  ? 'text-rose-200'
+                                  : hasWarning
+                                    ? 'text-amber-200'
+                                    : 'text-[var(--terminal-time)]'
+                           }`}>
+                              {entry.live ? kindLabel : kindLabel}
                             </span>
-                            <span className={`min-w-0 flex-1 ${entry.live ? 'text-emerald-200' : toneClass(activeLine?.tone)}`}>
-                              <span className="font-semibold">{entry.live ? processingVerb : activeLine?.command}</span>
+                            <span className={`min-w-0 flex-1 ${
+                              entry.live
+                                ? 'text-emerald-200'
+                                : hasFailure
+                                  ? 'text-rose-100'
+                                  : hasWarning
+                                    ? 'text-amber-100'
+                                    : toneClass(activeLine?.tone)
+                           }`}>
+                              <span className="font-semibold">{artifact.actor} · {artifactKindIcon(kindLabel)} {entry.live ? processingVerb : activeLine?.command ?? 'activity'}</span>
                               <span className={`ml-2 ${entry.live ? 'text-emerald-300/70' : 'text-[var(--muted)]'}`}>
                                 {entry.live ? `(${processingElapsed}) ${processingSummary}` : entry.summary}
                               </span>
+                              {artifact.error && <span className="ml-2 text-amber-300">{truncate(artifact.error, 72)}</span>}
                               {integrityError && <span className="ml-2 rounded-full border border-rose-400/30 bg-rose-400/10 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-rose-200">integrity</span>}
                             </span>
                             <span className={`text-[10px] ${entry.live ? 'text-emerald-300/70' : 'text-[var(--muted)]'}`}>{expanded ? '▼' : '▶'}</span>
                           </button>
-                          {expanded && (
-                            <div className="mt-2 space-y-1.5">
-                              {entry.lines.map((line) => (
-                                <div key={line.key} className="rounded border border-white/8 bg-black/20 px-2.5 py-2 text-[11px] leading-relaxed text-[var(--text)]">
-                                  <div className="flex items-start gap-2">
-                                    <span className={`mt-0.5 inline-block h-1.5 w-1.5 rounded-full ${artifactRailClass(line.tone)}`} />
-                                    <div className="min-w-0 flex-1">
-                                      <div className={`${toneClass(line.tone)} font-semibold`}>{line.command}</div>
-                                      {line.detail && <div className="mt-1 whitespace-pre-wrap break-words text-[var(--text)]">{line.detail}</div>}
+                          {expanded && (() => {
+                            const condensedLines = artifact.lines.reduce((acc, line) => {
+                              const existingIndex = acc.findIndex((entry) => entry.command === line.command)
+                              if (existingIndex === -1) {
+                                acc.push(line)
+                                return acc
+                              }
+                              const existing = acc[existingIndex]
+                              const existingDone = existing.kind === 'result' || existing.kind === 'error'
+                              const nextDone = line.kind === 'result' || line.kind === 'error'
+                              if (!existingDone || nextDone) acc[existingIndex] = line
+                              return acc
+                            }, [] as TerminalLine[])
+
+                            return (
+                              <div className="mt-3 flex flex-col gap-3 font-mono text-[11px]">
+                                <div className="rounded border border-white/8 bg-black/15 px-3 py-2.5">
+                                  <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+                                    <span className="text-[var(--terminal-time)]">{formatShortTime(artifact.occurredAt)}</span>
+                                    <span className={`font-semibold ${speakerCls(artifact.actor)}`}>{speakerGlyph(artifact.actor)} {artifact.actor}</span>
+                                    <span className="text-[var(--muted)]">{entry.live ? `turn ${processingVerb}` : 'turn summary'}</span>
+                                    {(artifact.model || artifact.provider) && (
+                                      <span className="text-[var(--muted)]">{artifact.model ?? '—'}{artifact.provider ? ` via ${artifact.provider}` : ''}</span>
+                                    )}
+                                  </div>
+                                  <div className="mt-2 break-words text-[var(--text)]">{entry.summary}</div>
+                                </div>
+
+                                {artifact.steps.length > 0 && (
+                                  <div className="rounded border border-white/8 bg-black/15 px-3 py-2.5">
+                                    <div className="mb-2 text-[10px] font-bold uppercase tracking-widest text-[var(--muted)]">Pipeline</div>
+                                    <div className="flex flex-col gap-1">
+                                      {artifact.steps.map((step) => {
+                                        const done = step.status === 'completed'
+                                        const failed = step.status === 'failed'
+                                        return (
+                                          <div key={`${entry.key}-${step.module_id}`} className={`flex items-start gap-2 ${step.mode === 'shadow' ? 'opacity-50' : ''}`}>
+                                            <span className="mt-0.5 flex-shrink-0">
+                                              {failed ? <span className="text-amber-400">✕</span>
+                                                : done ? <span className={entry.live ? 'text-emerald-300' : 'text-emerald-400'}>✓</span>
+                                                  : <span className={`inline-block h-2 w-2 rounded-full animate-pulse ${entry.live ? 'bg-emerald-400' : 'bg-cyan-400'} mt-0.5`} />}
+                                            </span>
+                                            <span className={`font-mono ${done ? 'text-[var(--muted)]' : failed ? 'text-amber-300' : entry.live ? 'text-emerald-300' : 'text-cyan-300'}`}>{step.module_id}</span>
+                                            {step.detail && <span className="text-[var(--muted)]">{step.detail}</span>}
+                                            {step.mode === 'shadow' && <span className="text-[10px] text-[var(--muted)]">(shadow)</span>}
+                                          </div>
+                                        )
+                                      })}
                                     </div>
                                   </div>
-                                </div>
-                              ))}
-                            </div>
-                          )}
+                                )}
+
+                                {artifact.reasoning && (
+                                  <div className="rounded border border-white/8 bg-black/15 px-3 py-2.5">
+                                    <div className="mb-2 text-[10px] font-bold uppercase tracking-widest text-[var(--muted)]">Thinking</div>
+                                    <div className={`whitespace-pre-wrap break-words leading-relaxed ${entry.live ? 'text-emerald-200' : 'text-[var(--text)]'}`}>{artifact.reasoning}</div>
+                                  </div>
+                                )}
+
+                                {artifact.actions.length > 0 && (
+                                  <div className="rounded border border-white/8 bg-black/15 px-3 py-2.5">
+                                    <div className="mb-2 text-[10px] font-bold uppercase tracking-widest text-[var(--muted)]">Tools</div>
+                                    <div className="flex flex-col gap-2">
+                                      {artifact.actions.map((action, index) => (
+                                        <div key={`${entry.key}-action-${index}`}>
+                                          <div className="text-[var(--text)]">
+                                            <span className={`${entry.live ? 'text-emerald-300' : 'text-cyan-300'}`}>{action.type}</span>
+                                            {action.reason && <span className="ml-2 text-[var(--muted)]">{action.reason}</span>}
+                                          </div>
+                                          {action.payload && (
+                                            <pre className="mt-2 overflow-x-auto whitespace-pre-wrap break-words rounded border border-white/6 bg-black/20 px-2 py-1.5 font-mono text-[10px] text-[var(--text)]">{formatPayload(action.payload)}</pre>
+                                          )}
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+
+                                {artifact.error && (
+                                  <div className="rounded border border-amber-400/20 bg-amber-400/10 px-3 py-2.5">
+                                    <div className="mb-2 text-[10px] font-bold uppercase tracking-widest text-amber-300">Error</div>
+                                    <div className="break-words text-amber-200">{artifact.error}</div>
+                                  </div>
+                                )}
+
+                                {condensedLines.length > 0 && (
+                                  <div className="rounded border border-white/8 bg-black/15 px-3 py-2.5">
+                                    <div className="mb-2 text-[10px] font-bold uppercase tracking-widest text-[var(--muted)]">Events</div>
+                                    <div className="flex flex-col gap-1.5">
+                                      {condensedLines.map((line) => (
+                                        <div key={line.key} className="flex items-start gap-2">
+                                          <span className="whitespace-nowrap text-[var(--terminal-time)]">{formatShortTime(line.occurredAt)}</span>
+                                          <span className={`${toneClass(line.tone)} font-semibold`}>{artifactLabel(line)}</span>
+                                          <span className="font-mono text-[var(--text)]">{line.command}</span>
+                                          {line.detail && <span className="text-[var(--muted)]">{line.detail}</span>}
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            )
+                          })()}
                         </div>
                       </div>
                     )
@@ -1146,7 +1802,7 @@ export function CollaborationRoomsView({
                       className="w-full bg-transparent px-0 py-1 font-mono text-sm text-[var(--text)] outline-none placeholder:text-[var(--muted)]"
                       placeholder="Message this room..."
                       value={composerState.text}
-                      disabled={!activeRoomId || sendMessage.isPending}
+                      disabled={!activeRoomId}
                       onChange={(e) => setComposerState(prev => ({ ...prev, text: e.target.value }))}
                       onKeyDown={(e) => {
                         if (e.key === 'Enter' && !e.shiftKey) {
@@ -1160,14 +1816,14 @@ export function CollaborationRoomsView({
                         ref={modelButtonRef}
                         type="button"
                         onClick={() => setShowModelMenu((current) => !current)}
-                        disabled={!activeRoomId || sendMessage.isPending}
-                        className="inline-flex max-w-[260px] items-center gap-1 rounded border border-transparent bg-transparent px-1.5 py-0.5 font-mono text-[11px] font-medium text-[color:color-mix(in_srgb,var(--text)_72%,transparent)] transition duration-200 hover:border-[var(--border-soft)] hover:bg-white/5 hover:text-white disabled:cursor-not-allowed disabled:opacity-45"
-                        title="Switch model"
+                        disabled={!activeRoomId}
+                        className="inline-flex max-w-[420px] items-center gap-1 rounded border border-transparent bg-transparent px-1.5 py-0.5 font-mono text-[11px] font-medium text-[color:color-mix(in_srgb,var(--text)_72%,transparent)] transition duration-200 hover:border-[var(--border-soft)] hover:bg-white/5 hover:text-white disabled:cursor-not-allowed disabled:opacity-45"
+                        title={currentModelLabel}
                       >
                         <span className="truncate">{currentModelLabel}</span>
                         <span className={`text-[10px] opacity-60 transition ${showModelMenu ? 'rotate-180' : ''}`}>⌃</span>
                       </button>
-                      {showModelMenu && activeRoomId && !sendMessage.isPending && createPortal(
+                      {showModelMenu && activeRoomId && createPortal(
                         <div
                           ref={modelMenuRef}
                           className="fixed z-[80] overflow-hidden rounded-xl border border-[var(--border-soft)] bg-[color:color-mix(in_srgb,var(--panel)_90%,black)] p-1.5 shadow-[0_18px_48px_rgba(0,0,0,0.42)] backdrop-blur-sm"
@@ -1192,8 +1848,8 @@ export function CollaborationRoomsView({
                                 }}
                                 className={`flex w-full items-center justify-between rounded-md px-2.5 py-2 text-left font-mono text-[11px] transition hover:bg-white/6 ${composerState.modelId === option.id ? 'bg-sky-400/10 text-sky-100 ring-1 ring-sky-400/25' : 'text-[color:color-mix(in_srgb,var(--text)_94%,white_10%)]'}`}
                               >
-                                <span className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_132px] items-center gap-x-3">
-                                  <span className="truncate pr-1 text-[color:color-mix(in_srgb,var(--text)_96%,white_12%)]">{option.label}</span>
+                                <span className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_120px] items-start gap-x-3">
+                                  <span className="break-all pr-1 leading-relaxed text-[color:color-mix(in_srgb,var(--text)_96%,white_12%)]">{option.label}</span>
                                   <span className="truncate pl-2 text-right text-[color:color-mix(in_srgb,var(--text)_80%,white_12%)]">{option.providerName}</span>
                                 </span>
                                 {composerState.modelId === option.id && <span className="ml-3 text-sky-200">✓</span>}
@@ -1215,7 +1871,7 @@ export function CollaborationRoomsView({
                         value={composerState.companionPrompt ?? ''}
                         onChange={(e) => setComposerState((prev) => ({ ...prev, companionPrompt: e.target.value || null }))}
                         placeholder="Companion prompt…"
-                        disabled={!activeRoomId || sendMessage.isPending}
+                        disabled={!activeRoomId}
                         className="w-full rounded-lg border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-2 font-mono text-[11px] text-[var(--text)] outline-none placeholder:text-[var(--muted)] focus:border-[var(--sel-bd)]"
                       />
                     </div>
@@ -1266,17 +1922,18 @@ export function CollaborationRoomsView({
                     />
                     <div className="relative">
                       <button
+                        ref={composerMenuButtonRef}
                         type="button"
                         onClick={() => setShowComposerMenu((current) => !current)}
-                        disabled={!activeRoomId || sendMessage.isPending}
+                        disabled={!activeRoomId}
                         className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-[var(--border-soft)] bg-[var(--panel)] text-[var(--muted)] transition hover:bg-[var(--panel-strong)] hover:text-[var(--text)] disabled:cursor-not-allowed disabled:opacity-45"
                         aria-label="Composer actions"
                         title="Composer actions"
                       >
                         <Menu size={14} />
                       </button>
-                      {showComposerMenu && activeRoomId && !sendMessage.isPending && (
-                        <div className="absolute bottom-9 left-0 z-20 min-w-[170px] rounded-xl border border-[var(--border-soft)] bg-[var(--panel)] p-1 shadow-lg shadow-black/20">
+                      {showComposerMenu && activeRoomId && (
+                        <div ref={composerMenuRef} className="absolute bottom-9 left-0 z-20 min-w-[170px] rounded-xl border border-[var(--border-soft)] bg-[var(--panel)] p-1 shadow-lg shadow-black/20">
                           <button
                             type="button"
                             onClick={() => {
@@ -1311,7 +1968,6 @@ export function CollaborationRoomsView({
                       )}
                     </div>
 
-
                     <div className="flex flex-wrap items-center gap-1">
                       <button
                         type="button"
@@ -1320,7 +1976,7 @@ export function CollaborationRoomsView({
                           setComposerState(prev => ({ ...prev, tools: { ...prev.tools, webSearch: next } }))
                           showComposerToastMessage(`Web search ${next ? 'On' : 'Off'}`)
                         }}
-                        disabled={!activeRoomId || sendMessage.isPending}
+                        disabled={!activeRoomId}
                         className={`inline-flex h-8 w-8 items-center justify-center rounded-full border transition ${
                           composerState.tools.webSearch
                             ? 'border-[var(--sel-bd)] bg-[var(--sel-bg)] text-blue-400'
@@ -1338,7 +1994,7 @@ export function CollaborationRoomsView({
                           setComposerState(prev => ({ ...prev, tools: { ...prev.tools, shell: next } }))
                           showComposerToastMessage(`Shell ${next ? 'On' : 'Off'}`)
                         }}
-                        disabled={!activeRoomId || sendMessage.isPending}
+                        disabled={!activeRoomId}
                         className={`inline-flex h-8 w-8 items-center justify-center rounded-full border transition ${
                           composerState.tools.shell
                             ? 'border-[var(--sel-bd)] bg-[var(--sel-bg)] text-blue-400'
@@ -1355,7 +2011,7 @@ export function CollaborationRoomsView({
                       <button
                         type="button"
                         onClick={() => setComposerState(prev => ({ ...prev, mode: 'planning' }))}
-                        disabled={!activeRoomId || sendMessage.isPending}
+                        disabled={!activeRoomId}
                         className={`rounded-lg px-2 py-2 font-mono text-[10px] uppercase tracking-wide transition ${
                           composerState.mode === 'planning'
                             ? 'bg-[var(--sel-bg)] text-blue-400'
@@ -1367,7 +2023,7 @@ export function CollaborationRoomsView({
                       <button
                         type="button"
                         onClick={() => setComposerState(prev => ({ ...prev, mode: 'agent' }))}
-                        disabled={!activeRoomId || sendMessage.isPending}
+                        disabled={!activeRoomId}
                         className={`rounded-lg px-2 py-2 font-mono text-[10px] uppercase tracking-wide transition ${
                           composerState.mode === 'agent'
                             ? 'bg-[var(--sel-bg)] text-blue-400'
@@ -1377,6 +2033,17 @@ export function CollaborationRoomsView({
                         Agent
                       </button>
                     </div>
+
+                    {primaryRunningSession && (
+                      <button
+                        type="button"
+                        onClick={interruptCurrentRun}
+                        disabled={interruptingSessionId === primaryRunningSession.id}
+                        className="shrink-0 rounded-xl border border-rose-400/30 bg-rose-400/10 px-3 py-2 font-mono text-[11px] uppercase tracking-wide text-rose-300 transition hover:bg-rose-500/20 disabled:cursor-not-allowed disabled:opacity-45"
+                      >
+                        {interruptingSessionId === primaryRunningSession.id ? '…' : 'Stop'}
+                      </button>
+                    )}
                     <button
                       type="button"
                       disabled={!canSendMessage}
@@ -1384,16 +2051,31 @@ export function CollaborationRoomsView({
                       className="shrink-0 rounded-xl border border-[var(--sel-bd)] bg-[var(--sel-bg)] px-3 py-2 font-mono text-[11px] uppercase tracking-wide text-blue-400 transition hover:bg-blue-500/20 disabled:cursor-not-allowed disabled:opacity-45"
                       aria-label="Send message"
                     >
-                      {sendMessage.isPending ? '…' : '↗'}
+                      {queuedMessages.some((message) => message.status === 'sending') ? '…' : '↗'}
                     </button>
                   </div>
+                  {(queuedMessages.some((message) => message.roomId === activeRoomId) || primaryRunningSession) && (
+                    <div className="mt-2 flex flex-wrap items-center gap-2 font-mono text-[10px] text-[var(--muted)]">
+                      {queuedMessages.filter((message) => message.roomId === activeRoomId && message.status === 'queued').length > 0 && (
+                        <span>{queuedMessages.filter((message) => message.roomId === activeRoomId && message.status === 'queued').length} queued</span>
+                      )}
+                      {queuedMessages.filter((message) => message.roomId === activeRoomId && message.status === 'sending').length > 0 && (
+                        <span>{queuedMessages.filter((message) => message.roomId === activeRoomId && message.status === 'sending').length} sending</span>
+                      )}
+                      {queuedMessages.some((message) => message.roomId === activeRoomId && message.status === 'error') && (
+                        <button
+                          type="button"
+                          onClick={retryFailedMessages}
+                          className="rounded-full border border-[var(--s-blk-bd)] bg-[var(--s-blk-bg)] px-2 py-0.5 text-[var(--s-blk-tx)] transition hover:opacity-90"
+                        >
+                          Retry failed
+                        </button>
+                      )}
+                      {primaryRunningSession && <span>{primeName} is {processingVerb}…</span>}
+                    </div>
+                  )}
                 </div>
               </div>
-              {sendMessage.isError && (
-                <div className="shrink-0 border-t border-[var(--s-blk-bd)] bg-[var(--s-blk-bg)] px-4 py-2 font-mono text-xs text-[var(--s-blk-tx)]">
-                  {(sendMessage.error as Error).message}
-                </div>
-              )}
 
             </div>
 
@@ -1419,11 +2101,7 @@ export function CollaborationRoomsView({
                       key={`${selectedRoom.id}-attention-${item.id}`}
                       type="button"
                       onClick={() => selectWork(item.id)}
-                      className={`rounded border px-3 py-2 text-left transition ${
-                        selectedWorkId === item.id
-                          ? 'border-[var(--sel-bd)] bg-[var(--sel-bg)]'
-                          : 'border-[var(--s-blk-bd)] bg-[var(--s-blk-bg)] hover:bg-[var(--panel-strong)]'
-                      }`}
+                      className={`rounded border px-3 py-2 text-left transition ${workFocusCardClass(item.status, highlightedInspectorId === item.id)}`}
                     >
                       <div className="truncate text-sm font-medium text-[var(--text)]">{item.title}</div>
                       <div className="mt-1 font-mono text-[11px] text-[var(--muted)]">{item.owner_label || primeName} · {laneLabel(item.status)}</div>
@@ -1435,43 +2113,32 @@ export function CollaborationRoomsView({
                 </div>
               </div>
 
-              {/* Active work */}
+              {/* Running work */}
               <div className="min-h-[180px] flex-1 overflow-hidden border-b border-[var(--border-soft)] px-[18px] py-3.5">
                 <div className="mb-2 flex items-center justify-between gap-2 font-mono text-[11px] uppercase tracking-widest text-[var(--muted)]">
-                  <span>Active Work</span>
-                  <span className="rounded-full border border-[var(--border-soft)] bg-[var(--panel-subtle)] px-2 py-0.5 tracking-normal">{activeWork.length}</span>
+                  <span>Running</span>
+                  <span className="rounded-full border border-[var(--border-soft)] bg-[var(--panel-subtle)] px-2 py-0.5 tracking-normal">{runningWork.length}</span>
                 </div>
                 <div className="flex h-[calc(100%-28px)] flex-col gap-2 overflow-y-auto pr-1">
-                  {renderWorkRows(activeWork, 'No active work in this room.')}
+                  {renderWorkRows(runningWork, 'No running work in this room.')}
                 </div>
               </div>
 
-              {/* Pending work */}
+              {/* Queued work */}
               <div className="min-h-[180px] flex-1 overflow-hidden px-[18px] py-3.5">
                 <div className="mb-2 flex items-center justify-between gap-2 font-mono text-[11px] uppercase tracking-widest text-[var(--muted)]">
-                  <span>Pending Work</span>
-                  <span className="rounded-full border border-[var(--border-soft)] bg-[var(--panel-subtle)] px-2 py-0.5 tracking-normal">{pendingWork.length}</span>
+                  <span>Queued</span>
+                  <span className="rounded-full border border-[var(--border-soft)] bg-[var(--panel-subtle)] px-2 py-0.5 tracking-normal">{queuedWork.length}</span>
                 </div>
                 <div className="flex h-[calc(100%-28px)] flex-col gap-2 overflow-y-auto pr-1">
-                  {renderWorkRows(pendingWork, 'No pending work queued.')}
+                  {renderWorkRows(queuedWork, 'No queued work in this room.')}
                 </div>
               </div>
 
             </div>
           </div>
 
-          {/* Bottom Action Toolbar Pane */}
-          {activeRoomId && (
-            <div className="shrink-0 border-t border-[var(--border-soft)] bg-[var(--panel)] px-4 py-2">
-              <BottomActionToolbar
-                drafts={toolbarDrafts}
-                onOpenDraft={handleOpenDraft}
-                onCancelDraft={handleCancelDraft}
-                compact
-                inline
-              />
-            </div>
-          )}
+
         </div>
       ) : (
         <div className="flex flex-1 items-center justify-center text-[var(--muted)]">
@@ -1487,6 +2154,7 @@ export function CollaborationRoomsView({
           </div>
         </div>
       )}
+
     </div>
   )
 }

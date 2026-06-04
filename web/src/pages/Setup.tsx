@@ -2068,6 +2068,7 @@ export function Setup({ onSkip }: { onSkip?: () => void }) {
         setSubmitError(data?.error ?? `HTTP ${res.status}`)
       } else {
         await queryClient.invalidateQueries({ queryKey: ['setup-status'] })
+        await queryClient.invalidateQueries({ queryKey: ['prime-profile'] })
         if (launch && data?.prime_launch?.status === 'launched') {
           const { generateTeamPlan } = await import('../api')
           let teamPlan: import('../types').TeamPlan | null = null

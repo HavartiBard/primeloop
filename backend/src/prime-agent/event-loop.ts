@@ -122,11 +122,67 @@ async function isCronQuiescent(pool: pg.Pool): Promise<boolean> {
   return parseInt(newEvents.n, 10) === 0
 }
 
+async function reconcileWorkItemStates(pool: pg.Pool): Promise<void> {
+  const { rows } = await pool.query<{
+    id: string
+    blocked_reason: string | null
+    routing_outcome: string | null
+    metadata: Record<string, unknown> | null
+  }>(`
+    SELECT wi.id,
+           COALESCE(evt.payload->>'reason', wi.blocked_by, 'no-investigation-route') AS blocked_reason,
+           COALESCE(evt.payload->>'routing_outcome', wi.metadata->>'routing_outcome') AS routing_outcome,
+           wi.metadata
+      FROM work_items wi
+      LEFT JOIN LATERAL (
+        SELECT payload
+          FROM runtime_events re
+         WHERE re.work_item_id = wi.id
+           AND re.event_type IN ('prime.failure.investigation_needed', 'prime.blocker.investigation_needed')
+         ORDER BY re.created_at DESC
+         LIMIT 1
+      ) evt ON true
+     WHERE wi.status = 'active'
+       AND wi.metadata->>'action_type' IN ('hard_failure_investigation', 'prime_blocker_investigation')
+       AND evt.payload IS NOT NULL
+       AND NOT EXISTS (
+         SELECT 1
+           FROM delegations d
+          WHERE d.work_item_id = wi.id
+            AND d.status IN ('queued', 'running', 'pending')
+       )
+  `)
+
+  for (const row of rows) {
+    await updateWorkItem(pool, row.id, {
+      status: 'blocked',
+      blocked_by: row.blocked_reason ?? 'no-investigation-route',
+      metadata: {
+        ...(row.metadata ?? {}),
+        investigation_status: 'blocked',
+        routing_outcome: row.routing_outcome ?? (row.metadata?.['routing_outcome'] as string | undefined) ?? 'blocked_runtime_unavailable',
+      },
+    })
+    await insertRuntimeEvent(pool, {
+      event_type: 'work.reclassified',
+      actor: 'Prime',
+      work_item_id: row.id,
+      payload: {
+        previous_status: 'active',
+        status: 'blocked',
+        reason: row.blocked_reason ?? 'no-investigation-route',
+      },
+    })
+  }
+}
+
 export async function handlePrimeEvent(
   pool: pg.Pool,
   event: PrimeEvent,
   deps: PrimeEventLoopDeps
 ): Promise<PrimeEventHandleResult> {
+  await reconcileWorkItemStates(pool)
+
   const duplicate = event.type === 'prime.message'
     ? await reconcilePrimeMessageSession(pool, event.payload.message_id)
     : null
@@ -490,7 +546,17 @@ async function createSreInvestigationForPrimeFailure(
     }
   }
 
-  // No executable route — record the blocker and inform user (FR-009, FR-011)
+  // No executable route — mark blocked, record the blocker, and inform user (FR-009, FR-011)
+  const blockedReason = outcome.type === 'blocked_runtime_unavailable' ? 'runtime-unavailable' : 'no-investigation-route'
+  await updateWorkItem(pool, workItem.id, {
+    status: 'blocked',
+    blocked_by: blockedReason,
+    metadata: {
+      ...(workItem.metadata ?? {}),
+      investigation_status: 'blocked',
+      routing_outcome: outcome.type,
+    },
+  })
   await insertRuntimeEvent(pool, {
     event_type: 'prime.failure.investigation_needed',
     actor: 'Prime',
@@ -498,7 +564,7 @@ async function createSreInvestigationForPrimeFailure(
     work_item_id: workItem.id,
     payload: {
       session_id: sessionId,
-      reason: outcome.type === 'blocked_runtime_unavailable' ? 'runtime-unavailable' : 'no-investigation-route',
+      reason: blockedReason,
       error: errorMessage,
       routing_outcome: outcome.type,
     },
@@ -617,7 +683,17 @@ async function createSreInvestigationForPrimeBlocker(
     }
   }
 
-  // No executable route — record the blocker and inform user (FR-009, FR-011)
+  // No executable route — mark blocked, record the blocker, and inform user (FR-009, FR-011)
+  const blockedReason = outcome.type === 'blocked_runtime_unavailable' ? 'runtime-unavailable' : 'no-investigation-route'
+  await updateWorkItem(pool, workItem.id, {
+    status: 'blocked',
+    blocked_by: blockedReason,
+    metadata: {
+      ...(workItem.metadata ?? {}),
+      investigation_status: 'blocked',
+      routing_outcome: outcome.type,
+    },
+  })
   await insertRuntimeEvent(pool, {
     event_type: 'prime.blocker.investigation_needed',
     actor: 'Prime',
@@ -625,7 +701,7 @@ async function createSreInvestigationForPrimeBlocker(
     work_item_id: workItem.id,
     payload: {
       session_id: sessionId,
-      reason: outcome.type === 'blocked_runtime_unavailable' ? 'runtime-unavailable' : 'no-investigation-route',
+      reason: blockedReason,
       blockers: blockerReasons,
       routing_outcome: outcome.type,
     },
