@@ -275,6 +275,27 @@ export async function runMigrations(pool: pg.Pool): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_runtime_events_created_at
       ON runtime_events (created_at DESC);
 
+    CREATE TABLE IF NOT EXISTS routing_outcomes (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      request_id TEXT NOT NULL,
+      work_class TEXT NOT NULL,
+      preferred_role TEXT,
+      outcome_type TEXT NOT NULL,
+      blocker_type TEXT,
+      target_agent_id UUID REFERENCES agents(id) ON DELETE SET NULL,
+      template_id TEXT,
+      explanation TEXT NOT NULL DEFAULT '',
+      suggested_remediations JSONB NOT NULL DEFAULT '[]',
+      thread_id UUID REFERENCES threads(id) ON DELETE SET NULL,
+      work_item_id TEXT REFERENCES work_items(id) ON DELETE SET NULL,
+      status TEXT NOT NULL DEFAULT 'active',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_routing_outcomes_active_blockers
+      ON routing_outcomes (status, thread_id, work_class, blocker_type, outcome_type);
+
     ALTER TABLE providers ADD COLUMN IF NOT EXISTS model TEXT;
     ALTER TABLE providers ADD COLUMN IF NOT EXISTS timeout_ms INT NOT NULL DEFAULT 120000;
 
