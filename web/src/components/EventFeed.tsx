@@ -10,6 +10,10 @@ const TYPE_COLORS: Record<string, string> = {
   'approval.decided': 'border-orange-500',
   'session.active': 'border-blue-400',
   'session.ended': 'border-gray-500',
+  // Restart-recovery events (US1)
+  'session.resumed': 'border-indigo-400',
+  'delegation.recovered': 'border-teal-400',
+  'delegation.recovered_failed': 'border-red-500',
 }
 
 // Status mapping for new agent canvas UX
@@ -20,6 +24,10 @@ const EVENT_TYPE_STATUS: Record<string, string> = {
   'approval.decided': 'resolved',
   'session.active': 'streaming',
   'session.ended': 'cancelled',
+  // Restart-recovery events (US1) surface resumed/recovered/failed labels
+  'session.resumed': 'resumed',
+  'delegation.recovered': 'recovered',
+  'delegation.recovered_failed': 'failed',
 }
 
 function formatTime(iso: string): string {

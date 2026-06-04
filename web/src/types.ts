@@ -708,6 +708,8 @@ export type DisplayStatus =
   | 'blocked'
   | 'resolved'
   | 'unavailable'
+  | 'resumed'
+  | 'recovered'
 
 /** Source reference for a chat display event */
 export interface EventSource {

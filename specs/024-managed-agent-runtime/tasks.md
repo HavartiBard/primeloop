@@ -74,7 +74,7 @@ are repository-relative (worktree root).
 - [X] T019 [US1] Implement tiered restart recovery (durable → resume in place; ephemeral → re-dispatch fresh) in `backend/src/recovery/service.ts` per contracts/harness-wake.md
 - [X] T020 [US1] Wire recovery at boot behind `RESUME_ON_RESTART`, replacing the unconditional fail in `recoverLifecycleState`, in `backend/src/opencode/process-manager.ts`
 - [X] T021 [US1] Emit `session.resumed` / `delegation.recovered` / `delegation.recovered_failed` for every outcome; guarantee no delegation left silently failed, in `backend/src/recovery/service.ts`
-- [ ] T022 [US1] Surface `resumed`/`recovered` status labels using existing delegation/agent status components in `web/src/hooks/useLoopStatus.ts` and the delegation status UI, covering loading/empty/success/error states with existing patterns
+- [X] T022 [US1] Surface `resumed`/`recovered` status labels using existing delegation/agent status components in `web/src/hooks/useLoopStatus.ts` and the delegation status UI, covering loading/empty/success/error states with existing patterns
 
 **Checkpoint**: US1 independently testable — restart resumes work; MVP complete
 

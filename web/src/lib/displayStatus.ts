@@ -17,6 +17,8 @@ export const STATUS_LABELS: Record<DisplayStatus, string> = {
   blocked: 'Blocked',
   resolved: 'Resolved',
   unavailable: 'Unavailable',
+  resumed: 'Resumed',
+  recovered: 'Recovered',
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -34,6 +36,8 @@ export const STATUS_COLOR_CLASSES: Record<DisplayStatus, string> = {
   blocked: 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-300',
   resolved: 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300',
   unavailable: 'bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-300',
+  resumed: 'bg-indigo-100 text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-300',
+  recovered: 'bg-teal-100 text-teal-800 dark:bg-teal-900/30 dark:text-teal-300',
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -51,6 +55,8 @@ export const STATUS_ICONS: Record<DisplayStatus, string> = {
   blocked: 'shield-alert',
   resolved: 'check-check',
   unavailable: 'eye-off',
+  resumed: 'play',
+  recovered: 'check-check',
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -82,7 +88,7 @@ export function getStatusIcon(status: DisplayStatus): string {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function isStatusActive(status: DisplayStatus): boolean {
-  return ['streaming', 'running', 'pending'].includes(status)
+  return ['streaming', 'running', 'pending', 'resumed', 'recovered'].includes(status)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
