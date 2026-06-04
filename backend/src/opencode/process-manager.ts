@@ -20,6 +20,8 @@ import { bootstrapDurableStaff } from '../durable-staff.js'
 import { AcpHarness } from '../fleet-executor/acp-harness.js'
 import type { AgentHarness } from '../fleet-executor/harness.js'
 import { recoverInflight } from '../recovery/restart.js'
+import { CredentialBroker } from '../credentials/broker.js'
+import { provisionAgentCredentials, revokeAgentCredentials } from '../credentials/lifecycle.js'
 
 const execFileAsync = promisify(execFile)
 const DEFAULT_PORT_START = 4200
@@ -169,11 +171,18 @@ export class OpenCodeProcessManager {
   private readonly sleepFn: (ms: number) => Promise<void>
   private readonly processes = new Map<string, ProcessState>()
   private readonly harnesses = new Map<string, AgentHarness>()
+  private readonly broker: CredentialBroker
+
+  // Read at call time so the flag can be toggled per-process/test.
+  private get credentialBrokerEnabled(): boolean {
+    return process.env.CREDENTIAL_BROKER === '1'
+  }
 
   constructor(
     private readonly pool: pg.Pool,
     deps: ProcessManagerDeps = {},
   ) {
+    this.broker = new CredentialBroker(this.pool)
     this.repoRoot = deps.repoRoot ?? process.env.AGENT_REPO_ROOT ?? DEFAULT_REPO_ROOT
     this.agentsRoot = deps.agentsRoot ?? process.env.AGENT_WORKTREE_ROOT ?? DEFAULT_AGENTS_ROOT
     this.controlPlaneUrl = deps.controlPlaneUrl ?? process.env.CONTROL_PLANE_URL ?? DEFAULT_CONTROL_PLANE_URL
@@ -236,6 +245,9 @@ export class OpenCodeProcessManager {
   }
 
   stopAgent(agentId: string): void {
+    // Synchronously revoke brokered credentials at teardown (FR-007). Fire-and-forget
+    // since stopAgent is sync; no-op when the flag is off.
+    void revokeAgentCredentials(this.broker, agentId, this.credentialBrokerEnabled)
     const harness = this.harnesses.get(agentId)
     if (harness) {
       console.log(`[process-manager] Reaping AcpHarness for agent ${agentId}`)
@@ -432,6 +444,10 @@ export class OpenCodeProcessManager {
     const providerEnv = providerEnvName(provider)
     const controlPlaneToken = await getOrCreateAgentToken(this.pool, agent.id)
 
+    // Behind CREDENTIAL_BROKER: issue brokered, env-only credentials for this agent and
+    // inject them alongside the existing config (FR-007/009). No-op when the flag is off.
+    const brokerEnv = await provisionAgentCredentials(this.broker, agent.id, {}, this.credentialBrokerEnabled)
+
     const env = {
       ...process.env,
       ...(providerEnv && providerKey ? { [providerEnv]: providerKey } : {}),
@@ -440,6 +456,7 @@ export class OpenCodeProcessManager {
       CONTROL_PLANE_AGENT_TOKEN: controlPlaneToken,
       POSTGRES_URL: process.env.DATABASE_URL ?? '',
       SOULLAYER_AGENT_ID: agent.id,
+      ...brokerEnv,
     }
 
     await this.launchManagedProcess(agent, localPort, worktreePath, env, 0)
@@ -457,6 +474,11 @@ export class OpenCodeProcessManager {
     const command = agent.runtime_family === 'pi' ? 'pi-acp' : (agent.config as any)?.command ?? 'acp-agent'
     const args = (agent.runtime_family === 'pi' ? [] : ((agent.config as any)?.args ?? [])) as string[]
     const permissionConfig = (agent.config as any)?.permission ?? {}
+
+    // Behind CREDENTIAL_BROKER: issue brokered credentials for this agent's lifecycle
+    // (revoked at teardown). No-op when the flag is off. (ACP env injection lands with
+    // the runtime-container launcher, T062.)
+    await provisionAgentCredentials(this.broker, agent.id, {}, this.credentialBrokerEnabled)
 
     console.log(`[process-manager] Selecting AcpHarness for agent ${agent.id} (${agent.name})`)
     const harness = new AcpHarness(agent.id, this.pool, command, args, workspaceRoot, permissionConfig)

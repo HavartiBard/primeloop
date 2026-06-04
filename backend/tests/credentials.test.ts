@@ -19,7 +19,7 @@ describe('CredentialBroker (US2)', () => {
   })
 
   beforeEach(async () => {
-    await pool.query('DELETE FROM runtime_events')
+    await pool.query(`DELETE FROM runtime_events WHERE actor = 'credential-broker'`)
     await pool.query('DELETE FROM brokered_credentials')
     await pool.query(`DELETE FROM agents WHERE name LIKE 'cred-%'`)
   })
