@@ -101,7 +101,7 @@ are repository-relative (worktree root).
 - [X] T030 [US2] Replace the long-lived control-plane token with a broker-issued scoped token in `backend/src/opencode/process-manager.ts` and validate it in `backend/src/mcp/server.ts`
 - [X] T031 [US2] Emit `credential.issued|rotated|revoked|risk_flagged` events in `backend/src/credentials/broker.ts`
 - [X] T032 [US2] Add a risky-credential badge using existing status components in `web/src/components/` (agent/credential surface), handling the no-risk (empty) and load/error states consistently
-- [X] T058 [US2] Issue Gitea **scoped/derived** tokens (repo/capability-scoped, distinct from named-secret pass-through) in `backend/src/credentials/broker.ts` (FR-011)
+- [ ] T058 [US2] Issue Gitea **scoped/derived** tokens (repo/capability-scoped, distinct from named-secret pass-through) in `backend/src/credentials/broker.ts` (FR-011)
 - [X] T059 [US2] Route assigned MCP-server secrets through the broker and stop writing their `env_vars` into `opencode.json`/config (env-only injection) in `backend/src/opencode/process-manager.ts` (FR-009, FR-011) — covered by the no-disk scan in T023
 - [X] T063 [US2] Route Prime's LLM calls through the control-plane proxy (no raw provider key) in `backend/src/prime-agent/llm-router.ts`, and add a test asserting the proxy is the **sole** raw-key holder and Prime stays within its enumerated action set + approval gates in `backend/tests/prime-proxy.test.ts` (FR-026, FR-027, SC-008)
 

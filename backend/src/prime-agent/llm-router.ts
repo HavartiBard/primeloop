@@ -1,5 +1,8 @@
+import Anthropic from '@anthropic-ai/sdk'
+import OpenAI from 'openai'
 import type pg from 'pg'
 import { getPrimeConfig, resolveModelRoutes, type PrimeConfigRoute } from './config.js'
+import { getProviderApiKey } from '../registry.js'
 import type { PrimeContext } from './context.js'
 import type { Domain } from '../goals/types.js'
 import type { RuntimeTruth } from '../routing/index.js'
@@ -511,6 +514,13 @@ async function callProvider(
   const provider = rows[0]
   if (!provider) throw new Error(`provider not found: ${route.provider_id}`)
 
+  const apiKey = await getProviderApiKey(pool, route.provider_id)
+  if (!apiKey && (provider.type === 'anthropic' || provider.type === 'openai')) {
+    throw new Error(`provider ${route.provider_id} has no API key configured`)
+  }
+
+  const openAiCompatibleApiKey = apiKey ?? (provider.type === 'openai' ? null : 'not-required')
+
   const systemPrompt = await buildPrimeSystemPrompt(context, pool)
   const userMessage = await buildPrimeTriggerMessage(context, pool)
   const model = route.model
@@ -529,23 +539,45 @@ async function callProvider(
     throw tagged
   }
 
-  // Create the LLM proxy client to route calls through the control-plane proxy
-  const proxyClient = new LlmProxyClient(pool)
-
-  if (provider.type === 'anthropic') {
-    const response = await proxyClient.callAnthropic(model, systemPrompt, userMessage, timeoutMs, signal).catch(tagError)
+  // Behind CREDENTIAL_BROKER: route provider calls through the control-plane proxy so
+  // Prime never holds the raw key (FR-026). Default off = proven direct calls below.
+  // llamacpp is self-hosted and always uses the direct path.
+  if (process.env.CREDENTIAL_BROKER === '1' && provider.type !== 'llamacpp') {
+    const proxyClient = new LlmProxyClient(pool)
+    if (provider.type === 'anthropic') {
+      const response = await proxyClient.callAnthropic(model, systemPrompt, userMessage, timeoutMs, signal).catch(tagError)
+      return parseProxyResponse(response, provider.type, model, isUserFacing)
+    }
+    const response = await proxyClient.callOpenAI(model, systemPrompt, userMessage, timeoutMs, signal).catch(tagError)
     return parseProxyResponse(response, provider.type, model, isUserFacing)
   }
+
+  if (provider.type === 'anthropic') {
+    const decision = await callAnthropic(apiKey ?? '', model, systemPrompt, userMessage, provider.type, timeoutMs, isUserFacing, signal).catch(tagError)
+    if (!decision.provider_used) decision.provider_used = provider.type
+    if (!decision.model_used) decision.model_used = model
+    return decision
+  }
   if (provider.type === 'llamacpp') {
-    // LlamaCpp still uses direct HTTP calls to the provider's endpoint
-    // This is acceptable as it's typically self-hosted and doesn't require proxy routing
     const decision = await callLlamaCpp(pool, provider.base_url, model, systemPrompt, userMessage, provider.type, timeoutMs, isUserFacing, signal).catch(tagError)
     if (!decision.provider_used) decision.provider_used = providerHint
     if (!decision.model_used) decision.model_used = model
     return decision
   }
-  const response = await proxyClient.callOpenAI(model, systemPrompt, userMessage, timeoutMs, signal).catch(tagError)
-  return parseProxyResponse(response, provider.type, model, isUserFacing)
+  const decision = await callOpenAI(
+    normalizeOpenAiBaseUrl(provider.base_url),
+    openAiCompatibleApiKey,
+    model,
+    systemPrompt,
+    userMessage,
+    provider.type,
+    timeoutMs,
+    isUserFacing,
+    signal,
+  ).catch(tagError)
+  if (!decision.provider_used) decision.provider_used = providerHint
+  if (!decision.model_used) decision.model_used = model
+  return decision
 }
 
 async function callLlamaCpp(
@@ -670,8 +702,101 @@ function truncateAtBoundary(text: string, maxLen: number): string {
   return truncated.trim() + '...'
 }
 
-// Old LLM provider functions are now handled by the LlmProxyClient
-// These functions remain for reference but are no longer called by Prime
+function normalizeOpenAiBaseUrl(baseUrl: string): string {
+  const trimmed = baseUrl.trim()
+  if (!trimmed || trimmed === 'https://api.openai.com/v1') return trimmed
+  return /\/v1\/?$/.test(trimmed) ? trimmed : `${trimmed.replace(/\/+$/, '')}/v1`
+}
+
+async function callAnthropic(
+  apiKey: string,
+  model: string,
+  systemPrompt: string,
+  userMessage: string,
+  providerType: string,
+  timeoutMs: number,
+  isUserFacing: boolean,
+  signal?: AbortSignal,
+): Promise<PrimeDecision> {
+  const client = new Anthropic({ apiKey, timeout: timeoutMs })
+  const response = await withProviderTimeout(client.messages.create({
+    model,
+    max_tokens: 8192,
+    system: systemPrompt,
+    messages: [{ role: 'user', content: userMessage }],
+  }, { signal }), timeoutMs)
+
+  const text = response.content.find((b) => b.type === 'text')?.text ?? ''
+  const tokenCount = (response.usage?.input_tokens ?? 0) + (response.usage?.output_tokens ?? 0)
+  const decision = validatePrimeDecision(parseJsonDecision(text), { isUserFacing })
+  decision.provider_used = providerType
+  decision.model_used = response.model ?? model
+  decision.token_count = tokenCount
+  return decision
+}
+
+async function callOpenAI(
+  baseURL: string,
+  apiKey: string | null,
+  model: string,
+  systemPrompt: string,
+  userMessage: string,
+  providerType: string,
+  timeoutMs: number,
+  isUserFacing: boolean,
+  signal?: AbortSignal,
+): Promise<PrimeDecision> {
+  const client = new OpenAI({ apiKey: apiKey ?? undefined, baseURL: baseURL || undefined, timeout: timeoutMs })
+  const response = await withProviderTimeout(client.chat.completions.create({
+    model,
+    response_format: {
+      type: 'json_schema',
+      json_schema: {
+        name: 'prime_decision',
+        schema: {
+          type: 'object',
+          properties: {
+            reasoning: { type: 'string' },
+            response: { type: 'string' },
+            actions: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  type: { type: 'string', enum: ['delegate', 'update_work_item', 'request_approval', 'update_profile', 'no_op'] },
+                  payload: { type: 'object' },
+                  reason: { type: 'string' },
+                },
+                required: ['type', 'payload', 'reason'],
+              },
+            },
+          },
+          required: ['reasoning', 'response', 'actions'],
+        },
+      },
+    },
+    max_tokens: 8192,
+    messages: [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userMessage },
+    ],
+  }, { signal }), timeoutMs)
+
+  const msg = response.choices[0]?.message as unknown as Record<string, unknown>
+  // Thinking models (e.g. Qwen3-MTP) put chain-of-thought in reasoning_content
+  // and the actual answer in content. If content is empty, fall back to
+  // reasoning_content so we can at least surface a parse error rather than
+  // silently failing with an empty string.
+  const text = (msg?.['content'] as string | undefined)?.trim()
+    || (msg?.['reasoning_content'] as string | undefined)?.trim()
+    || ''
+  const tokenCount = response.usage?.total_tokens ?? 0
+  const decision = validatePrimeDecision(parseJsonDecision(text), { isUserFacing })
+  decision.provider_used = providerType
+  decision.model_used = response.model ?? model
+  decision.token_count = tokenCount
+  return decision
+}
 
 async function withProviderTimeout<T>(operation: Promise<T>, timeoutMs: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined
@@ -806,10 +931,6 @@ function buildRuntimeTruthSummary(runtimeTruth: RuntimeTruth): string {
   return parts.length > 0 ? parts.join('. ') : 'No runtime truth available.'
 }
 
-/**
- * Parse a response from the LLM proxy and convert it to a PrimeDecision.
- * The proxy returns the raw upstream response body which we need to parse.
- */
 function parseProxyResponse(
   response: unknown,
   providerType: string,

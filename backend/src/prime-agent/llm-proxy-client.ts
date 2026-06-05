@@ -5,6 +5,11 @@
 import type pg from 'pg'
 import { CredentialBroker } from '../credentials/broker.js'
 
+// Module-level token cache shared across LlmProxyClient instances (a fresh client is
+// created per call). Reused until shortly before expiry to avoid revoke/issue churn
+// on every Prime LLM call.
+let cachedProxyToken: { token: string; expiresAt: number } | null = null
+
 export interface LlmProxyRequest {
   provider: string
   path: string
@@ -28,7 +33,11 @@ export interface LlmProxyResponse {
 export class LlmProxyClient {
   private broker: CredentialBroker
 
-  constructor(private readonly pool: pg.Pool, private readonly controlPlaneUrl: string = process.env.CONTROL_PLANE_URL ?? 'http://127.0.0.1:3000') {
+  constructor(
+    private readonly pool: pg.Pool,
+    // Default matches the backend's own listen port (PORT defaults to 3100).
+    private readonly controlPlaneUrl: string = process.env.CONTROL_PLANE_URL ?? `http://127.0.0.1:${process.env.PORT ?? '3100'}`,
+  ) {
     this.broker = new CredentialBroker(pool)
   }
 
@@ -61,10 +70,14 @@ export class LlmProxyClient {
    * The token is scoped to allow calling the LLM proxy on behalf of Prime.
    */
   async getProxyToken(): Promise<string> {
-    const primeAgentId = await this.resolvePrimeAgentId()
+    // Reuse the in-memory token until it is within 60s of expiry. Brokered credentials
+    // only retain a hash, so the plaintext must be cached here rather than re-read.
+    const now = Date.now()
+    if (cachedProxyToken && cachedProxyToken.expiresAt > now + 60_000) {
+      return cachedProxyToken.token
+    }
 
-    // Brokered credentials only retain a hash, so plaintext cannot be recovered from an
-    // existing row. Revoke prior Prime proxy tokens and mint a fresh one for this call.
+    const primeAgentId = await this.resolvePrimeAgentId()
     await this.broker.revokeAllForAgent(primeAgentId)
     const issued = await this.broker.issueForAgent(primeAgentId, {})
     const proxyCred = issued.find(c => c.kind === 'provider_proxy_token')
@@ -73,7 +86,11 @@ export class LlmProxyClient {
       throw new Error('Failed to issue provider_proxy_token for Prime')
     }
 
-    return proxyCred.envVars.LLM_PROXY_TOKEN
+    cachedProxyToken = {
+      token: proxyCred.envVars.LLM_PROXY_TOKEN,
+      expiresAt: new Date(proxyCred.expiresAt).getTime(),
+    }
+    return cachedProxyToken.token
   }
 
   /**
