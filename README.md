@@ -2,6 +2,54 @@
 
 Multi-agent dashboard and control plane.
 
+## Managed-Agent Runtime Alignment (Spec 024)
+
+This branch is migrating PrimeLoop toward a managed-agent runtime model with:
+
+- restart recovery for in-flight delegations
+- brokered env-only credentials
+- control-plane LLM proxying
+- lazy durable runtime provisioning
+- runtime containment / egress controls
+- unified session timelines
+
+### Feature flags
+
+These flags are currently wired in `backend/src/index.ts`:
+
+- `RESUME_ON_RESTART=1` — recover in-flight delegations on boot instead of unconditionally failing them
+- `LAZY_PROVISIONING=1` — opt into lease/on-demand durable runtime behavior as it lands
+- `CREDENTIAL_BROKER=1` — issue brokered runtime credentials and keep secrets out of generated config files
+- `EGRESS_SANDBOX=1` — enable runtime containment / launcher transport work as it lands
+
+### Credential / proxy model
+
+Current direction for Spec 024:
+
+- agent/provider credentials are broker-issued and injected through process env
+- generated files such as `opencode.json` should not contain brokered secret values when broker mode is enabled
+- Prime LLM calls route through `/internal/llm/:provider/*`
+- the control-plane proxy is the sole raw provider-key holder for proxied providers
+- MCP/control-plane runtime auth can use brokered launcher/control-plane tokens
+
+### Runtime events added for Spec 024
+
+The runtime event taxonomy now includes:
+
+- `session.resumed`
+- `delegation.recovered`
+- `delegation.recovered_failed`
+- `credential.issued`
+- `credential.rotated`
+- `credential.revoked`
+- `credential.risk_flagged`
+- `runtime.leased`
+- `runtime.reclaimed`
+- `egress.denied`
+- `fs.denied`
+- `llm.proxied`
+- `launcher.auth_denied`
+
 ## Dev Startup
 
 Use the repo wrapper so backend and web come up with the expected local dev settings:

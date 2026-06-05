@@ -88,7 +88,7 @@ are repository-relative (worktree root).
 
 ### Tests for User Story 2
 
-- [ ] T023 [P] [US2] DB-backed test: after provisioning, no secret value appears in worktree/config files (scan) in `backend/tests/credentials.no-disk.test.ts`
+- [X] T023 [P] [US2] DB-backed test: after provisioning, no secret value appears in worktree/config files (scan) in `backend/tests/credentials.no-disk.test.ts`
 - [X] T024 [P] [US2] DB-backed test: ephemeral teardown revokes credentials synchronously and rejects reuse in `backend/tests/credentials.revoke.test.ts`
 - [X] T025 [P] [US2] DB-backed test: durable rotation within ≤24h TTL without restart; non-rotatable/over-TTL flagged `risky` with event in `backend/tests/credentials.rotate.test.ts`
 
@@ -100,8 +100,8 @@ are repository-relative (worktree root).
 - [X] T029 [US2] Inject broker env vars at spawn and REMOVE all secret/key writes from `writeConfigFiles`/config (env-only, FR-009) in `backend/src/opencode/process-manager.ts`
 - [X] T030 [US2] Replace the long-lived control-plane token with a broker-issued scoped token in `backend/src/opencode/process-manager.ts` and validate it in `backend/src/mcp/server.ts`
 - [X] T031 [US2] Emit `credential.issued|rotated|revoked|risk_flagged` events in `backend/src/credentials/broker.ts`
-- [ ] T032 [US2] Add a risky-credential badge using existing status components in `web/src/components/` (agent/credential surface), handling the no-risk (empty) and load/error states consistently
-- [ ] T058 [US2] Issue Gitea **scoped/derived** tokens (repo/capability-scoped, distinct from named-secret pass-through) in `backend/src/credentials/broker.ts` (FR-011)
+- [X] T032 [US2] Add a risky-credential badge using existing status components in `web/src/components/` (agent/credential surface), handling the no-risk (empty) and load/error states consistently
+- [X] T058 [US2] Issue Gitea **scoped/derived** tokens (repo/capability-scoped, distinct from named-secret pass-through) in `backend/src/credentials/broker.ts` (FR-011)
 - [X] T059 [US2] Route assigned MCP-server secrets through the broker and stop writing their `env_vars` into `opencode.json`/config (env-only injection) in `backend/src/opencode/process-manager.ts` (FR-009, FR-011) — covered by the no-disk scan in T023
 - [X] T063 [US2] Route Prime's LLM calls through the control-plane proxy (no raw provider key) in `backend/src/prime-agent/llm-router.ts`, and add a test asserting the proxy is the **sole** raw-key holder and Prime stays within its enumerated action set + approval gates in `backend/tests/prime-proxy.test.ts` (FR-026, FR-027, SC-008)
 
@@ -184,7 +184,7 @@ are repository-relative (worktree root).
 
 ## Phase 8: Polish & Cross-Cutting Concerns
 
-- [ ] T053 [P] Document new feature flags, runtime model, and broker/proxy ops in `README.md` and `HANDOFF.md`
+- [X] T053 [P] Document new feature flags, runtime model, and broker/proxy ops in `README.md` and `HANDOFF.md`
 - [ ] T054 Review audit trails and observability completeness across all new `runtime_events` types
 - [ ] T055 Regression gate: run full `npm test` with all flags OFF and confirm legacy paths pass unchanged (SC-006)
 - [ ] T060 Add a threshold-measurement harness enforcing SC-001 (≥99% of N in-flight delegations resume, zero silent loss) and SC-004 (provisioning p95 ≤5s / p99 ≤10s) in `backend/tests/perf.restart-provision.test.ts`; failing thresholds fail the gate

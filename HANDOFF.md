@@ -2,7 +2,45 @@
 
 ## Current direction
 
-**Spec 017 — Expand Agent Canvas UX** is the active work stream. The canvas is being rebuilt as a room-centric spatial workspace. The rooms/chat sidebar view remains as the primary detail view; the circuit canvas is the spatial overview.
+**Spec 024 — Managed-Agent Runtime Alignment** is the active work stream in this branch.
+
+Primary goals:
+- recover in-flight delegations on restart
+- broker env-only credentials instead of writing secrets into runtime config
+- route Prime and runtime LLM calls through the control-plane proxy
+- prepare lazy runtime leasing
+- prepare runtime-container / launcher containment
+- expose a unified session timeline with bounded reads
+
+## Spec 024 progress summary
+
+### Landed in code
+- feature flags wired: `RESUME_ON_RESTART`, `LAZY_PROVISIONING`, `CREDENTIAL_BROKER`, `EGRESS_SANDBOX`
+- `runtime_events` session/seq migration scaffolding
+- `SessionStore` base implementation
+- recovery path for durable/ephemeral restart handling
+- control-plane LLM proxy route and backend implementation
+- Prime LLM proxy client + proxy-based Prime router path
+- brokered runtime secret injection for control-plane and MCP secrets
+- no-disk secret coverage test for brokered config generation
+- egress allowlist default derivation + approval-request path
+- Gitea scoped token issuance support
+- risky credential badge surfaced in the agent UI
+
+### Still open / incomplete
+- runtime-container / launcher image and socket transport (`T061`, `T062`, `T066`)
+- real containment enforcement (`T038`, `T039`, `T040`) and associated isolation tests (`T033`, `T034`, `T035`, `T065`)
+- runtime lease / lazy provisioning implementation (`T041`–`T047`)
+- merged/bounded session timeline completion (`T048`–`T052`)
+- final docs / regression / perf / cleanup pass (`T053`–`T057`, `T060`)
+
+### Current environment blocker
+- DB-backed session-timeline tests are currently blocked in this shell because the disposable Postgres container reports healthy but the published host port still refuses TCP connections.
+- Before resuming US4 DB-backed validation, re-check the disposable DB path and confirm `TEST_DATABASE_URL` connectivity from the host shell.
+
+## Previous direction
+
+**Spec 017 — Expand Agent Canvas UX** rebuilt the canvas as a room-centric spatial workspace. The rooms/chat sidebar view remains the primary detail view; the circuit canvas is the spatial overview.
 
 The canvas UX is now:
 - **Room-centric**: only Room cards appear as top-level entities on the canvas. Prime is not a standalone node.
