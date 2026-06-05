@@ -124,15 +124,15 @@ are repository-relative (worktree root).
 
 ### Implementation for User Story 5
 
-- [ ] T061 [US5] Build the single configurable runtime image (`runtime-image/Dockerfile`) bundling operator-selected runtimes + per-process sandbox tooling, and the launcher service (`RuntimeLauncher`: `startAgent`/`stopAgent`/`health`, UID-isolated spawn, bearer-token auth) in `runtime-image/launcher/` per contracts/launcher.md (FR-023, FR-024, FR-025)
-- [ ] T062 [US5] Switch the harness transport to **ACP over an authenticated TCP socket** to the launcher (backend connects out; bearer token) instead of spawning a child, with the HTTP adapter as the per-family fallback, behind `EGRESS_SANDBOX`, in `backend/src/acp/client.ts`, `backend/src/fleet-executor/acp-harness.ts`, and `backend/src/opencode/process-manager.ts` (FR-023). MUST preserve the US1 resume path (`wake`/`session/load`) across the transport swap — re-run T013–T015 over the socket transport.
+- [X] T061 [US5] Build the single configurable runtime image (`runtime-image/Dockerfile`) bundling operator-selected runtimes + per-process sandbox tooling, and the launcher service (`RuntimeLauncher`: `startAgent`/`stopAgent`/`health`, UID-isolated spawn, bearer-token auth) in `runtime-image/launcher/` per contracts/launcher.md (FR-023, FR-024, FR-025)
+- [X] T062 [US5] Switch the harness transport to **ACP over an authenticated TCP socket** to the launcher (backend connects out; bearer token) instead of spawning a child, with the HTTP adapter as the per-family fallback, behind `EGRESS_SANDBOX`, in `backend/src/acp/client.ts`, `backend/src/fleet-executor/acp-harness.ts`, and `backend/src/opencode/process-manager.ts` (FR-023). MUST preserve the US1 resume path (`wake`/`session/load`) across the transport swap — re-run T013–T015 over the socket transport.
 - [ ] T066 [US5] Relocate ACP client-fs handling: serve `fs/read_text_file`/`fs/write_text_file` in the launcher against the Landlock-scoped workspace and remove the backend from the agent's fs path, in `runtime-image/launcher/` and `backend/src/acp/fs-handler.ts` (FR-025)
 
 - [X] T036 [P] [US5] Implement `EgressAllowlist` (`list`/`deriveDefaults` from capabilities+MCP assignments/`requestHost`→approval queue, default-deny) over `egress_allowlist` in `backend/src/proxy/egress.ts` per contracts/egress-allowlist.md
 - [X] T037 [US5] Implement the control-plane LLM proxy (validate broker proxy token, attach provider key server-side, forward/stream, emit `llm.proxied`) in `backend/src/proxy/llm-proxy.ts` per contracts/llm-proxy.md
-- [ ] T038 [US5] Implement per-process isolation for each agent inside the runtime container — distinct UID, scoped working-dir via Landlock/mount namespace (no credential/other-workspace access), `no_new_privs` + seccomp — in the launcher (`runtime-image/launcher/`) and wired from `backend/src/opencode/process-manager.ts` behind `EGRESS_SANDBOX`; optionally run the runtime container itself under `runsc` (compose-level)
-- [ ] T039 [US5] Enforce per-UID default-deny egress (no DNS / no raw outbound TCP; only route = the control-plane proxy) and block direct-to-provider egress, in `runtime-image/launcher/` + `backend/src/proxy/egress.ts`
-- [ ] T040 [US5] Emit `egress.denied` / `fs.denied` on blocked attempts in the sandbox/proxy enforcement path in `backend/src/proxy/egress.ts`
+- [X] T038 [US5] Implement per-process isolation for each agent inside the runtime container — distinct UID, scoped working-dir via Landlock/mount namespace (no credential/other-workspace access), `no_new_privs` + seccomp — in the launcher (`runtime-image/launcher/`) and wired from `backend/src/opencode/process-manager.ts` behind `EGRESS_SANDBOX`; optionally run the runtime container itself under `runsc` (compose-level)
+- [X] T039 [US5] Enforce per-UID default-deny egress (no DNS / no raw outbound TCP; only route = the control-plane proxy) and block direct-to-provider egress, in `runtime-image/launcher/` + `backend/src/proxy/egress.ts`
+- [X] T040 [US5] Emit `egress.denied` / `fs.denied` on blocked attempts in the sandbox/proxy enforcement path in `backend/src/proxy/egress.ts`
 
 **Checkpoint**: US1, US2, US5 independently functional — secrets brokered AND containment enforced
 
@@ -186,8 +186,8 @@ are repository-relative (worktree root).
 
 - [X] T053 [P] Document new feature flags, runtime model, and broker/proxy ops in `README.md` and `HANDOFF.md`
 - [X] T054 Review audit trails and observability completeness across all new `runtime_events` types
-- [ ] T055 Regression gate: run full `npm test` with all flags OFF and confirm legacy paths pass unchanged (SC-006)
-- [ ] T060 Add a threshold-measurement harness enforcing SC-001 (≥99% of N in-flight delegations resume, zero silent loss) and SC-004 (provisioning p95 ≤5s / p99 ≤10s) in `backend/tests/perf.restart-provision.test.ts`; failing thresholds fail the gate
+- [X] T055 Regression gate: run full `npm test` with all flags OFF and confirm legacy paths pass unchanged (SC-006)
+- [X] T060 Add a threshold-measurement harness enforcing SC-001 (≥99% of N in-flight delegations resume, zero silent loss) and SC-004 (provisioning p95 ≤5s / p99 ≤10s) in `backend/tests/perf.restart-provision.test.ts`; failing thresholds fail the gate
 - [ ] T056 Run `specs/024-managed-agent-runtime/quickstart.md` validation across all stories
 - [ ] T057 After validation, remove the legacy fail-and-requeue and eager-boot paths and retire their flags (FR-017 cleanup) in `backend/src/opencode/process-manager.ts`
 

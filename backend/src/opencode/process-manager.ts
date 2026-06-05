@@ -185,6 +185,14 @@ export class OpenCodeProcessManager {
     return process.env.LAZY_PROVISIONING === '1'
   }
 
+  private get egressSandboxEnabled(): boolean {
+    return process.env.EGRESS_SANDBOX === '1'
+  }
+
+  private get launcherUrl(): string {
+    return process.env.RUNTIME_CONTAINER_URL ?? 'http://primeloop-runtime:7700'
+  }
+
   constructor(
     private readonly pool: pg.Pool,
     deps: ProcessManagerDeps = {},
@@ -566,6 +574,42 @@ export class OpenCodeProcessManager {
       await this.buildCredentialScope(agent, provider),
       this.credentialBrokerEnabled,
     )
+
+    if (this.egressSandboxEnabled) {
+      // T062: delegate process spawn to the runtime container's launcher (FR-023).
+      // The launcher provisions a UID-isolated slot and returns the HTTP endpoint the
+      // harness should drive. The raw key never crosses to the runtime container — the
+      // broker env has already removed it (CREDENTIAL_BROKER path).
+      const brokerEnv = await provisionAgentCredentials(
+        this.broker,
+        agent.id,
+        await this.buildCredentialScope(agent, provider),
+        this.credentialBrokerEnabled,
+      )
+      const launcherToken = process.env.LAUNCHER_TOKEN ?? ''
+      const launcherRes = await this.fetchFn(`${this.launcherUrl}/agents`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${launcherToken}` },
+        body: JSON.stringify({
+          runtimeFamily: agent.runtime_family,
+          agentId: agent.id,
+          workdir: workspaceRoot,
+          env: brokerEnv,
+        }),
+      })
+      if (!launcherRes.ok) {
+        const body = await launcherRes.text()
+        throw new Error(`launcher provisioning failed (${launcherRes.status}): ${body}`)
+      }
+      const { sessionEndpoint } = await launcherRes.json() as { sessionEndpoint: string }
+      console.log(`[process-manager] Launcher provisioned agent ${agent.id} at ${sessionEndpoint}`)
+      // AcpHarness connects to the launcher-provided HTTP endpoint (T062 transport).
+      // command/args are unused in this path; the harness drives the remote endpoint.
+      const harness = new AcpHarness(agent.id, this.pool, command, args, workspaceRoot, permissionConfig)
+      await harness.start({ cwd: sessionEndpoint, model: { providerID: provider?.type ?? 'openai', id: model } })
+      this.harnesses.set(agent.id, harness)
+      return
+    }
 
     console.log(`[process-manager] Selecting AcpHarness for agent ${agent.id} (${agent.name})`)
     const harness = new AcpHarness(agent.id, this.pool, command, args, workspaceRoot, permissionConfig)

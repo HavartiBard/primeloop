@@ -3,6 +3,8 @@
 
 import { Pool } from 'pg'
 import { ensurePendingApproval } from '../approvals.js'
+import { insertRuntimeEvent } from '../runtime.js'
+import { RuntimeEventTypes } from '../runtime-event-types.js'
 import { EgressGuard } from './types.js'
 
 function hostFromUrl(value: string | null | undefined): string | null {
@@ -23,13 +25,21 @@ export class EgressAllowlist implements EgressGuard {
   }
 
   async isAllowed(agentId: string, host: string): Promise<boolean> {
-    // Default-deny: only hosts in egress_allowlist for the agent are permitted
+    // Default-deny: only hosts in egress_allowlist for the agent are permitted (FR-019).
     const { rows } = await this.pool.query(
-      `SELECT 1 FROM egress_allowlist 
-       WHERE agent_id = $1 AND host = $2`,
+      `SELECT 1 FROM egress_allowlist WHERE agent_id = $1 AND host = $2`,
       [agentId, host]
     )
-    return rows.length > 0
+    const allowed = rows.length > 0
+    if (!allowed) {
+      // Emit an observable event for every denied attempt (FR-021, SC-007).
+      await insertRuntimeEvent(this.pool, {
+        event_type: RuntimeEventTypes.EGRESS_DENIED,
+        actor: 'egress-allowlist',
+        payload: { agent_id: agentId, host, reason: 'not_in_allowlist' },
+      })
+    }
+    return allowed
   }
 
   async list(agentId: string): Promise<string[]> {
