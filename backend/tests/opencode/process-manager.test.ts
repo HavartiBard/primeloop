@@ -158,6 +158,81 @@ describe('OpenCodeProcessManager', () => {
     expect(query).toHaveBeenCalledWith(expect.stringContaining('JOIN agent_mcp_assignments ama'), ['agent-1'])
   })
 
+  it('keeps brokered control-plane and MCP secrets out of opencode.json when CREDENTIAL_BROKER is enabled', async () => {
+    const previousFlag = process.env.CREDENTIAL_BROKER
+    process.env.CREDENTIAL_BROKER = '1'
+
+    try {
+      const worktreePath = path.join(rootDir, 'agents', 'builder-brokered')
+      const child = { kill: vi.fn().mockReturnValue(true), on: vi.fn(), stdout: null, stderr: null }
+      const spawnFn = vi.fn().mockReturnValue(child)
+      const fetchFn = vi.fn().mockResolvedValue(new Response(JSON.stringify({ status: 'ok' }), { status: 200 }))
+      const execFileFn = vi.fn().mockResolvedValue({ stdout: '', stderr: '' })
+      const query = vi.fn(async (sql: string, params?: unknown[]) => {
+        if (isLifecycleUpdate(sql) || isRuntimeEventInsert(sql)) return { rows: [], rowCount: 1 }
+        if (sql.startsWith('SELECT * FROM agents WHERE id = $1')) {
+          return { rows: [createAgent({ worktree_path: worktreePath, state: 'idle' })] }
+        }
+        if (sql.startsWith('SELECT * FROM providers')) {
+          return { rows: [{ id: 'provider-1', type: 'llm', model: 'anthropic/claude-sonnet-4-5', base_url: 'https://proxy.example.com', api_key: 'encrypted' }] }
+        }
+        if (sql.startsWith('SELECT * FROM agent_runtime_configs WHERE agent_id = $1')) return { rows: [] }
+        if (sql.startsWith('INSERT INTO tool_grants')) {
+          return {
+            rows: [{
+              id: 'grant-broker', agent_id: 'agent-1', delegation_id: null, work_item_id: null, capability_profile_id: null,
+              routing_capability: 'implementation', granted_primitives: [], granted_capability_bundles: [],
+              selected_provider_adapters: [{ kind: 'http', ref: 'gitea' }], exclusion_reasons: [], task_scope: {}, approval_state: {},
+              environment_context: {}, revocation_state: 'active', revoked_at: null,
+              created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+            }],
+          }
+        }
+        if (sql.includes('FROM mcp_servers ms')) {
+          return { rows: [{ id: 'mcp-1', name: 'gitea', description: 'Pull requests and issues', type: 'http', url: 'http://gitea:3000/mcp', env_vars: { GITEA_TOKEN: 'secret' } }] }
+        }
+        if (sql.startsWith('SELECT api_key FROM providers')) return { rows: [{ api_key: null }] }
+        if (sql.startsWith('UPDATE brokered_credentials SET status = \'revoked\'')) return { rows: [] }
+        if (sql.startsWith('INSERT INTO brokered_credentials')) {
+          const kind = params?.[1]
+          if (kind === 'provider_proxy_token') return { rows: [{ id: 'cred-proxy', expires_at: new Date().toISOString() }] }
+          if (kind === 'launcher_token') return { rows: [{ id: 'cred-launcher', expires_at: new Date().toISOString() }] }
+          return { rows: [{ id: 'cred-secret', expires_at: new Date().toISOString() }] }
+        }
+        throw new Error(`unexpected query: ${sql}`)
+      })
+      const pool = { query } as unknown as pg.Pool
+
+      const manager = new OpenCodeProcessManager(pool, {
+        repoRoot: path.join(rootDir, 'repo'),
+        agentsRoot: path.join(rootDir, 'agents'),
+        controlPlaneUrl: 'http://localhost:3100',
+        spawnFn: spawnFn as any,
+        fetchFn: fetchFn as any,
+        execFileFn: execFileFn as any,
+        sleepFn: async () => {},
+      })
+
+      await manager.syncAgent(createAgent({ worktree_path: worktreePath }))
+
+      expect(spawnFn).toHaveBeenCalledWith('opencode', ['serve', '--port', '4200'], expect.objectContaining({
+        cwd: worktreePath,
+        env: expect.objectContaining({
+          CONTROL_PLANE_AGENT_TOKEN: expect.any(String),
+          GITEA_TOKEN: 'secret',
+        }),
+      }))
+
+      const opencodeConfig = await readFile(path.join(worktreePath, 'opencode.json'), 'utf8')
+      expect(opencodeConfig).not.toContain('CONTROL_PLANE_AGENT_TOKEN')
+      expect(opencodeConfig).not.toContain('GITEA_TOKEN')
+      expect(opencodeConfig).not.toContain('secret')
+    } finally {
+      if (previousFlag === undefined) delete process.env.CREDENTIAL_BROKER
+      else process.env.CREDENTIAL_BROKER = previousFlag
+    }
+  })
+
   it('allocates a port and worktree path when agent metadata is missing', async () => {
     const updatedAgent = createAgent({
       endpoint: 'http://127.0.0.1:4201',

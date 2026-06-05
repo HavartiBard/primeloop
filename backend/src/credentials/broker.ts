@@ -32,7 +32,23 @@ export class CredentialBroker {
   async issueForAgent(agentId: string, scope: AgentScope): Promise<IssuedCredential[]> {
     const issued: IssuedCredential[] = []
     // Every agent reaches providers via the control-plane proxy, never the raw key (FR-008).
-    issued.push(await this.issue(agentId, { kind: 'provider_proxy_token', autoRotatable: true }))
+    issued.push(await this.issue(agentId, {
+      kind: 'provider_proxy_token',
+      autoRotatable: true,
+      scope: {
+        provider_ids: scope.providerIds ?? [],
+        provider_types: scope.providerTypes ?? [],
+      },
+    }))
+
+    if (scope.controlPlaneTokenEnvName) {
+      issued.push(await this.issue(agentId, {
+        kind: 'launcher_token',
+        envName: scope.controlPlaneTokenEnvName,
+        autoRotatable: true,
+      }))
+    }
+
     // Operator-defined named secrets are injected as-is; they cannot be auto-rotated.
     for (const ns of scope.namedSecrets ?? []) {
       issued.push(

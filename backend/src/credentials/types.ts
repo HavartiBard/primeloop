@@ -13,6 +13,9 @@ export interface NamedSecretSpec {
 
 export interface AgentScope {
   namedSecrets?: NamedSecretSpec[]
+  controlPlaneTokenEnvName?: string
+  providerIds?: string[]
+  providerTypes?: string[]
   [key: string]: unknown
 }
 

@@ -97,12 +97,12 @@ are repository-relative (worktree root).
 - [X] T026 [P] [US2] Define `CredentialBroker` types (`IssuedCredential`, `CredentialKind`, scope) in `backend/src/credentials/types.ts`
 - [X] T027 [US2] Implement `issueForAgent`/`rotate`/`revoke`/`revokeAllForAgent` over the encrypted store (`crypto.ts`/`SECRET_ENCRYPTION_KEY`) + `brokered_credentials` in `backend/src/credentials/broker.ts` per contracts/credential-broker.md
 - [X] T028 [US2] Add the `node-cron` rotation job (≤24h TTL) and risky-credential flagging in `backend/src/credentials/broker.ts`
-- [ ] T029 [US2] Inject broker env vars at spawn and REMOVE all secret/key writes from `writeConfigFiles`/config (env-only, FR-009) in `backend/src/opencode/process-manager.ts`
-- [ ] T030 [US2] Replace the long-lived control-plane token with a broker-issued scoped token in `backend/src/opencode/process-manager.ts` and validate it in `backend/src/mcp/server.ts`
+- [X] T029 [US2] Inject broker env vars at spawn and REMOVE all secret/key writes from `writeConfigFiles`/config (env-only, FR-009) in `backend/src/opencode/process-manager.ts`
+- [X] T030 [US2] Replace the long-lived control-plane token with a broker-issued scoped token in `backend/src/opencode/process-manager.ts` and validate it in `backend/src/mcp/server.ts`
 - [X] T031 [US2] Emit `credential.issued|rotated|revoked|risk_flagged` events in `backend/src/credentials/broker.ts`
 - [ ] T032 [US2] Add a risky-credential badge using existing status components in `web/src/components/` (agent/credential surface), handling the no-risk (empty) and load/error states consistently
 - [ ] T058 [US2] Issue Gitea **scoped/derived** tokens (repo/capability-scoped, distinct from named-secret pass-through) in `backend/src/credentials/broker.ts` (FR-011)
-- [ ] T059 [US2] Route assigned MCP-server secrets through the broker and stop writing their `env_vars` into `opencode.json`/config (env-only injection) in `backend/src/opencode/process-manager.ts` (FR-009, FR-011) — covered by the no-disk scan in T023
+- [X] T059 [US2] Route assigned MCP-server secrets through the broker and stop writing their `env_vars` into `opencode.json`/config (env-only injection) in `backend/src/opencode/process-manager.ts` (FR-009, FR-011) — covered by the no-disk scan in T023
 - [X] T063 [US2] Route Prime's LLM calls through the control-plane proxy (no raw provider key) in `backend/src/prime-agent/llm-router.ts`, and add a test asserting the proxy is the **sole** raw-key holder and Prime stays within its enumerated action set + approval gates in `backend/tests/prime-proxy.test.ts` (FR-026, FR-027, SC-008)
 
 **Checkpoint**: US1 + US2 both independently functional
@@ -128,7 +128,7 @@ are repository-relative (worktree root).
 - [ ] T062 [US5] Switch the harness transport to **ACP over an authenticated TCP socket** to the launcher (backend connects out; bearer token) instead of spawning a child, with the HTTP adapter as the per-family fallback, behind `EGRESS_SANDBOX`, in `backend/src/acp/client.ts`, `backend/src/fleet-executor/acp-harness.ts`, and `backend/src/opencode/process-manager.ts` (FR-023). MUST preserve the US1 resume path (`wake`/`session/load`) across the transport swap — re-run T013–T015 over the socket transport.
 - [ ] T066 [US5] Relocate ACP client-fs handling: serve `fs/read_text_file`/`fs/write_text_file` in the launcher against the Landlock-scoped workspace and remove the backend from the agent's fs path, in `runtime-image/launcher/` and `backend/src/acp/fs-handler.ts` (FR-025)
 
-- [ ] T036 [P] [US5] Implement `EgressAllowlist` (`list`/`deriveDefaults` from capabilities+MCP assignments/`requestHost`→approval queue, default-deny) over `egress_allowlist` in `backend/src/proxy/egress.ts` per contracts/egress-allowlist.md
+- [X] T036 [P] [US5] Implement `EgressAllowlist` (`list`/`deriveDefaults` from capabilities+MCP assignments/`requestHost`→approval queue, default-deny) over `egress_allowlist` in `backend/src/proxy/egress.ts` per contracts/egress-allowlist.md
 - [X] T037 [US5] Implement the control-plane LLM proxy (validate broker proxy token, attach provider key server-side, forward/stream, emit `llm.proxied`) in `backend/src/proxy/llm-proxy.ts` per contracts/llm-proxy.md
 - [ ] T038 [US5] Implement per-process isolation for each agent inside the runtime container — distinct UID, scoped working-dir via Landlock/mount namespace (no credential/other-workspace access), `no_new_privs` + seccomp — in the launcher (`runtime-image/launcher/`) and wired from `backend/src/opencode/process-manager.ts` behind `EGRESS_SANDBOX`; optionally run the runtime container itself under `runsc` (compose-level)
 - [ ] T039 [US5] Enforce per-UID default-deny egress (no DNS / no raw outbound TCP; only route = the control-plane proxy) and block direct-to-provider egress, in `runtime-image/launcher/` + `backend/src/proxy/egress.ts`

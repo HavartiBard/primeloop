@@ -315,7 +315,7 @@ export class OpenCodeProcessManager {
     const worktreePath = agent.worktree_path
     if (!worktreePath) throw new Error(`worktree_path missing for agent ${agent.name}`)
     const assignedServers = await this.listAssignedMcpServers(agent.id)
-    const controlPlaneToken = await getOrCreateAgentToken(this.pool, agent.id)
+    const controlPlaneToken = this.credentialBrokerEnabled ? null : await getOrCreateAgentToken(this.pool, agent.id)
     const model = await this.resolveModel(agent)
     const fallbackProviderAdapters = assignedServers.map((server) => ({
       kind: server.type,
@@ -357,7 +357,7 @@ export class OpenCodeProcessManager {
           args: ['/app/backend/dist/mcp/server.js'],
           env: {
             CONTROL_PLANE_URL: this.controlPlaneUrl,
-            CONTROL_PLANE_AGENT_TOKEN: controlPlaneToken,
+            ...(controlPlaneToken ? { CONTROL_PLANE_AGENT_TOKEN: controlPlaneToken } : {}),
           },
         },
         soullayer: {
@@ -374,13 +374,13 @@ export class OpenCodeProcessManager {
             ? {
                 type: 'http',
                 url: server.url,
-                env: normalizeEnvVars(server.env_vars),
+                ...(this.credentialBrokerEnabled ? {} : { env: normalizeEnvVars(server.env_vars) }),
               }
             : {
                 type: 'stdio',
                 command: server.command,
                 args: server.args ?? [],
-                env: normalizeEnvVars(server.env_vars),
+                ...(this.credentialBrokerEnabled ? {} : { env: normalizeEnvVars(server.env_vars) }),
               },
         ])),
       },
@@ -404,6 +404,20 @@ export class OpenCodeProcessManager {
       [agentId],
     )
     return rows
+  }
+
+  private async buildCredentialScope(agent: RegistryAgent, provider: Provider | null): Promise<{ namedSecrets: Array<{ envName: string; value: string }>; controlPlaneTokenEnvName: string; providerIds: string[]; providerTypes: string[] }> {
+    const assignedServers = await this.listAssignedMcpServers(agent.id)
+    const namedSecrets = assignedServers.flatMap((server) =>
+      Object.entries(normalizeEnvVars(server.env_vars)).map(([envName, value]) => ({ envName, value }))
+    )
+
+    return {
+      namedSecrets,
+      controlPlaneTokenEnvName: 'CONTROL_PLANE_AGENT_TOKEN',
+      providerIds: provider ? [provider.id] : [],
+      providerTypes: provider ? [provider.type] : [],
+    }
   }
 
   private renderToolsMarkdown(controlPlaneTools: McpToolDefinition[], assignedServers: MCPServerRecord[]): string {
@@ -442,18 +456,25 @@ export class OpenCodeProcessManager {
     const provider = await this.resolveProvider(agent)
     const providerKey = provider ? await getProviderApiKey(this.pool, provider.id) : null
     const providerEnv = providerEnvName(provider)
-    const controlPlaneToken = await getOrCreateAgentToken(this.pool, agent.id)
 
     // Behind CREDENTIAL_BROKER: issue brokered, env-only credentials for this agent and
     // inject them alongside the existing config (FR-007/009). No-op when the flag is off.
-    const brokerEnv = await provisionAgentCredentials(this.broker, agent.id, {}, this.credentialBrokerEnabled)
+    const brokerEnv = await provisionAgentCredentials(
+      this.broker,
+      agent.id,
+      await this.buildCredentialScope(agent, provider),
+      this.credentialBrokerEnabled,
+    )
+    const controlPlaneToken = this.credentialBrokerEnabled
+      ? brokerEnv.CONTROL_PLANE_AGENT_TOKEN
+      : await getOrCreateAgentToken(this.pool, agent.id)
 
     const env = {
       ...process.env,
       ...(providerEnv && providerKey ? { [providerEnv]: providerKey } : {}),
       ...(provider?.type === 'llm' && provider.base_url ? { OPENAI_BASE_URL: provider.base_url } : {}),
       CONTROL_PLANE_URL: this.controlPlaneUrl,
-      CONTROL_PLANE_AGENT_TOKEN: controlPlaneToken,
+      ...(controlPlaneToken ? { CONTROL_PLANE_AGENT_TOKEN: controlPlaneToken } : {}),
       POSTGRES_URL: process.env.DATABASE_URL ?? '',
       SOULLAYER_AGENT_ID: agent.id,
       ...brokerEnv,
@@ -478,7 +499,12 @@ export class OpenCodeProcessManager {
     // Behind CREDENTIAL_BROKER: issue brokered credentials for this agent's lifecycle
     // (revoked at teardown). No-op when the flag is off. (ACP env injection lands with
     // the runtime-container launcher, T062.)
-    await provisionAgentCredentials(this.broker, agent.id, {}, this.credentialBrokerEnabled)
+    await provisionAgentCredentials(
+      this.broker,
+      agent.id,
+      await this.buildCredentialScope(agent, provider),
+      this.credentialBrokerEnabled,
+    )
 
     console.log(`[process-manager] Selecting AcpHarness for agent ${agent.id} (${agent.name})`)
     const harness = new AcpHarness(agent.id, this.pool, command, args, workspaceRoot, permissionConfig)
@@ -502,15 +528,24 @@ export class OpenCodeProcessManager {
     const provider = await this.resolveProvider(refreshed)
     const providerKey = provider ? await getProviderApiKey(this.pool, provider.id) : null
     const providerEnv = providerEnvName(provider)
-    const controlPlaneToken = await getOrCreateAgentToken(this.pool, refreshed.id)
+    const brokerEnv = await provisionAgentCredentials(
+      this.broker,
+      refreshed.id,
+      await this.buildCredentialScope(refreshed, provider),
+      this.credentialBrokerEnabled,
+    )
+    const controlPlaneToken = this.credentialBrokerEnabled
+      ? brokerEnv.CONTROL_PLANE_AGENT_TOKEN
+      : await getOrCreateAgentToken(this.pool, refreshed.id)
     const env = {
       ...process.env,
       ...(providerEnv && providerKey ? { [providerEnv]: providerKey } : {}),
       ...(provider?.type === 'llm' && provider.base_url ? { OPENAI_BASE_URL: provider.base_url } : {}),
       CONTROL_PLANE_URL: this.controlPlaneUrl,
-      CONTROL_PLANE_AGENT_TOKEN: controlPlaneToken,
+      ...(controlPlaneToken ? { CONTROL_PLANE_AGENT_TOKEN: controlPlaneToken } : {}),
       POSTGRES_URL: process.env.DATABASE_URL ?? '',
       SOULLAYER_AGENT_ID: refreshed.id,
+      ...brokerEnv,
     }
 
     await this.launchManagedProcess(refreshed, refreshed.local_port, refreshed.worktree_path, env, restartAttempts)

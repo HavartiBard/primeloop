@@ -1,6 +1,7 @@
 import { createInterface } from 'node:readline'
 import { createPool } from '../db.js'
 import { authenticateAgentToken, callControlPlaneTool, listControlPlaneTools } from './service.js'
+import { CredentialBroker } from '../credentials/broker.js'
 
 type JsonRpcId = string | number | null
 
@@ -23,6 +24,22 @@ function parseAgentToken(params: Record<string, unknown> | undefined): string {
     ?? (typeof params?.['_token'] === 'string' ? params['_token'] : '')
   if (!token) throw new Error('CONTROL_PLANE_AGENT_TOKEN is required')
   return token
+}
+
+async function authenticateControlPlaneToken(pool: ReturnType<typeof createPool>, token: string) {
+  const broker = new CredentialBroker(pool)
+  const brokered = await broker.validate(token)
+  if (brokered?.kind === 'launcher_token') {
+    const { rows } = await pool.query(
+      `SELECT * FROM agents WHERE id = $1 LIMIT 1`,
+      [brokered.agent_id],
+    )
+    if (rows[0]) {
+      return { agent: rows[0], token }
+    }
+  }
+
+  return authenticateAgentToken(pool, token)
 }
 
 async function handleRequest(poolConnectionString: string, request: JsonRpcRequest): Promise<void> {
@@ -60,7 +77,7 @@ async function handleRequest(poolConnectionString: string, request: JsonRpcReque
   const pool = createPool(poolConnectionString)
   try {
     const token = parseAgentToken(params)
-    const auth = await authenticateAgentToken(pool, token)
+    const auth = await authenticateControlPlaneToken(pool, token)
     if (!auth) {
       respond(id, undefined, { code: -32001, message: 'Unauthorized agent token' })
       return
