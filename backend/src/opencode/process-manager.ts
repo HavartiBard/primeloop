@@ -15,6 +15,7 @@ import {
   updateAgent,
 } from '../registry.js'
 import { resolveToolGrant } from '../tool-grants.js'
+import { isOpenAiCompatibleProviderType } from '../local-llm.js'
 import { bootstrapDurableStaff } from '../durable-staff.js'
 
 import { AcpHarness } from '../fleet-executor/acp-harness.js'
@@ -154,11 +155,10 @@ function normalizeEnvVars(value: JsonRecord | null | undefined): Record<string, 
 function providerEnvName(provider: Provider | null): string | null {
   if (!provider) return null
   if (provider.type === 'anthropic') return 'ANTHROPIC_API_KEY'
-  if (provider.type === 'openai' || provider.type === 'codex') return 'OPENAI_API_KEY'
   if (provider.type === 'llm' && typeof provider.model === 'string' && provider.model.startsWith('anthropic/')) {
     return 'ANTHROPIC_API_KEY'
   }
-  if (provider.type === 'llm') return 'OPENAI_API_KEY'
+  if (isOpenAiCompatibleProviderType(provider.type)) return 'OPENAI_API_KEY'
   return null
 }
 
@@ -541,7 +541,7 @@ export class OpenCodeProcessManager {
     const env = {
       ...process.env,
       ...(providerEnv && providerKey ? { [providerEnv]: providerKey } : {}),
-      ...(provider?.type === 'llm' && provider.base_url ? { OPENAI_BASE_URL: provider.base_url } : {}),
+      ...(provider?.base_url && isOpenAiCompatibleProviderType(provider.type) ? { OPENAI_BASE_URL: provider.base_url } : {}),
       CONTROL_PLANE_URL: this.controlPlaneUrl,
       ...(controlPlaneToken ? { CONTROL_PLANE_AGENT_TOKEN: controlPlaneToken } : {}),
       POSTGRES_URL: process.env.DATABASE_URL ?? '',
@@ -645,7 +645,7 @@ export class OpenCodeProcessManager {
     const env = {
       ...process.env,
       ...(providerEnv && providerKey ? { [providerEnv]: providerKey } : {}),
-      ...(provider?.type === 'llm' && provider.base_url ? { OPENAI_BASE_URL: provider.base_url } : {}),
+      ...(provider?.base_url && isOpenAiCompatibleProviderType(provider.type) ? { OPENAI_BASE_URL: provider.base_url } : {}),
       CONTROL_PLANE_URL: this.controlPlaneUrl,
       ...(controlPlaneToken ? { CONTROL_PLANE_AGENT_TOKEN: controlPlaneToken } : {}),
       POSTGRES_URL: process.env.DATABASE_URL ?? '',

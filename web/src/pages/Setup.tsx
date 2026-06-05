@@ -29,6 +29,7 @@ interface ProviderDraft {
   authError?: string
   authUrl?: string
   authCode?: string | null
+  bootstrapMeta?: ProviderBootstrapMeta
   active: boolean
 }
 
@@ -163,24 +164,47 @@ const DEFAULT_LOCAL_AI_PROVIDER_TYPE = DEFAULT_LOCAL_AI_BASE_URL
   ? (DEFAULT_LOCAL_AI_BASE_URL.endsWith('/v1') ? 'litellm' : 'ollama')
   : 'ollama'
 
-const INITIAL_STATE: WizardState = {
-  providers: [
-    { name: 'anthropic-main', type: 'anthropic', base_url: 'https://api.anthropic.com', model: 'claude-sonnet-4-6', active: false },
-    { name: 'openai-main', type: 'openai', base_url: 'https://api.openai.com/v1', model: 'gpt-4o', active: false },
-    {
-      name: 'local-main',
-      type: DEFAULT_LOCAL_AI_PROVIDER_TYPE,
-      base_url: DEFAULT_LOCAL_AI_BASE_URL || 'http://localhost:11434',
-      model: '',
-      active: true,
-    },
-  ],
-  routing: { planning: [], dispatching: [], discussion: [] },
-  profile:   INITIAL_PROFILE_STATE,
-  rules: { presets: [], custom: '' },
-  costControls: { monthlyTokenBudget: 0 },
-  workspace: { mode: 'local', root_path: '../.agent-workspace', remote_url: '', branch: 'main' },
-  pluginChoices: [],
+interface LocalProviderDefault {
+  name: string
+  type: string
+  base_url: string
+  model?: string
+  api_key_configured?: boolean
+  autodiscovered?: boolean
+  discovery_error?: string
+}
+
+interface ProviderBootstrapMeta {
+  autodiscovered?: boolean
+  discovery_error?: string
+}
+
+function buildInitialState(localProviderDefault?: LocalProviderDefault): WizardState {
+  return {
+    providers: [
+      { name: 'anthropic-main', type: 'anthropic', base_url: 'https://api.anthropic.com', model: 'claude-sonnet-4-6', active: false },
+      { name: 'openai-main', type: 'openai', base_url: 'https://api.openai.com/v1', model: 'gpt-4o', active: false },
+      {
+        name: 'local-main',
+        type: localProviderDefault?.type || DEFAULT_LOCAL_AI_PROVIDER_TYPE,
+        base_url: localProviderDefault?.base_url || DEFAULT_LOCAL_AI_BASE_URL || 'http://localhost:11434',
+        model: localProviderDefault?.model || '',
+        active: true,
+        ...((localProviderDefault?.discovery_error || localProviderDefault?.api_key_configured)
+          ? { connectError: localProviderDefault.discovery_error || 'Credentials will be supplied from server env if needed.' }
+          : {}),
+        ...((localProviderDefault?.autodiscovered || localProviderDefault?.discovery_error)
+          ? { bootstrapMeta: { autodiscovered: localProviderDefault.autodiscovered, discovery_error: localProviderDefault.discovery_error } }
+          : {}),
+      },
+    ],
+    routing: { planning: [], dispatching: [], discussion: [] },
+    profile:   INITIAL_PROFILE_STATE,
+    rules: { presets: [], custom: '' },
+    costControls: { monthlyTokenBudget: 0 },
+    workspace: { mode: 'local', root_path: '../.agent-workspace', remote_url: '', branch: 'main' },
+    pluginChoices: [],
+  }
 }
 
 const STEPS = ['Intro', 'Providers', 'Routing', 'Personality', 'Rules', 'Workspace', 'Plugins', 'Launch'] as const
@@ -553,9 +577,12 @@ function ProviderLogo({ draft }: { draft: ProviderDraft }) {
 }
 
 const LOCAL_TYPE_DEFAULTS: Record<string, string> = {
-  ollama:  DEFAULT_LOCAL_AI_PROVIDER_TYPE === 'ollama' && DEFAULT_LOCAL_AI_BASE_URL ? DEFAULT_LOCAL_AI_BASE_URL : 'http://localhost:11434',
+  ollama: DEFAULT_LOCAL_AI_PROVIDER_TYPE === 'ollama' && DEFAULT_LOCAL_AI_BASE_URL ? DEFAULT_LOCAL_AI_BASE_URL : 'http://localhost:11434',
+  llamacpp: DEFAULT_LOCAL_AI_PROVIDER_TYPE === 'llamacpp' && DEFAULT_LOCAL_AI_BASE_URL ? DEFAULT_LOCAL_AI_BASE_URL : 'http://localhost:8080',
   litellm: DEFAULT_LOCAL_AI_PROVIDER_TYPE === 'litellm' && DEFAULT_LOCAL_AI_BASE_URL ? DEFAULT_LOCAL_AI_BASE_URL : 'http://localhost:4000/v1',
-  openai:  'http://localhost:8000/v1',
+  vllm: DEFAULT_LOCAL_AI_PROVIDER_TYPE === 'vllm' && DEFAULT_LOCAL_AI_BASE_URL ? DEFAULT_LOCAL_AI_BASE_URL : 'http://localhost:8000/v1',
+  lmstudio: DEFAULT_LOCAL_AI_PROVIDER_TYPE === 'lmstudio' && DEFAULT_LOCAL_AI_BASE_URL ? DEFAULT_LOCAL_AI_BASE_URL : 'http://localhost:1234/v1',
+  'llm-proxy': DEFAULT_LOCAL_AI_PROVIDER_TYPE === 'llm-proxy' && DEFAULT_LOCAL_AI_BASE_URL ? DEFAULT_LOCAL_AI_BASE_URL : 'http://localhost:4000/v1',
 }
 
 // ─── Step components ────────────────────────────────────────────────────────
@@ -569,19 +596,31 @@ function ProviderCard({ draft, onChange, onToggle, onConnect, onDeviceAuth }: {
 }) {
   const [openAiAuthMode, setOpenAiAuthMode] = useState<'api' | 'subscription'>('api')
   const isLocalProvider = draft.name === 'local-main'
+  const localTypeLabel =
+    draft.type === 'ollama' ? 'Ollama'
+    : draft.type === 'llamacpp' ? 'llama.cpp'
+    : draft.type === 'lmstudio' ? 'LM Studio'
+    : draft.type === 'vllm' ? 'vLLM'
+    : draft.type === 'litellm' ? 'LiteLLM'
+    : draft.type === 'llm-proxy' ? 'LLM proxy'
+    : 'Local'
   const label =
     draft.name === 'anthropic-main' ? 'Anthropic'
     : draft.name === 'openai-main' ? 'OpenAI'
-    : 'Local'
+    : localTypeLabel
   const description =
     draft.name === 'anthropic-main' ? 'Direct Anthropic API key and model selection.'
     : draft.name === 'openai-main' ? 'OpenAI API key or ChatGPT device login.'
-    : 'Connect to Ollama or an OpenAI-compatible local endpoint.'
+    : draft.type === 'ollama' ? 'Connect to an Ollama server and load models from /api/tags.'
+    : draft.type === 'llamacpp' ? 'Connect to a llama.cpp server. PrimeLoop will try /v1/models and fall back to health checks.'
+    : draft.type === 'lmstudio' ? 'Connect to LM Studio using its OpenAI-compatible /v1 endpoint.'
+    : draft.type === 'vllm' ? 'Connect to a vLLM server using its OpenAI-compatible /v1 endpoint.'
+    : draft.type === 'litellm' ? 'Connect to LiteLLM or another OpenAI-compatible local gateway.'
+    : draft.type === 'llm-proxy' ? 'Connect to a local LLM proxy that exposes an OpenAI-compatible API.'
+    : 'Connect to a local model endpoint.'
   const hasModelOptions = (draft.modelOptions?.length ?? 0) > 0
-  const showLocalModelControl =
-    !isLocalProvider || draft.type !== 'ollama' && draft.type !== 'litellm'
-      ? true
-      : draft.connectStatus === 'connected' || Boolean(draft.model?.trim())
+  const isOpenAiCompatibleLocal = ['litellm', 'vllm', 'lmstudio', 'llm-proxy'].includes(draft.type)
+  const showLocalModelControl = !isLocalProvider || draft.connectStatus === 'connected' || Boolean(draft.model?.trim()) || draft.type !== 'ollama'
   const modelControl = (placeholder: string) => (
     <div>
       <label className={LABEL_CLS}>Model</label>
@@ -603,7 +642,7 @@ function ProviderCard({ draft, onChange, onToggle, onConnect, onDeviceAuth }: {
       )}
     </div>
   )
-  const canDiscover = draft.type === 'ollama' || draft.type === 'litellm' || Boolean(draft.api_key?.trim())
+  const canDiscover = ['ollama', 'llamacpp', 'litellm', 'vllm', 'lmstudio', 'llm-proxy'].includes(draft.type) || Boolean(draft.api_key?.trim())
 
   return (
     <div className={`rounded-lg border transition ${draft.active ? 'border-[var(--sel-bd)] bg-[var(--panel)]' : 'border-[var(--border-soft)] bg-[var(--panel-subtle)]'}`}>
@@ -611,7 +650,14 @@ function ProviderCard({ draft, onChange, onToggle, onConnect, onDeviceAuth }: {
         <button type="button" onClick={onToggle} className="flex flex-1 items-start gap-3 text-left cursor-pointer">
           <ProviderLogo draft={draft} />
           <div>
-            <div className="text-sm font-medium text-[var(--text)]">{label}</div>
+            <div className="flex items-center gap-2">
+              <div className="text-sm font-medium text-[var(--text)]">{label}</div>
+              {draft.bootstrapMeta?.autodiscovered && (
+                <span className="rounded border border-[var(--s-att-bd)] bg-[var(--s-att-bg)] px-2 py-0.5 text-[10px] text-[var(--s-att-tx)]">
+                  autodiscovered from LOCAL_LLM_HOST
+                </span>
+              )}
+            </div>
             <div className="mt-1 text-xs text-[var(--muted)]">{description}</div>
           </div>
         </button>
@@ -825,47 +871,29 @@ function ProviderCard({ draft, onChange, onToggle, onConnect, onDeviceAuth }: {
             {draft.authStatus === 'error' && <p className="text-xs text-[var(--s-blk-tx)]">{draft.authError}</p>}
           </>
         )}
-        {(draft.type === 'ollama' || draft.type === 'litellm') && (
+        {['ollama', 'llamacpp', 'litellm', 'vllm', 'lmstudio', 'llm-proxy'].includes(draft.type) && (
           <>
             {isLocalProvider && (
               <div>
-                <label className={LABEL_CLS}>Endpoint Type</label>
-                <div className="flex gap-2">
-                  <button
-                    type="button"
-                    onClick={() => onChange({
-                      type: 'ollama',
-                      base_url: Object.values(LOCAL_TYPE_DEFAULTS).includes(draft.base_url) ? LOCAL_TYPE_DEFAULTS.ollama : draft.base_url,
-                      modelOptions: [],
-                      connectStatus: 'idle',
-                      connectError: undefined,
-                    })}
-                    className={`px-3 py-1.5 text-xs rounded border transition ${
-                      draft.type === 'ollama'
-                        ? 'border-[#6ee7ff] bg-[#1f6feb] text-white'
-                        : 'border-[rgba(148,163,184,0.28)] bg-[#1f2937] text-[#e2e8f0] hover:bg-[#334155] hover:text-white'
-                    }`}
-                  >
-                    Ollama
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => onChange({
-                      type: 'litellm',
-                      base_url: Object.values(LOCAL_TYPE_DEFAULTS).includes(draft.base_url) ? LOCAL_TYPE_DEFAULTS.litellm : draft.base_url,
-                      modelOptions: [],
-                      connectStatus: 'idle',
-                      connectError: undefined,
-                    })}
-                    className={`px-3 py-1.5 text-xs rounded border transition ${
-                      draft.type === 'litellm'
-                        ? 'border-[#6ee7ff] bg-[#1f6feb] text-white'
-                        : 'border-[rgba(148,163,184,0.28)] bg-[#1f2937] text-[#e2e8f0] hover:bg-[#334155] hover:text-white'
-                    }`}
-                  >
-                    OpenAI-compatible
-                  </button>
-                </div>
+                <label className={LABEL_CLS}>Local provider type</label>
+                <select
+                  value={draft.type}
+                  onChange={(e) => onChange({
+                    type: e.target.value,
+                    base_url: Object.values(LOCAL_TYPE_DEFAULTS).includes(draft.base_url) ? LOCAL_TYPE_DEFAULTS[e.target.value] : draft.base_url,
+                    modelOptions: [],
+                    connectStatus: 'idle',
+                    connectError: undefined,
+                  })}
+                  className={INPUT_CLS}
+                >
+                  <option value="ollama">Ollama</option>
+                  <option value="llamacpp">llama.cpp</option>
+                  <option value="lmstudio">LM Studio</option>
+                  <option value="vllm">vLLM</option>
+                  <option value="litellm">LiteLLM / OpenAI-compatible</option>
+                  <option value="llm-proxy">LLM proxy</option>
+                </select>
               </div>
             )}
             <div>
@@ -873,31 +901,42 @@ function ProviderCard({ draft, onChange, onToggle, onConnect, onDeviceAuth }: {
               <input
                 value={draft.base_url}
                 onChange={(e) => onChange({ base_url: e.target.value })}
-                placeholder={draft.type === 'ollama' ? 'http://localhost:11434' : 'http://localhost:4000/v1'}
+                placeholder={LOCAL_TYPE_DEFAULTS[draft.type] || 'http://localhost:4000/v1'}
                 className={INPUT_CLS}
               />
               <p className="mt-1 text-xs text-[var(--muted)]">
                 {draft.type === 'ollama'
-                  ? 'Use the Ollama server root. PrimeLoop will query /api/tags when you connect.'
-                  : 'For GoudAI or any OpenAI-compatible local server, use the API base URL ending in /v1. PrimeLoop will query /models when you connect.'}
+                  ? 'Use the Ollama server root, usually http://localhost:11434. PrimeLoop will query /api/tags when you connect.'
+                  : draft.type === 'llamacpp'
+                    ? 'Use the llama.cpp server root, often http://localhost:8080. PrimeLoop will try /v1/models and fall back to a health check.'
+                    : draft.type === 'lmstudio'
+                      ? 'Use the LM Studio OpenAI-compatible base URL, usually http://localhost:1234/v1.'
+                      : draft.type === 'vllm'
+                        ? 'Use the vLLM OpenAI-compatible base URL, often http://localhost:8000/v1.'
+                        : draft.type === 'llm-proxy'
+                          ? 'Use your proxy base URL ending in /v1, for example http://localhost:4000/v1.'
+                          : 'Use the local OpenAI-compatible API base URL ending in /v1. PrimeLoop will query /v1/models when you connect.'}
               </p>
             </div>
-            {draft.type === 'litellm' && (
+            {(isOpenAiCompatibleLocal || draft.type === 'llamacpp') && (
               <div>
                 <label className={LABEL_CLS}>API Key</label>
                 <input
                   type="password"
                   value={draft.api_key || ''}
                   onChange={(e) => onChange({ api_key: e.target.value })}
-                  placeholder="optional"
+                  placeholder="optional bearer token"
                   className={INPUT_CLS}
                 />
+                {draft.bootstrapMeta?.autodiscovered && (
+                  <p className="mt-1 text-xs text-[var(--muted)]">This endpoint was prefilled from <span className="font-mono">LOCAL_LLM_HOST</span>. Adjust the URL if PrimeLoop guessed the wrong service.</p>
+                )}
               </div>
             )}
             {showLocalModelControl && modelControl(draft.type === 'ollama' ? 'llama3.2:latest' : 'provider/model')}
           </>
         )}
-        {(draft.type === 'ollama' || draft.type === 'litellm') && (
+        {['ollama', 'llamacpp', 'litellm', 'vllm', 'lmstudio', 'llm-proxy'].includes(draft.type) && (
           <div className="flex flex-wrap items-center gap-3 pt-1">
             <button
               type="button"
@@ -914,7 +953,7 @@ function ProviderCard({ draft, onChange, onToggle, onConnect, onDeviceAuth }: {
               <span className="text-xs text-[var(--s-blk-tx)]">{draft.connectError}</span>
             )}
             {!showLocalModelControl && (
-              <span className="text-xs text-[var(--muted)]">Connect first to load available models.</span>
+              <span className="text-xs text-[var(--muted)]">Connect first to discover models from the local server.</span>
             )}
           </div>
         )}
@@ -952,10 +991,18 @@ export function StepProviders({ state, onChange }: { state: WizardState; onChang
         base_url: provider.base_url,
         api_key: provider.api_key,
       })
-      if (result.error || result.models.length === 0) {
+      if (result.error) {
         updateProvider(name, {
           connectStatus: 'error',
-          connectError: result.error ?? 'No models found',
+          connectError: result.error,
+          modelOptions: [],
+        })
+        return
+      }
+      if (result.models.length === 0 && provider.type === 'ollama') {
+        updateProvider(name, {
+          connectStatus: 'error',
+          connectError: 'No models found',
           modelOptions: [],
         })
         return
@@ -964,7 +1011,7 @@ export function StepProviders({ state, onChange }: { state: WizardState; onChang
         active: true,
         connectStatus: 'connected',
         modelOptions: result.models,
-        model: provider.model || result.models[0],
+        model: provider.model || result.models[0] || provider.model,
       })
     } catch (err) {
       updateProvider(name, {
@@ -1983,10 +2030,10 @@ function StepPostLaunch({
 
 // ─── Main Setup component ─────────────────────────────────────────────────────
 
-export function Setup({ onSkip }: { onSkip?: () => void }) {
+export function Setup({ onSkip, initialSetupStatus }: { onSkip?: () => void; initialSetupStatus?: { local_provider_default?: LocalProviderDefault } }) {
   const queryClient = useQueryClient()
   const [step, setStep] = useState<Step>(0)
-  const [state, setState] = useState<WizardState>(INITIAL_STATE)
+  const [state, setState] = useState<WizardState>(() => buildInitialState(initialSetupStatus?.local_provider_default))
   const [submitting, setSubmitting] = useState(false)
   const [launchResult, setLaunchResult] = useState<{ threadId: string | null; teamPlan: import('../types').TeamPlan | null } | null>(null)
   const [confirming, setConfirming] = useState(false)
