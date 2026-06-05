@@ -19,7 +19,6 @@ describe('app smoke tests', () => {
       pool,
       broadcast,
       addClient,
-      langgraphApiUrl: 'http://localhost:9999',
       sshKeyPath: '/dev/null',
       sshUser: 'root',
       primeQueue: {
@@ -75,14 +74,7 @@ describe('app smoke tests', () => {
     expect(Array.isArray(res.body)).toBe(true)
   })
 
-  it('POST /webhook/langgraph stores event', async () => {
-    await request(app)
-      .post('/webhook/langgraph')
-      .send({ type: 'run.started', agent: 'langgraph', payload: { run_id: 'x1' } })
 
-    const res = await request(app).get('/events')
-    expect(res.body[0].type).toBe('run.started')
-  })
 
   it('GET /api/portal/state returns persistent portal state', async () => {
     const res = await request(app).get('/api/portal/state')

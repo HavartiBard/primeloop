@@ -20,9 +20,7 @@ services:
     environment:
       DATABASE_URL: postgresql://primeloop:primeloop_dev@postgres-dev:5432/primeloop_dev
       SECRET_ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
-      LANGGRAPH_API_URL: ${LANGGRAPH_API_URL:-http://192.168.20.14:8000}
-      RACLETTE_API_URL: ${RACLETTE_API_URL:-http://192.168.20.169:9119}
-      RACLETTE_SESSION_TOKEN: ${RACLETTE_SESSION_TOKEN:-}
+
       SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:-}
       SLACK_APP_TOKEN: ${SLACK_APP_TOKEN:-}
       SLACK_CHANNEL_ID: ${SLACK_CHANNEL_ID:-C0AU0620ATX}
@@ -31,10 +29,37 @@ services:
       GITEA_TOKEN: ${GITEA_TOKEN:-}
       AGENT_REPO_ROOT: /workspace/repo
       AGENT_WORKTREE_ROOT: /workspace/agents
+      LAUNCHER_AUTH_SECRET: ${LAUNCHER_AUTH_SECRET:-change-me-in-development}
+      LAUNCHER_URL: ${LAUNCHER_URL:-http://launcher-dev:8787}
+      LAUNCHER_ENABLED: ${LAUNCHER_ENABLED:-0}
+      LAUNCHER_ADAPTER: ${LAUNCHER_ADAPTER:-docker}
     ports:
       - "3101:3100"
     volumes:
       - /mnt/user/appdata/primeloop-dev/codex:/root/.codex
+      - /mnt/user/appdata/primeloop-dev/workspace:/workspace
+    depends_on:
+      postgres-dev:
+        condition: service_healthy
+      launcher-dev:
+        condition: service_started
+    restart: unless-stopped
+
+  launcher-dev:
+    image: local/primeloop-backend:current
+    command: ["node", "dist/launcher/index.js"]
+    environment:
+      LAUNCHER_AUTH_SECRET: ${LAUNCHER_AUTH_SECRET:-change-me-in-development}
+      LAUNCHER_PORT: ${LAUNCHER_PORT:-8787}
+      LAUNCHER_VERSION: ${LAUNCHER_VERSION:-1.0.0}
+      LAUNCHER_ADAPTER: ${LAUNCHER_ADAPTER:-docker}
+      OPENSANDBOX_URL: ${OPENSANDBOX_URL:-http://opensandbox:8080}
+      OPENSANDBOX_API_KEY: ${OPENSANDBOX_API_KEY:-}
+      OPENSANDBOX_IMAGE_OPENCODE: ${OPENSANDBOX_IMAGE_OPENCODE:-opencode/opencode:latest}
+    ports:
+      - "8787:8787"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
       - /mnt/user/appdata/primeloop-dev/workspace:/workspace
     depends_on:
       postgres-dev:

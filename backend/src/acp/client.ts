@@ -19,6 +19,15 @@ export interface AcpClientOptions {
   env?: Record<string, string>;
 }
 
+export interface RemoteAcpEndpoint {
+  protocol: 'http' | 'https' | 'ws' | 'wss';
+  host: string;
+  port: number;
+  path: string;
+  authHeader?: string;
+  tlsCaCertPath?: string;
+}
+
 export interface AcpClientHandlers {
   onSessionUpdate?: (update: { sessionId: string; update: any }) => void;
   onRequestPermission?: (req: { sessionId: string; toolCall: any; options: any[] }) => Promise<{ outcome: 'granted' | 'denied' }>;
@@ -26,22 +35,45 @@ export interface AcpClientHandlers {
   onFsWriteTextFile?: (req: { sessionId: string; path: string; content: string }) => Promise<void>;
 }
 
+export type AcpClientTransport = 'stdio' | 'http' | 'websocket';
+
 export class AcpClient extends EventEmitter {
   private process: ChildProcess | null = null;
   private messageId = 0;
   private pendingRequests = new Map<number, { resolve: (value: any) => void; reject: (error: Error) => void }>();
   private buffer = '';
   private state: AcpSessionState | null = null;
+  private transport: AcpClientTransport = 'stdio';
+  private endpoint?: RemoteAcpEndpoint;
 
   constructor(private options: AcpClientOptions, private handlers: AcpClientHandlers = {}) {
     super();
   }
 
+  /**
+   * Start the client using stdio transport (local process)
+   */
   public async start(): Promise<void> {
     if (this.process) {
       throw new Error('ACP client already started');
     }
+    this.transport = 'stdio';
+    this.startStdioTransport();
+  }
 
+  /**
+   * Start the client using remote ACP endpoint (HTTP/WebSocket transport)
+   */
+  public async startRemote(endpoint: RemoteAcpEndpoint): Promise<void> {
+    if (this.process) {
+      throw new Error('ACP client already started');
+    }
+    this.transport = 'http';
+    this.endpoint = endpoint;
+    await this.startHttpTransport(endpoint);
+  }
+
+  private startStdioTransport(): void {
     this.process = spawn(this.options.command, this.options.args || [], {
       cwd: this.options.cwd,
       env: { ...process.env, ...this.options.env },
@@ -62,6 +94,13 @@ export class AcpClient extends EventEmitter {
       this.emit('error', err);
       this.rejectAllPending(err);
     });
+  }
+
+  private async startHttpTransport(endpoint: RemoteAcpEndpoint): Promise<void> {
+    // For HTTP transport, we use fetch for requests
+    console.log(`[acp-client] Starting remote HTTP transport to ${endpoint.protocol}://${endpoint.host}:${endpoint.port}${endpoint.path}`);
+    this.transport = 'http';
+    this.endpoint = endpoint;
   }
 
   public async initialize(request: { protocolVersion: number; clientCapabilities: any; clientInfo: any }): Promise<{ protocolVersion: number }> {
@@ -110,9 +149,18 @@ export class AcpClient extends EventEmitter {
       this.process = null;
       this.state = null;
     }
+    // For HTTP transport, no explicit cleanup needed - fetch handles connection lifecycle
   }
 
-  private sendRequest<T>(method: string, params: any): Promise<T> {
+  private async sendRequest<T>(method: string, params: any): Promise<T> {
+    if (this.transport === 'stdio') {
+      return this.sendRequestStdio<T>(method, params);
+    } else {
+      return this.sendRequestRemote<T>(method, params);
+    }
+  }
+
+  private sendRequestStdio<T>(method: string, params: any): Promise<T> {
     return new Promise((resolve, reject) => {
       const id = ++this.messageId;
       this.pendingRequests.set(id, { resolve, reject });
@@ -128,13 +176,88 @@ export class AcpClient extends EventEmitter {
     });
   }
 
+  private async sendRequestRemote<T>(method: string, params: any): Promise<T> {
+    if (!this.endpoint) {
+      throw new Error('Remote endpoint not configured');
+    }
+
+    const url = `${this.endpoint.protocol}://${this.endpoint.host}:${this.endpoint.port}${this.endpoint.path}`;
+    const message = {
+      jsonrpc: '2.0',
+      id: ++this.messageId,
+      method,
+      params,
+    };
+
+    return new Promise<T>((resolve, reject) => {
+      this.pendingRequests.set(message.id, { resolve, reject });
+
+      fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(this.endpoint?.authHeader ? { Authorization: this.endpoint.authHeader } : {}),
+        },
+        body: JSON.stringify(message),
+      })
+        .then(async (response) => {
+          if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(`HTTP ${response.status}: ${errorText}`);
+          }
+          const data = await response.json();
+          this.handleRemoteMessage(data);
+        })
+        .catch((err) => {
+          const pending = this.pendingRequests.get(message.id);
+          if (pending) {
+            this.pendingRequests.delete(message.id);
+            reject(err);
+          }
+        });
+    });
+  }
+
   private async sendNotification(method: string, params: any): Promise<void> {
+    if (this.transport === 'stdio') {
+      this.sendNotificationStdio(method, params);
+    } else {
+      await this.sendNotificationRemote(method, params);
+    }
+  }
+
+  private sendNotificationStdio(method: string, params: any): void {
     const message = {
       jsonrpc: '2.0',
       method,
       params,
     };
     this.writeMessage(message);
+  }
+
+  private async sendNotificationRemote(method: string, params: any): Promise<void> {
+    if (!this.endpoint) {
+      throw new Error('Remote endpoint not configured');
+    }
+
+    const url = `${this.endpoint.protocol}://${this.endpoint.host}:${this.endpoint.port}${this.endpoint.path}`;
+    const message = {
+      jsonrpc: '2.0',
+      method,
+      params,
+    };
+
+    // For now, use POST for notifications (can be upgraded to WebSocket later)
+    fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(this.endpoint.authHeader ? { Authorization: this.endpoint.authHeader } : {}),
+      },
+      body: JSON.stringify(message),
+    }).catch((err) => {
+      console.error(`[acp-client] Failed to send notification: ${err}`);
+    });
   }
 
   private writeMessage(message: any): void {
@@ -218,17 +341,102 @@ export class AcpClient extends EventEmitter {
   private async handleRequest(id: number, params: any, handler: () => Promise<any>): Promise<void> {
     try {
       const result = await handler();
-      this.writeMessage({
-        jsonrpc: '2.0',
-        id,
-        result,
-      });
+      if (this.transport === 'stdio') {
+        this.writeMessage({
+          jsonrpc: '2.0',
+          id,
+          result,
+        });
+      } else {
+        // Send response over HTTP for remote transport
+        if (!this.endpoint) {
+          throw new Error('Remote endpoint not configured');
+        }
+        const url = `${this.endpoint.protocol}://${this.endpoint.host}:${this.endpoint.port}${this.endpoint.path}`;
+        fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(this.endpoint.authHeader ? { Authorization: this.endpoint.authHeader } : {}),
+          },
+          body: JSON.stringify({ jsonrpc: '2.0', id, result }),
+        }).catch((err) => console.error(`[acp-client] Failed to send response: ${err}`));
+      }
     } catch (error: any) {
-      this.writeMessage({
-        jsonrpc: '2.0',
-        id,
-        error: { code: -32000, message: error.message || 'Internal error' },
+      if (this.transport === 'stdio') {
+        this.writeMessage({
+          jsonrpc: '2.0',
+          id,
+          error: { code: -32000, message: error.message || 'Internal error' },
+        });
+      } else {
+        // Send error response over HTTP for remote transport
+        if (!this.endpoint) {
+          throw new Error('Remote endpoint not configured');
+        }
+        const url = `${this.endpoint.protocol}://${this.endpoint.host}:${this.endpoint.port}${this.endpoint.path}`;
+        fetch(url, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(this.endpoint.authHeader ? { Authorization: this.endpoint.authHeader } : {}),
+          },
+          body: JSON.stringify({ jsonrpc: '2.0', id, error: { code: -32000, message: error.message || 'Internal error' } }),
+        }).catch((err) => console.error(`[acp-client] Failed to send error response: ${err}`));
+      }
+    }
+  }
+
+  private handleRemoteMessage(message: any): void {
+    // Handle messages received from remote HTTP endpoint
+    if (message.id !== undefined && this.pendingRequests.has(message.id)) {
+      const { resolve, reject } = this.pendingRequests.get(message.id)!;
+      this.pendingRequests.delete(message.id);
+
+      if (message.error) {
+        reject(new Error(message.error.message || 'JSON-RPC error'));
+      } else {
+        resolve(message.result);
+      }
+      return;
+    }
+
+    if (message.method === METHOD_SESSION_UPDATE) {
+      this.handlers.onSessionUpdate?.(message.params);
+      return;
+    }
+
+    if (message.method === METHOD_SESSION_REQUEST_PERMISSION) {
+      // v0.12.0 passes { sessionId, toolCall, options }
+      this.handleRequest(message.id, message.params, async () => {
+        if (!this.handlers.onRequestPermission) return { outcome: 'denied' as const };
+        return this.handlers.onRequestPermission({
+          sessionId: message.params.sessionId,
+          toolCall: message.params.toolCall,
+          options: message.params.options,
+        });
       });
+      return;
+    }
+
+    if (message.method === METHOD_FS_READ_TEXT_FILE) {
+      this.handleRequest(message.id, message.params, async () => {
+        if (!this.handlers.onFsReadTextFile) {
+          throw new Error('fs/read_text_file is not supported by this client');
+        }
+        return this.handlers.onFsReadTextFile(message.params);
+      });
+      return;
+    }
+
+    if (message.method === METHOD_FS_WRITE_TEXT_FILE) {
+      this.handleRequest(message.id, message.params, async () => {
+        if (!this.handlers.onFsWriteTextFile) {
+          throw new Error('fs/write_text_file is not supported by this client');
+        }
+        return this.handlers.onFsWriteTextFile(message.params);
+      });
+      return;
     }
   }
 

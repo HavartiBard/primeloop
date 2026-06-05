@@ -180,20 +180,7 @@ describe('seedRegistry', () => {
     await pool.end()
   })
 
-  it('inserts a raclette agent when RACLETTE_API_URL is set', async () => {
-    await seedRegistry(pool, { RACLETTE_API_URL: 'http://raclette.example.com' })
-    const res = await pool.query(`SELECT name, type, config FROM agents WHERE name = 'raclette'`)
-    expect(res.rows).toHaveLength(1)
-    expect(res.rows[0].name).toBe('raclette')
-    expect(res.rows[0].type).toBe('hermes')
-    expect(res.rows[0].config).toEqual({ api_url: 'http://raclette.example.com' })
-  })
 
-  it('is idempotent — calling twice does not duplicate rows', async () => {
-    await seedRegistry(pool, { RACLETTE_API_URL: 'http://raclette.example.com' })
-    const res = await pool.query(`SELECT count(*)::int AS count FROM agents WHERE name = 'raclette'`)
-    expect(res.rows[0].count).toBe(1)
-  })
 
   it('inserts a langgraph agent when LANGGRAPH_API_URL is set', async () => {
     await pool.query('DELETE FROM agents')

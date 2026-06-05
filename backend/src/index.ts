@@ -19,7 +19,6 @@ import { startRuntimeLeaseReclaimScheduler } from './runtime/lease.js'
 const {
   DATABASE_URL = '',
   PORT = '3100',
-  LANGGRAPH_API_URL = 'http://langgraph-agent:8000',
   SLACK_BOT_TOKEN = '',
   SLACK_APP_TOKEN = '',
   SLACK_CHANNEL_ID = 'C0AU0620ATX',
@@ -32,6 +31,7 @@ const {
   LAZY_PROVISIONING = '0',
   CREDENTIAL_BROKER = '0',
   EGRESS_SANDBOX = '0',
+  LAUNCHER_URL = 'http://launcher:8787',
 } = process.env
 
 if (!DATABASE_URL) throw new Error('DATABASE_URL is required')
@@ -52,6 +52,15 @@ function traceStep(message: string): void {
 
 const pool = createPool(DATABASE_URL)
 traceStep('pool created')
+
+// Start launcher health check service if enabled
+if (EGRESS_SANDBOX_ENABLED || process.env.LAUNCHER_ENABLED === '1') {
+  traceStep('starting launcher health service')
+  const { startLauncherHealthService } = await import('./launcher/health.js')
+  startLauncherHealthService(LAUNCHER_URL)
+  traceStep('launcher health service started')
+}
+
 traceStep('running migrations')
 await runMigrations(pool)
 traceStep('migrations complete')
@@ -158,7 +167,6 @@ const app = createApp({
   pool,
   broadcast,
   addClient,
-  langgraphApiUrl: LANGGRAPH_API_URL,
   sshKeyPath: SSH_KEY_PATH,
   sshUser: SSH_USER,
   primeQueue: primeAgentService.queue,
@@ -190,12 +198,8 @@ if (!minimalBoot && SLACK_BOT_TOKEN && SLACK_APP_TOKEN) {
     botToken: SLACK_BOT_TOKEN,
     appToken: SLACK_APP_TOKEN,
     channelId: SLACK_CHANNEL_ID,
-    onApprove: async (approvalId) => {
-      await fetch(`${LANGGRAPH_API_URL}/approvals/${approvalId}/approve`, { method: 'POST' })
-    },
-    onDeny: async (approvalId) => {
-      await fetch(`${LANGGRAPH_API_URL}/approvals/${approvalId}/deny`, { method: 'POST' })
-    },
+    onApprove: async () => console.log('[slack] approval webhook not configured'),
+    onDeny: async () => console.log('[slack] denial webhook not configured'),
   })
   await slackApp.start()
   console.log('Slack bot started')

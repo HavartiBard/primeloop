@@ -1,0 +1,10 @@
+# OpenCode runtime image for launcher-managed isolated runtimes
+FROM opencode/opencode:latest
+
+# Install any additional dependencies needed for the runtime
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set the default command to serve ACP endpoint
+CMD ["opencode", "serve", "--port", "8080"]

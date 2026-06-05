@@ -4,7 +4,6 @@ import { fileURLToPath } from 'url'
 import type pg from 'pg'
 import { insertEvent, listEvents } from './events/store.js'
 import type { AgentEvent } from './events/types.js'
-import { createLanggraphRouter } from './agents/langgraph.js'
 import { createProvidersRouter } from './routes/providers.js'
 import { createAgentsRouter } from './routes/agents.js'
 import { createPortalRouter } from './routes/portal.js'
@@ -26,7 +25,6 @@ interface AppDeps {
   pool: pg.Pool
   broadcast: (event: AgentEvent) => void
   addClient: (ws: WebSocket) => void
-  langgraphApiUrl: string
   sshKeyPath: string
   sshUser: string
   primeQueue: PrimeQueue
@@ -97,15 +95,7 @@ export function createApp(deps: AppDeps): express.Express {
     }
   })
 
-  app.use(
-    '/webhook/langgraph',
-    createLanggraphRouter({
-      pool: deps.pool,
-      insertEvent,
-      broadcast: deps.broadcast,
-      langgraphApiUrl: deps.langgraphApiUrl,
-    })
-  )
+
 
   app.use('/api/providers', createProvidersRouter({ pool: deps.pool }))
   app.use('/api/providers/:providerId/codex/auth', createCodexAuthRouter())

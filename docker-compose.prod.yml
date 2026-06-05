@@ -22,8 +22,6 @@ services:
       DATABASE_URL: postgresql://primeloop:${POSTGRES_PASSWORD}@postgres:5432/primeloop
       SECRET_ENCRYPTION_KEY: ${SECRET_ENCRYPTION_KEY:?required}
       LANGGRAPH_API_URL: ${LANGGRAPH_API_URL:?required}
-      RACLETTE_API_URL: ${RACLETTE_API_URL:-http://192.168.20.169:9119}
-      RACLETTE_SESSION_TOKEN: ${RACLETTE_SESSION_TOKEN:-}
       SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:-}
       SLACK_APP_TOKEN: ${SLACK_APP_TOKEN:-}
       SLACK_CHANNEL_ID: ${SLACK_CHANNEL_ID:-C0AU0620ATX}
@@ -32,8 +30,35 @@ services:
       AGENT_REPO_ROOT: ${AGENT_REPO_ROOT:-/workspace/repo}
       AGENT_WORKTREE_ROOT: ${AGENT_WORKTREE_ROOT:-/workspace/agents}
       GITEA_TOKEN: ${GITEA_TOKEN:-}
+      LAUNCHER_AUTH_SECRET: ${LAUNCHER_AUTH_SECRET:-change-me-in-production}
+      LAUNCHER_URL: ${LAUNCHER_URL:-http://launcher:8787}
+      LAUNCHER_ENABLED: ${LAUNCHER_ENABLED:-0}
+      LAUNCHER_ADAPTER: ${LAUNCHER_ADAPTER:-docker}
     ports:
       - "3100:3100"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      launcher:
+        condition: service_started
+    restart: unless-stopped
+
+  launcher:
+    image: code.klsll.com/havartibard/primeloop:latest
+    command: ["node", "dist/launcher/index.js"]
+    volumes:
+      - /mnt/user/appdata/primeloop/workspace:/workspace
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      LAUNCHER_AUTH_SECRET: ${LAUNCHER_AUTH_SECRET:-change-me-in-production}
+      LAUNCHER_PORT: ${LAUNCHER_PORT:-8787}
+      LAUNCHER_VERSION: ${LAUNCHER_VERSION:-1.0.0}
+      LAUNCHER_ADAPTER: ${LAUNCHER_ADAPTER:-docker}
+      OPENSANDBOX_URL: ${OPENSANDBOX_URL:-http://opensandbox:8080}
+      OPENSANDBOX_API_KEY: ${OPENSANDBOX_API_KEY:-}
+      OPENSANDBOX_IMAGE_OPENCODE: ${OPENSANDBOX_IMAGE_OPENCODE:-opencode/opencode:latest}
+    ports:
+      - "8787:8787"
     depends_on:
       postgres:
         condition: service_healthy
