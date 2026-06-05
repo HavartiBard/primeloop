@@ -17,6 +17,7 @@ services:
     build: .
     environment:
       DATABASE_URL: postgresql://primeloop:${POSTGRES_PASSWORD}@postgres:5432/primeloop
+      SECRET_ENCRYPTION_KEY: ${SECRET_ENCRYPTION_KEY:?required}
       LANGGRAPH_API_URL: ${LANGGRAPH_API_URL:?required}
       RACLETTE_API_URL: ${RACLETTE_API_URL:-http://192.168.20.169:9119}
       RACLETTE_SESSION_TOKEN: ${RACLETTE_SESSION_TOKEN:-}
@@ -24,6 +25,7 @@ services:
       SLACK_APP_TOKEN: ${SLACK_APP_TOKEN:-}
       SLACK_CHANNEL_ID: ${SLACK_CHANNEL_ID:-C0AU0620ATX}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
     ports:
       - "3100:3100"
     depends_on:

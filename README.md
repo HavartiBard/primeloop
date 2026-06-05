@@ -2,6 +2,79 @@
 
 Multi-agent dashboard and control plane.
 
+## Installation
+
+PrimeLoop ships as a single Docker image (React dashboard + Node control plane +
+bundled agent runtimes) backed by PostgreSQL. The Docker Compose path below brings up
+the full app — dashboard and API — on port `3100`.
+
+### Prerequisites
+
+- Docker and Docker Compose
+- An LLM provider key (`ANTHROPIC_API_KEY` or `OPENAI_API_KEY`)
+- For from-source development only: Node.js 22+
+
+### Quick start (Docker Compose)
+
+```sh
+git clone <repo-url> primeloop
+cd primeloop
+
+# 1. Create your environment file
+cp .env.example .env
+
+# 2. Generate a 32-byte hex encryption key and add it to .env
+echo "SECRET_ENCRYPTION_KEY=$(openssl rand -hex 32)" >> .env
+
+# 3. Edit .env — set at minimum POSTGRES_PASSWORD, LANGGRAPH_API_URL,
+#    and one provider key (ANTHROPIC_API_KEY or OPENAI_API_KEY)
+
+# 4. Build and start (Postgres + backend + bundled dashboard)
+docker compose up -d --build
+```
+
+The dashboard and API are then available at **http://localhost:3100** (health check:
+`GET /health`). Database migrations run automatically on startup.
+
+```sh
+docker compose logs -f backend   # follow logs
+docker compose down              # stop (add -v to also drop the database volume)
+```
+
+For a production deployment using a pre-built image and persistent volumes, use
+`docker-compose.prod.yml` instead.
+
+### Required environment variables
+
+| Variable | Required | Notes |
+|----------|----------|-------|
+| `POSTGRES_PASSWORD` | yes | Password for the bundled Postgres |
+| `SECRET_ENCRYPTION_KEY` | yes | 64-char hex (`openssl rand -hex 32`) — encrypts stored secrets |
+| `LANGGRAPH_API_URL` | yes | LangGraph agent endpoint |
+| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` | one | Prime's LLM provider |
+| `GITEA_TOKEN` | optional | Gitea integration for work tracking |
+| `SLACK_BOT_TOKEN` / `SLACK_APP_TOKEN` | optional | Slack notifications |
+
+All Spec 024 managed-agent runtime features ship **disabled by default** (see
+[Feature flags](#feature-flags)) — the app runs its proven legacy paths until you opt
+in. If you enable `CREDENTIAL_BROKER`, also set `CONTROL_PLANE_URL=http://127.0.0.1:3100`
+so Prime can reach the in-process LLM proxy.
+
+### From source (development)
+
+Run the backend and Vite dev server directly against a Postgres you provide:
+
+```sh
+# backend API on :3100 (needs DATABASE_URL + SECRET_ENCRYPTION_KEY in the environment)
+cd backend && npm install && npm run dev
+
+# web dashboard on :5173
+cd web && npm install && npm run dev
+```
+
+The repo wrapper `./scripts/dev-up.sh` wires the expected env for the team's hosted dev
+Postgres — see [Dev Startup](#dev-startup) below.
+
 ## Managed-Agent Runtime Alignment (Spec 024)
 
 This branch is migrating PrimeLoop toward a managed-agent runtime model with:
