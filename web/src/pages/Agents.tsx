@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
-import { fetchAgentLessons, fetchAgentLoopWarnings, fetchAgentMemories, fetchAgentSnapshots, fetchAgents, issueAgentControlPlaneToken } from '../api'
+import { fetchAgentLessons, fetchAgentLoopWarnings, fetchAgentMemories, fetchAgentSnapshots, fetchAgents, fetchRuntimeEvents, issueAgentControlPlaneToken } from '../api'
+import { DisplayStatusBadge } from '../components/agentCanvas'
 import { useAgentRegistry } from '../hooks/useAgentRegistry'
 import { useMcpServers } from '../hooks/useMcpServers'
 import { useProviders } from '../hooks/useProviders'
-import type { AgentControlPlaneToken, Provider, RegistryAgent } from '../types'
+import type { AgentControlPlaneToken, Provider, RegistryAgent, RuntimeEvent } from '../types'
 
 interface AgentFormState {
   name: string
@@ -426,6 +427,17 @@ export function Agents() {
     },
   })
   const selectedAgent = agents.find((agent) => agent.id === effectiveSelectedAgentId)
+  const { data: runtimeEvents = [], isLoading: runtimeEventsLoading, isError: runtimeEventsError } = useQuery({
+    queryKey: ['runtime-events', 'credential-risk'],
+    queryFn: () => fetchRuntimeEvents(200),
+    refetchInterval: 30_000,
+  })
+  const selectedAgentRiskEvent = useMemo(() => {
+    if (!selectedAgent) return null
+    return runtimeEvents.find((event: RuntimeEvent) =>
+      event.event_type === 'credential.risk_flagged' && event.payload?.['agent_id'] === selectedAgent.id,
+    ) ?? null
+  }, [runtimeEvents, selectedAgent])
 
   useEffect(() => {
     if (agents.length === 0) {
@@ -678,6 +690,26 @@ export function Agents() {
                     MCP servers: {selectedAgent.mcp_server_ids && selectedAgent.mcp_server_ids.length > 0 ? selectedAgent.mcp_server_ids.length : 0}
                   </div>
                   <div className="text-[var(--text)]">Enabled: {selectedAgent.enabled ? 'yes' : 'no'}</div>
+                </div>
+              </div>
+
+              <div className="rounded-[1rem] border border-[var(--border-soft)] bg-[var(--panel-subtle)] p-4 xl:col-span-2">
+                <div className="text-[11px] uppercase tracking-[0.22em] text-[var(--muted)]">Credential Risk</div>
+                <div className="mt-3 text-sm">
+                  {runtimeEventsLoading ? (
+                    <div className="text-[var(--muted)]">Loading credential status…</div>
+                  ) : runtimeEventsError ? (
+                    <div className="text-[var(--s-blk-tx)]">Failed to load credential status.</div>
+                  ) : selectedAgentRiskEvent ? (
+                    <div className="flex flex-col gap-2">
+                      <div><DisplayStatusBadge status="risky" /></div>
+                      <div className="text-[var(--text)]">
+                        Latest risk event: <span className="font-mono">{new Date(selectedAgentRiskEvent.created_at).toLocaleString()}</span>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="text-[var(--muted)]">No risky credentials flagged.</div>
+                  )}
                 </div>
               </div>
 

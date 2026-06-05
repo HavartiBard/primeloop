@@ -710,6 +710,7 @@ export type DisplayStatus =
   | 'unavailable'
   | 'resumed'
   | 'recovered'
+  | 'risky'
 
 /** Source reference for a chat display event */
 export interface EventSource {

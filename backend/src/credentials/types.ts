@@ -11,8 +11,15 @@ export interface NamedSecretSpec {
   value: string
 }
 
+export interface GiteaTokenSpec {
+  envName?: string
+  repos?: string[]
+  capabilities?: string[]
+}
+
 export interface AgentScope {
   namedSecrets?: NamedSecretSpec[]
+  giteaTokens?: GiteaTokenSpec[]
   controlPlaneTokenEnvName?: string
   providerIds?: string[]
   providerTypes?: string[]

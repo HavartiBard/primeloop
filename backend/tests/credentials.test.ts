@@ -133,6 +133,31 @@ describe('CredentialBroker (US2)', () => {
     expect(types).toEqual(expect.arrayContaining(['credential.issued', 'credential.rotated', 'credential.revoked', 'credential.risk_flagged']))
   })
 
+  it('issues a scoped gitea token distinct from named-secret pass-through', async () => {
+    const agent = await makeAgent()
+    const issued = await broker.issueForAgent(agent, {
+      giteaTokens: [{ repos: ['owner/repo-a', 'owner/repo-b'], capabilities: ['issues:write', 'pull_requests:write'] }],
+      namedSecrets: [{ envName: 'PASSTHROUGH_SECRET', value: 'raw-secret-value' }],
+    })
+
+    const gitea = issued.find((c) => c.kind === 'gitea_token')
+    const named = issued.find((c) => c.kind === 'named_secret')
+
+    expect(gitea).toBeTruthy()
+    expect(gitea?.envVars.GITEA_TOKEN).toBeTruthy()
+    expect(gitea?.autoRotatable).toBe(true)
+    expect(named?.envVars.PASSTHROUGH_SECRET).toBe('raw-secret-value')
+
+    const { rows } = await pool.query(
+      `SELECT kind, scope, auto_rotatable FROM brokered_credentials WHERE agent_id = $1 AND kind = 'gitea_token'`,
+      [agent]
+    )
+    expect(rows[0].kind).toBe('gitea_token')
+    expect(rows[0].auto_rotatable).toBe(true)
+    expect(rows[0].scope.repos).toEqual(['owner/repo-a', 'owner/repo-b'])
+    expect(rows[0].scope.capabilities).toEqual(['issues:write', 'pull_requests:write'])
+  })
+
   it('never returns secret values on disk — issue writes no files (env-only)', async () => {
     // The broker API returns envVars only; there is no file-writing path. This guards
     // the contract that issuance produces env vars, not files (FR-009 / SC-002).

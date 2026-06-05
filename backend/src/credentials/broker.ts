@@ -49,6 +49,18 @@ export class CredentialBroker {
       }))
     }
 
+    for (const gitea of scope.giteaTokens ?? []) {
+      issued.push(await this.issue(agentId, {
+        kind: 'gitea_token',
+        envName: gitea.envName,
+        autoRotatable: true,
+        scope: {
+          repos: gitea.repos ?? [],
+          capabilities: gitea.capabilities ?? [],
+        },
+      }))
+    }
+
     // Operator-defined named secrets are injected as-is; they cannot be auto-rotated.
     for (const ns of scope.namedSecrets ?? []) {
       issued.push(

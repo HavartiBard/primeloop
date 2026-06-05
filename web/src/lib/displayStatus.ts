@@ -19,6 +19,7 @@ export const STATUS_LABELS: Record<DisplayStatus, string> = {
   unavailable: 'Unavailable',
   resumed: 'Resumed',
   recovered: 'Recovered',
+  risky: 'Risky',
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -38,6 +39,7 @@ export const STATUS_COLOR_CLASSES: Record<DisplayStatus, string> = {
   unavailable: 'bg-gray-100 text-gray-800 dark:bg-gray-800 dark:text-gray-300',
   resumed: 'bg-indigo-100 text-indigo-800 dark:bg-indigo-900/30 dark:text-indigo-300',
   recovered: 'bg-teal-100 text-teal-800 dark:bg-teal-900/30 dark:text-teal-300',
+  risky: 'bg-amber-100 text-amber-900 dark:bg-amber-900/30 dark:text-amber-200',
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -57,6 +59,7 @@ export const STATUS_ICONS: Record<DisplayStatus, string> = {
   unavailable: 'eye-off',
   resumed: 'play',
   recovered: 'check-check',
+  risky: 'shield-alert',
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -96,7 +99,7 @@ export function isStatusActive(status: DisplayStatus): boolean {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function isStatusTerminal(status: DisplayStatus): boolean {
-  return ['success', 'failed', 'cancelled', 'timeout', 'blocked', 'resolved', 'unavailable'].includes(status)
+  return ['success', 'failed', 'cancelled', 'timeout', 'blocked', 'resolved', 'unavailable', 'risky'].includes(status)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
