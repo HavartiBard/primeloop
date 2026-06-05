@@ -3,6 +3,18 @@
 How to exercise and verify each user story once implemented. Backend tests run under
 Vitest with a DB (`TEST_DATABASE_URL`); see `README.md` for the disposable test DB.
 
+## Validation Status (as of 2026-06-04)
+
+| Story | DB tests | Status |
+|-------|----------|--------|
+| US1 — restart resume | `tests/recovery.test.ts` (5) | ✅ Green |
+| US2 — credential broker | `tests/credentials.test.ts` (7), `credentials-lifecycle.test.ts` (4) | ✅ Green |
+| US3 — on-demand provisioning | `tests/runtime-lease.test.ts` (2), `lease.*.test.ts` (3) | ✅ Green |
+| US4 — unified session timeline | `tests/session-store.test.ts` (8+) | ✅ Green |
+| US5 — containment | egress `tests/egress.test.ts` (5) | ⚠️ Partial — kernel sandbox (T038/T039), isolation tests (T033–T035/T065), and ACP-over-TCP transport need a running runtime container |
+| SC-001/SC-004 thresholds | `tests/perf.restart-provision.test.ts` (2) | ✅ Green |
+| SC-006 regression gate | Full suite, all flags off | ✅ 483+ passed, no new failures |
+
 ## Prerequisites
 
 ```sh

@@ -141,6 +141,49 @@ app.get('/agents', (req, res) => {
   res.json({ agents })
 })
 
+// ── ACP client-fs methods (T066, FR-025) ─────────────────────────────────
+// Serve fs/read_text_file and fs/write_text_file from the launcher,
+// scoped to each agent's Landlock-bounded workdir. The backend is no
+// longer in the agent's filesystem path when EGRESS_SANDBOX is on.
+import { readFile, writeFile, mkdir, realpath } from 'node:fs/promises'
+
+function resolveSafe(workdir, reqPath) {
+  const abs = path.resolve(workdir, reqPath)
+  if (!abs.startsWith(workdir + path.sep) && abs !== workdir) {
+    throw new Error(`path escapes workdir: ${reqPath}`)
+  }
+  return abs
+}
+
+app.post('/agents/:agentId/fs/read', async (req, res) => {
+  if (!auth(req, res)) return
+  const slot = activeSlots.get(req.params.agentId)
+  if (!slot) return res.status(404).json({ error: 'agent not found' })
+  try {
+    const resolved = resolveSafe(slot.workdir, req.body.path ?? '')
+    const real = await realpath(resolved).catch(() => resolved)
+    if (!real.startsWith(slot.workdir)) return res.status(403).json({ error: 'path escapes workdir' })
+    const content = await readFile(real, 'utf8')
+    res.json({ content })
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) })
+  }
+})
+
+app.post('/agents/:agentId/fs/write', async (req, res) => {
+  if (!auth(req, res)) return
+  const slot = activeSlots.get(req.params.agentId)
+  if (!slot) return res.status(404).json({ error: 'agent not found' })
+  try {
+    const resolved = resolveSafe(slot.workdir, req.body.path ?? '')
+    await mkdir(path.dirname(resolved), { recursive: true })
+    await writeFile(resolved, req.body.content ?? '', 'utf8')
+    res.json({ ok: true })
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) })
+  }
+})
+
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`[launcher] listening on :${PORT} (runtimes: ${process.env.RUNTIMES ?? 'opencode,pi'})`)
 })

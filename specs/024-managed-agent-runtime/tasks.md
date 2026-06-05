@@ -117,16 +117,16 @@ are repository-relative (worktree root).
 
 ### Tests for User Story 5
 
-- [ ] T033 [P] [US5] Isolation test: write outside the working directory is denied and emits `fs.denied` in `backend/tests/isolation.fs.test.ts`
-- [ ] T034 [P] [US5] Isolation test: non-allowlisted host blocked (`egress.denied`), allowlisted host succeeds in `backend/tests/isolation.egress.test.ts`
-- [ ] T035 [P] [US5] Isolation test: reading a secret path / another agent's workspace is denied in `backend/tests/isolation.secrets.test.ts`
-- [ ] T065 [P] [US5] Boundary test: a simulated compromise inside the runtime container cannot read the primary container's secrets/filesystem nor a sibling agent's workspace/token in `backend/tests/isolation.container-boundary.test.ts` (SC-009)
+- [X] T033 [P] [US5] Isolation test: write outside the working directory is denied and emits `fs.denied` in `backend/tests/isolation.fs.test.ts`
+- [X] T034 [P] [US5] Isolation test: non-allowlisted host blocked (`egress.denied`), allowlisted host succeeds in `backend/tests/isolation.egress.test.ts`
+- [X] T035 [P] [US5] Isolation test: reading a secret path / another agent's workspace is denied in `backend/tests/isolation.secrets.test.ts`
+- [X] T065 [P] [US5] Boundary test: a simulated compromise inside the runtime container cannot read the primary container's secrets/filesystem nor a sibling agent's workspace/token in `backend/tests/isolation.container-boundary.test.ts` (SC-009)
 
 ### Implementation for User Story 5
 
 - [X] T061 [US5] Build the single configurable runtime image (`runtime-image/Dockerfile`) bundling operator-selected runtimes + per-process sandbox tooling, and the launcher service (`RuntimeLauncher`: `startAgent`/`stopAgent`/`health`, UID-isolated spawn, bearer-token auth) in `runtime-image/launcher/` per contracts/launcher.md (FR-023, FR-024, FR-025)
 - [X] T062 [US5] Switch the harness transport to **ACP over an authenticated TCP socket** to the launcher (backend connects out; bearer token) instead of spawning a child, with the HTTP adapter as the per-family fallback, behind `EGRESS_SANDBOX`, in `backend/src/acp/client.ts`, `backend/src/fleet-executor/acp-harness.ts`, and `backend/src/opencode/process-manager.ts` (FR-023). MUST preserve the US1 resume path (`wake`/`session/load`) across the transport swap — re-run T013–T015 over the socket transport.
-- [ ] T066 [US5] Relocate ACP client-fs handling: serve `fs/read_text_file`/`fs/write_text_file` in the launcher against the Landlock-scoped workspace and remove the backend from the agent's fs path, in `runtime-image/launcher/` and `backend/src/acp/fs-handler.ts` (FR-025)
+- [X] T066 [US5] Relocate ACP client-fs handling: serve `fs/read_text_file`/`fs/write_text_file` in the launcher against the Landlock-scoped workspace and remove the backend from the agent's fs path, in `runtime-image/launcher/` and `backend/src/acp/fs-handler.ts` (FR-025)
 
 - [X] T036 [P] [US5] Implement `EgressAllowlist` (`list`/`deriveDefaults` from capabilities+MCP assignments/`requestHost`→approval queue, default-deny) over `egress_allowlist` in `backend/src/proxy/egress.ts` per contracts/egress-allowlist.md
 - [X] T037 [US5] Implement the control-plane LLM proxy (validate broker proxy token, attach provider key server-side, forward/stream, emit `llm.proxied`) in `backend/src/proxy/llm-proxy.ts` per contracts/llm-proxy.md
@@ -188,7 +188,7 @@ are repository-relative (worktree root).
 - [X] T054 Review audit trails and observability completeness across all new `runtime_events` types
 - [X] T055 Regression gate: run full `npm test` with all flags OFF and confirm legacy paths pass unchanged (SC-006)
 - [X] T060 Add a threshold-measurement harness enforcing SC-001 (≥99% of N in-flight delegations resume, zero silent loss) and SC-004 (provisioning p95 ≤5s / p99 ≤10s) in `backend/tests/perf.restart-provision.test.ts`; failing thresholds fail the gate
-- [ ] T056 Run `specs/024-managed-agent-runtime/quickstart.md` validation across all stories
+- [X] T056 Run `specs/024-managed-agent-runtime/quickstart.md` validation across all stories
 - [ ] T057 After validation, remove the legacy fail-and-requeue and eager-boot paths and retire their flags (FR-017 cleanup) in `backend/src/opencode/process-manager.ts`
 
 ---

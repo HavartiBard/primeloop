@@ -1,6 +1,9 @@
 import * as fs from 'fs/promises';
 import * as path from 'path';
 
+// When EGRESS_SANDBOX=1 (T062), the agent runs in the runtime container and the
+// launcher serves fs/read_text_file and fs/write_text_file against the agent's
+// Landlock-scoped workdir directly. This class is only used in the stdio/local path.
 export class FsHandler {
   constructor(private sandboxRoot: string) {
     // Ensure sandbox root is absolute
