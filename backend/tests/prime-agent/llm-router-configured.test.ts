@@ -2,8 +2,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type pg from 'pg'
 
 // hoisted so vi.mock factories can reference them
-const mockAnthropicCreate = vi.hoisted(() => vi.fn())
-const mockOpenAICreate = vi.hoisted(() => vi.fn())
 const mockGetPrimeConfig = vi.hoisted(() => vi.fn())
 const mockGetProviderApiKey = vi.hoisted(() => vi.fn())
 const mockGetProvider = vi.hoisted(() => vi.fn())
@@ -12,17 +10,10 @@ const workspaceMocks = vi.hoisted(() => ({
   renderTemplate: vi.fn(),
 }))
 
-vi.mock('@anthropic-ai/sdk', () => ({
-  default: vi.fn().mockImplementation(() => ({
-    messages: { create: mockAnthropicCreate },
-  })),
-}))
-
-vi.mock('openai', () => ({
-  default: vi.fn().mockImplementation(() => ({
-    chat: { completions: { create: mockOpenAICreate } },
-  })),
-}))
+// Mock the LLM proxy client to avoid actual network calls
+const mockProxyForward = vi.hoisted(() => vi.fn())
+const mockCallAnthropic = vi.hoisted(() => vi.fn())
+const mockCallOpenAI = vi.hoisted(() => vi.fn())
 
 vi.mock('../../src/prime-agent/config.js', () => ({
   getPrimeConfig: mockGetPrimeConfig,
@@ -53,6 +44,15 @@ vi.mock('../../src/registry.js', () => ({
 vi.mock('../../src/workspace.js', () => ({
   loadPrimeWorkspaceTemplates: workspaceMocks.loadPrimeWorkspaceTemplates,
   renderTemplate: workspaceMocks.renderTemplate,
+}))
+
+// Mock the LLM proxy client to avoid actual network calls
+vi.mock('../../src/prime-agent/llm-proxy-client.js', () => ({
+  LlmProxyClient: vi.fn().mockImplementation(() => ({
+    forward: mockProxyForward,
+    callAnthropic: mockCallAnthropic,
+    callOpenAI: mockCallOpenAI,
+  })),
 }))
 
 import { createConfiguredLlmRouter } from '../../src/prime-agent/llm-router.js'
@@ -86,14 +86,13 @@ const minimalContext: PrimeContext = {
   threadMessages: [],
 }
 
-describe('createConfiguredLlmRouter', () => {
+describe('createConfiguredLlmRouter (via proxy)', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockGetProvider.mockImplementation((sql: string) => {
       if ((sql as string).includes('chief_profiles')) return Promise.resolve({ rows: [] })
       return Promise.resolve({ rows: [anthropicProvider] })
     })
-    mockGetProviderApiKey.mockResolvedValue('sk-test')
     mockGetPrimeConfig.mockResolvedValue({
       provider_routing: { planning: [{ provider_id: 'prov-1', model: 'claude-opus-4-7' }] },
     })
@@ -114,24 +113,33 @@ describe('createConfiguredLlmRouter', () => {
       templatePaths: {},
     })
     workspaceMocks.renderTemplate.mockImplementation((template: string) => template)
-    mockAnthropicCreate.mockResolvedValue({
+    
+    // Mock proxy responses
+    mockCallAnthropic.mockResolvedValue({
       content: [{ type: 'text', text: JSON.stringify(validDecision) }],
       usage: { input_tokens: 100, output_tokens: 50 },
       model: 'claude-opus-4-7-20251101',
     })
+    mockCallOpenAI.mockResolvedValue({
+      choices: [{ message: { content: JSON.stringify(validDecision) } }],
+      usage: { total_tokens: 200 },
+      model: 'gpt-4o',
+    })
   })
 
-  it('calls Anthropic SDK for anthropic provider and returns validated decision', async () => {
+  it('routes Anthropic calls through the proxy and returns validated decision', async () => {
     const router = createConfiguredLlmRouter(pool)
     const decision = await router.decide(minimalContext)
-    expect(mockAnthropicCreate).toHaveBeenCalledOnce()
+    
+    // Verify the proxy was called
+    expect(mockCallAnthropic).toHaveBeenCalledOnce()
     expect(decision.reasoning).toBe('nothing to do')
     expect(decision.actions).toHaveLength(1)
     expect(decision.provider_used).toBe('anthropic')
     expect(decision.token_count).toBe(150)
   })
 
-  it('calls OpenAI SDK for openai provider', async () => {
+  it('routes OpenAI calls through the proxy', async () => {
     mockGetPrimeConfig.mockResolvedValue({
       provider_routing: { planning: [{ provider_id: 'prov-2', model: 'gpt-4o' }] },
     })
@@ -139,19 +147,16 @@ describe('createConfiguredLlmRouter', () => {
       if ((sql as string).includes('chief_profiles')) return Promise.resolve({ rows: [] })
       return Promise.resolve({ rows: [openaiProvider] })
     })
-    mockOpenAICreate.mockResolvedValue({
-      choices: [{ message: { content: JSON.stringify(validDecision) } }],
-      usage: { total_tokens: 200 },
-      model: 'gpt-4o',
-    })
+    
     const router = createConfiguredLlmRouter(pool)
     const decision = await router.decide(minimalContext)
-    expect(mockOpenAICreate).toHaveBeenCalledOnce()
+    
+    expect(mockCallOpenAI).toHaveBeenCalledOnce()
     expect(decision.provider_used).toBe('openai')
     expect(decision.token_count).toBe(200)
   })
 
-  it('uses base_url for llm provider type', async () => {
+  it('routes llm provider type through OpenAI-compatible proxy', async () => {
     mockGetPrimeConfig.mockResolvedValue({
       provider_routing: { planning: [{ provider_id: 'prov-3', model: 'my-model' }] },
     })
@@ -159,14 +164,11 @@ describe('createConfiguredLlmRouter', () => {
       if ((sql as string).includes('chief_profiles')) return Promise.resolve({ rows: [] })
       return Promise.resolve({ rows: [llmProvider] })
     })
-    mockOpenAICreate.mockResolvedValue({
-      choices: [{ message: { content: JSON.stringify(validDecision) } }],
-      usage: { total_tokens: 80 },
-      model: 'my-model',
-    })
+    
     const router = createConfiguredLlmRouter(pool)
     await router.decide(minimalContext)
-    expect(mockOpenAICreate).toHaveBeenCalledOnce()
+    
+    expect(mockCallOpenAI).toHaveBeenCalledOnce()
   })
 
   it('falls back to second provider when first throws', async () => {
@@ -184,23 +186,26 @@ describe('createConfiguredLlmRouter', () => {
       if (providerId === 'prov-1') return Promise.resolve({ rows: [anthropicProvider] })
       return Promise.resolve({ rows: [openaiProvider] })
     })
-    mockGetProviderApiKey.mockResolvedValue('sk-test')
-    mockAnthropicCreate.mockRejectedValue(new Error('rate limited'))
-    mockOpenAICreate.mockResolvedValue({
+    
+    mockCallAnthropic.mockRejectedValue(new Error('rate limited'))
+    mockCallOpenAI.mockResolvedValue({
       choices: [{ message: { content: JSON.stringify(validDecision) } }],
       usage: { total_tokens: 80 },
       model: 'gpt-4o',
     })
+    
     const router = createConfiguredLlmRouter(pool)
     const decision = await router.decide(minimalContext)
-    expect(mockAnthropicCreate).toHaveBeenCalledOnce()
-    expect(mockOpenAICreate).toHaveBeenCalledOnce()
+    
+    expect(mockCallAnthropic).toHaveBeenCalledOnce()
+    expect(mockCallOpenAI).toHaveBeenCalledOnce()
     expect(decision.provider_used).toBe('openai')
   })
 
   it('throws when all providers fail', async () => {
-    mockAnthropicCreate.mockRejectedValue(new Error('unavailable'))
+    mockCallAnthropic.mockRejectedValue(new Error('unavailable'))
     const router = createConfiguredLlmRouter(pool)
+    
     await expect(router.decide(minimalContext)).rejects.toThrow('unavailable')
   })
 
@@ -208,8 +213,10 @@ describe('createConfiguredLlmRouter', () => {
     mockGetPrimeConfig.mockResolvedValue({
       provider_routing: { routing: [{ provider_id: 'prov-1', model: 'claude-opus-4-7' }] },
     })
+    
     const router = createConfiguredLlmRouter(pool)
     const decision = await router.decide(minimalContext)
+    
     expect(decision.reasoning).toBe('nothing to do')
   })
 })

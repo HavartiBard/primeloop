@@ -13,9 +13,19 @@ export function createLlmProxyRouter({ pool }: { pool: pg.Pool }) {
         ? auth.slice('Bearer '.length)
         : ''
 
+      // Extract the path after /:provider/ from the original URL
+      const originalUrl = req.originalUrl || req.url
+      const provider = req.params.provider as string
+      let path = '/'
+      const providerPrefix = `/internal/llm/${provider}`
+      if (originalUrl.startsWith(providerPrefix)) {
+        path = originalUrl.substring(providerPrefix.length)
+        if (!path.startsWith('/')) path = '/' + path
+      }
+
       const result = await proxy.forward(token, {
-        provider: req.params.provider,
-        path: `/${req.params[0] ?? ''}`,
+        provider,
+        path,
         method: req.method,
         headers: Object.fromEntries(
           Object.entries(req.headers)
