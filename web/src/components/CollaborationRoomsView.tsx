@@ -1085,7 +1085,7 @@ export function CollaborationRoomsView({
     }
 
     return roomPrimeSessions
-      .map((session) => {
+      .map<ArtifactSessionView | null>((session) => {
         const lines = (linesBySession.get(session.id) ?? []).sort((a, b) => a.occurredAt.localeCompare(b.occurredAt))
         const stepsFromSession = (session.module_runs ?? []).map((run) => ({
           module_id: run.module_id,
@@ -1129,7 +1129,7 @@ export function CollaborationRoomsView({
           error: session.error,
         }
       })
-      .filter((entry): entry is ArtifactSessionView => Boolean(entry))
+      .filter((entry): entry is ArtifactSessionView => entry !== null)
       .sort((a, b) => a.occurredAt.localeCompare(b.occurredAt))
   }, [activeRoomId, events, roomPrimeSessions])
 
@@ -1141,7 +1141,7 @@ export function CollaborationRoomsView({
     ))
     if (hasRenderableLiveArtifact) return []
 
-    const queued = queuedMessages
+    const queued: ArtifactSessionView[] = queuedMessages
       .filter((message) => message.roomId === activeRoomId && (message.status === 'queued' || message.status === 'sending'))
       .map((message) => ({
         id: `dispatch:${message.id}`,
@@ -1168,7 +1168,7 @@ export function CollaborationRoomsView({
     }
 
     if (visiblePrimeSessions.length > 0) {
-      return visiblePrimeSessions.map((session) => ({
+      return visiblePrimeSessions.map<ArtifactSessionView>((session) => ({
         id: `dispatch-session:${session.id}`,
         occurredAt: session.started_at || new Date().toISOString(),
         summary: 'dispatching latest request',

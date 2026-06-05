@@ -28,7 +28,7 @@ export interface UseCanvasViewportResult {
   dragHandlers: {
     onPointerDown: (e: React.PointerEvent) => void
     onPointerMove: (e: React.PointerEvent) => void
-    onPointerUp: (e: React.PointerEvent) => void
+    onPointerUp: () => void
   }
   /** Spread onto the canvas container div for scroll-wheel zoom */
   wheelHandler: {

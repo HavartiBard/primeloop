@@ -17,11 +17,19 @@ describe('SessionStore (session substrate — T011)', () => {
   })
 
   beforeEach(async () => {
+    await pool.query('DELETE FROM checkpoint_continuations')
     await pool.query('DELETE FROM runtime_events')
+    await pool.query('DELETE FROM delegations')
+    await pool.query('DELETE FROM thread_messages')
+    await pool.query('DELETE FROM threads')
   })
 
   afterAll(async () => {
+    await pool.query('DELETE FROM checkpoint_continuations')
     await pool.query('DELETE FROM runtime_events')
+    await pool.query('DELETE FROM delegations')
+    await pool.query('DELETE FROM thread_messages')
+    await pool.query('DELETE FROM threads')
     await pool.end()
   })
 
@@ -95,5 +103,36 @@ describe('SessionStore (session substrate — T011)', () => {
     )
     const events = await store.getEvents(session)
     expect(events.map((e) => e.seq).sort((a, b) => a - b)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10])
+  })
+
+  it('merges thread messages into the session timeline', async () => {
+    const threadId = randomUUID()
+    await pool.query(`INSERT INTO threads (id, title) VALUES ($1, 'thread')`, [threadId])
+    await pool.query(
+      `INSERT INTO thread_messages (thread_id, role, sender, content, created_at)
+       VALUES ($1, 'user', 'james', 'hello', now())`,
+      [threadId]
+    )
+
+    const events = await store.getEvents(threadId)
+    expect(events.some((e) => e.event_type === 'thread.message')).toBe(true)
+  })
+
+  it('merges delegation trace and checkpoint continuations into the session timeline', async () => {
+    const delegationId = randomUUID()
+    await pool.query(
+      `INSERT INTO delegations (id, capability, status, trace)
+       VALUES ($1, 'implementation', 'queued', $2::jsonb)`,
+      [delegationId, JSON.stringify([{ step: 'queued', at: new Date().toISOString(), detail: { note: 'queued' } }])]
+    )
+    await pool.query(
+      `INSERT INTO checkpoint_continuations (owner_type, owner_id, step, context_hash, context_snapshot, continuation, status)
+       VALUES ('delegation', $1, 'resume', 'hash-1', '{}'::jsonb, '{}'::jsonb, 'pending')`,
+      [delegationId]
+    )
+
+    const events = await store.getEvents(delegationId)
+    expect(events.some((e) => e.event_type === 'delegation.trace')).toBe(true)
+    expect(events.some((e) => e.event_type === 'checkpoint.continuation')).toBe(true)
   })
 })

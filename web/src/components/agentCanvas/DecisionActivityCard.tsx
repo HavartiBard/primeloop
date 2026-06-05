@@ -1,7 +1,7 @@
 // DecisionActivityCard.tsx - Approval and delegation display card components
 
 import React from 'react'
-import { ChatDisplayEvent, DisplayStatus } from '../../src/types'
+import type { ChatDisplayEvent, DisplayStatus, UserAction } from '../../types'
 import { DisplayStatusBadge } from './DisplayStatusBadge'
 import { getStatusA11yText } from '../../lib/displayStatus'
 
@@ -49,7 +49,7 @@ export function DecisionActivityCard({
       {/* Action buttons for pending decisions */}
       {isPending && actions && actions.length > 0 && (
         <div className="flex gap-2 mt-2">
-          {actions.map((action, index) => (
+          {actions.map((action: UserAction, index: number) => (
             <button
               key={index}
               type="button"
@@ -86,6 +86,9 @@ function getStatusColorClass(status: DisplayStatus): string {
     blocked: 'border-red-300',
     resolved: 'border-green-300',
     unavailable: 'border-gray-300',
+    resumed: 'border-indigo-300',
+    recovered: 'border-teal-300',
+    risky: 'border-amber-300',
   }
   return statusColors[status] || statusColors.pending
 }

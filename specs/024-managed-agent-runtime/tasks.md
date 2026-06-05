@@ -169,14 +169,14 @@ are repository-relative (worktree root).
 
 ### Tests for User Story 4
 
-- [ ] T048 [P] [US4] DB-backed test: merged timeline orders events + messages + delegation traces + checkpoints by `seq` in `backend/tests/session-timeline.merge.test.ts`
-- [ ] T049 [P] [US4] DB-backed test: bounded slice (`last N` / range) returns without materializing full history in `backend/tests/session-timeline.slice.test.ts`
+- [X] T048 [P] [US4] DB-backed test: merged timeline orders events + messages + delegation traces + checkpoints by `seq` in `backend/tests/session-timeline.merge.test.ts`
+- [X] T049 [P] [US4] DB-backed test: bounded slice (`last N` / range) returns without materializing full history in `backend/tests/session-timeline.slice.test.ts`
 
 ### Implementation for User Story 4
 
-- [ ] T050 [US4] Extend `SessionStore.getSession`/`getEvents` to merge `thread_messages`, `delegations.trace`, and `checkpoint_continuations` into the ordered timeline in `backend/src/session/store.ts`
-- [ ] T051 [US4] Expose a session timeline + bounded-slice read endpoint in `backend/src/routes/` (new route) wired in `backend/src/app.ts`
-- [ ] T052 [US4] Build the operator session-timeline view consuming bounded slices in `web/src/pages/prime/LoopPage.tsx` (or the global inspector window), with loading, empty, success, and error states reusing existing UI patterns
+- [X] T050 [US4] Extend `SessionStore.getSession`/`getEvents` to merge `thread_messages`, `delegations.trace`, and `checkpoint_continuations` into the ordered timeline in `backend/src/session/store.ts`
+- [X] T051 [US4] Expose a session timeline + bounded-slice read endpoint in `backend/src/routes/` (new route) wired in `backend/src/app.ts`
+- [X] T052 [US4] Build the operator session-timeline view consuming bounded slices in `web/src/pages/prime/LoopPage.tsx` (or the global inspector window), with loading, empty, success, and error states reusing existing UI patterns
 
 **Checkpoint**: All user stories independently functional
 

@@ -1,6 +1,6 @@
 // accessibilityText.ts - Shared accessibility helpers for keyboard labels and live-region text
 
-import { DisplayStatus, ChatEventKind } from '../types'
+import type { DisplayStatus, ChatEventKind, CircuitNode } from '../types'
 import { getStatusLabel, isStatusActive, isStatusTerminal } from './displayStatus'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -34,6 +34,14 @@ export function getChatEventA11yText(event: {
 
 export function getExpandButtonA11yText(isExpanded: boolean, label: string): string {
   return isExpanded ? `Collapse ${label}` : `Expand ${label}`
+}
+
+export function getCircuitNodeLabel(node: CircuitNode): string {
+  return `${node.type} ${node.title}. ${node.summary}`
+}
+
+export function getNodeExpansionControlLabel(isExpanded: boolean, title: string): string {
+  return isExpanded ? `Collapse details for ${title}` : `Expand details for ${title}`
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

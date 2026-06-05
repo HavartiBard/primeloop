@@ -23,6 +23,7 @@ import type {
   FleetSnapshot,
   RuntimeAuditLoop,
   RuntimeEvent,
+  SessionTimelineResponse,
   PrimeSession,
   PrimeModuleConfig,
   PrimeModuleConfigAudit,
@@ -289,6 +290,23 @@ export async function fetchRuntimeEvents(limit = 100): Promise<RuntimeEvent[]> {
   const res = await fetch(`${API_BASE}/runtime/events?limit=${limit}`)
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   return res.json() as Promise<RuntimeEvent[]>
+}
+
+export async function fetchSessionTimeline(
+  sessionId: string,
+  params?: { last?: number; from?: number; to?: number }
+): Promise<SessionTimelineResponse> {
+  const qs = new URLSearchParams()
+  if (params?.last != null) qs.set('last', String(params.last))
+  if (params?.from != null) qs.set('from', String(params.from))
+  if (params?.to != null) qs.set('to', String(params.to))
+  const suffix = qs.toString() ? `?${qs}` : ''
+  const res = await fetch(`${API_BASE}/sessions/${sessionId}/timeline${suffix}`)
+  if (!res.ok) {
+    const body = await readResponseBody<{ error?: string }>(res)
+    throw new Error(body && typeof body === 'object' && 'error' in body && body.error ? body.error : `HTTP ${res.status}`)
+  }
+  return res.json() as Promise<SessionTimelineResponse>
 }
 
 export async function fetchPrimeSessions(limit = 50): Promise<PrimeSession[]> {

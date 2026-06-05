@@ -3,7 +3,7 @@
 import React from 'react'
 import { ContextAttachment } from '../../types'
 
-interface ContextAttachmentListProps {
+export interface ContextAttachmentListProps {
   attachments: ContextAttachment[]
   maxVisible?: number
   showPreview?: boolean

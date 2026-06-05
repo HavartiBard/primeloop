@@ -1,7 +1,6 @@
-import type { AgentEvent } from '../types'
+import type { AgentEvent, DisplayStatus } from '../types'
 import { DisplayStatusBadge } from './agentCanvas/DisplayStatusBadge'
-import { ContextAttachmentList } from './agentCanvas/ContextAttachmentList'
-import { AgentActivityTimeline } from "./agentCanvas/AgentActivityTimeline"
+import { AgentActivityTimeline } from './agentCanvas/AgentActivityTimeline'
 
 const TYPE_COLORS: Record<string, string> = {
   'run.started': 'border-green-500',
@@ -17,7 +16,7 @@ const TYPE_COLORS: Record<string, string> = {
 }
 
 // Status mapping for new agent canvas UX
-const EVENT_TYPE_STATUS: Record<string, string> = {
+const EVENT_TYPE_STATUS: Record<string, DisplayStatus> = {
   'run.started': 'running',
   'run.completed': 'success',
   'approval.needed': 'pending',
@@ -49,7 +48,7 @@ export function EventFeed({ events, connected }: Props) {
         <AgentActivityTimeline events={[]} />
       )}
       {events.map((e) => {
-        const status = EVENT_TYPE_STATUS[e.type] || 'neutral'
+        const status = EVENT_TYPE_STATUS[e.type] || 'unavailable'
         return (
           <div
             key={e.id}
@@ -57,7 +56,7 @@ export function EventFeed({ events, connected }: Props) {
           >
             <div className="flex items-center gap-2 mb-1">
               <span className="text-gray-500 text-xs">{formatTime(e.created_at)}</span>
-              <DisplayStatusBadge status={status as any} compact showIcon={false} />
+              <DisplayStatusBadge status={status} compact showIcon={false} />
             </div>
             <div className="flex items-center gap-2">
               <span className="text-blue-300 text-xs font-mono">{e.agent}</span>

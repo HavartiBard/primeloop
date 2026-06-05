@@ -434,6 +434,30 @@ export interface RuntimeOverview {
   recent_events: RuntimeEvent[]
 }
 
+export interface SessionHeader {
+  session_id: string
+  owner_type: 'delegation' | 'prime_session'
+  owner_id: string
+  agent_id?: string
+  first_seq: number
+  last_seq: number
+  status: string
+}
+
+export interface SessionTimelineEvent {
+  session_id: string
+  seq: number
+  event_type: string
+  actor: string
+  payload: Record<string, unknown>
+  created_at: string
+}
+
+export interface SessionTimelineResponse {
+  session: SessionHeader
+  events: SessionTimelineEvent[]
+}
+
 export interface AgentWorkspaceStatus {
   id: string
   mode: 'local' | 'git'

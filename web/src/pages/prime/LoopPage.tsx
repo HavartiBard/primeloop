@@ -9,9 +9,10 @@ import {
   sendPrimeMessage,
   fetchPrimeSession,
   fetchRuntimeWorkItems,
+  fetchSessionTimeline,
   fetchThreads,
 } from '../../api'
-import type { AgentEvent, PrimeSession, RuntimeThread, RuntimeWorkItem } from '../../types'
+import type { AgentEvent, PrimeSession, RuntimeThread, RuntimeWorkItem, SessionTimelineEvent } from '../../types'
 import { useLoopStatus } from '../../hooks/useLoopStatus'
 import { useWebSocket } from '../../hooks/useWebSocket'
 
@@ -58,6 +59,13 @@ function relativeTime(iso: string): string {
   if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`
   if (diff < 86_400_000) return `${Math.floor(diff / 3_600_000)}h ago`
   return `${Math.floor(diff / 86_400_000)}d ago`
+}
+
+function summarizeTimelinePayload(payload: Record<string, unknown>): string {
+  if (typeof payload['content'] === 'string') return String(payload['content'])
+  if (typeof payload['step'] === 'string') return String(payload['step'])
+  if (typeof payload['status'] === 'string') return String(payload['status'])
+  return JSON.stringify(payload)
 }
 
 function isQuiescent(s: PrimeSession): boolean {
@@ -503,6 +511,90 @@ function LiveTickRow({ session, label, isLlmPhase, elapsedSeconds, wsEvents }: {
   )
 }
 
+function SessionTimelineInspector({
+  threads,
+}: {
+  threads: RuntimeThread[]
+}) {
+  const [sessionId, setSessionId] = useState('')
+  const [last, setLast] = useState(50)
+
+  useEffect(() => {
+    if (sessionId || threads.length === 0) return
+    const focused = typeof window !== 'undefined' ? window.sessionStorage.getItem(FOCUSED_ROOM_STORAGE_KEY) : null
+    setSessionId(focused && threads.some((thread) => thread.id === focused) ? focused : threads[0].id)
+  }, [sessionId, threads])
+
+  const timeline = useQuery({
+    queryKey: ['session-timeline', sessionId, last],
+    queryFn: () => fetchSessionTimeline(sessionId, { last }),
+    enabled: sessionId.length > 0,
+    staleTime: 5_000,
+  })
+
+  return (
+    <div className="rounded-xl border border-[var(--border-soft)] bg-[var(--panel)] flex flex-col min-h-0">
+      <div className="border-b border-[var(--border-soft)] px-4 py-2.5 text-[10px] font-bold uppercase tracking-widest text-[var(--muted)]">Session timeline</div>
+      <div className="flex flex-wrap items-center gap-3 px-4 py-3 border-b border-[var(--border-soft)] bg-[var(--panel-subtle)]">
+        <label className="flex min-w-[280px] flex-1 flex-col gap-1 text-[10px] font-bold uppercase tracking-widest text-[var(--muted)]">
+          Session
+          <input
+            value={sessionId}
+            onChange={(event) => setSessionId(event.target.value)}
+            list="prime-loop-session-options"
+            placeholder="Paste a thread/delegation/session id"
+            className="rounded-md border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-2 text-xs font-normal text-[var(--text)] outline-none focus:border-indigo-400"
+          />
+          <datalist id="prime-loop-session-options">
+            {threads.map((thread) => (
+              <option key={thread.id} value={thread.id}>{thread.title}</option>
+            ))}
+          </datalist>
+        </label>
+        <label className="flex flex-col gap-1 text-[10px] font-bold uppercase tracking-widest text-[var(--muted)]">
+          Window
+          <select
+            value={last}
+            onChange={(event) => setLast(Number(event.target.value))}
+            className="rounded-md border border-[var(--border-soft)] bg-[var(--panel)] px-3 py-2 text-xs font-normal text-[var(--text)] outline-none focus:border-indigo-400"
+          >
+            {[20, 50, 100, 200].map((size) => (
+              <option key={size} value={size}>Last {size}</option>
+            ))}
+          </select>
+        </label>
+      </div>
+
+      {!sessionId && <div className="px-4 py-6 text-sm text-[var(--muted)]">Choose a session to inspect.</div>}
+      {sessionId && timeline.isLoading && <div className="px-4 py-6 text-sm text-[var(--muted)]">Loading timeline…</div>}
+      {sessionId && timeline.isError && <div className="px-4 py-6 text-sm text-rose-300">{timeline.error instanceof Error ? timeline.error.message : 'Failed to load timeline.'}</div>}
+      {timeline.data && (
+        <>
+          <div className="px-4 py-2 text-[11px] text-[var(--muted)] border-b border-[var(--border-soft)]">
+            {timeline.data.session.owner_type} · seq {timeline.data.session.first_seq}–{timeline.data.session.last_seq} · showing {timeline.data.events.length}
+          </div>
+          <div className="max-h-96 overflow-y-auto divide-y divide-[var(--border-soft)]">
+            {timeline.data.events.length === 0 && (
+              <div className="px-4 py-6 text-sm text-[var(--muted)]">No timeline events in this slice.</div>
+            )}
+            {timeline.data.events.map((event: SessionTimelineEvent) => (
+              <div key={`${event.session_id}:${event.seq}:${event.event_type}`} className="px-4 py-3 text-xs">
+                <div className="flex items-center gap-3">
+                  <span className="w-12 shrink-0 font-mono text-[var(--muted)]">#{event.seq}</span>
+                  <span className="rounded-full border border-[var(--border-soft)] px-2 py-0.5 font-mono text-[10px] text-[var(--text)]">{event.event_type}</span>
+                  <span className="font-mono text-[10px] text-indigo-300">{event.actor}</span>
+                  <span className="ml-auto text-[10px] text-[var(--muted)]">{relativeTime(event.created_at)}</span>
+                </div>
+                <div className="mt-1 pl-12 text-[var(--muted)] break-all">{summarizeTimelinePayload(event.payload)}</div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
 // ── Main ─────────────────────────────────────────────────────────────────
 
 export function LoopPage() {
@@ -750,6 +842,8 @@ export function LoopPage() {
           <span className="flex items-center gap-1.5"><span className="inline-block h-2 w-2 rounded-sm bg-amber-400" />Failed</span>
         </div>
       </div>
+
+      <SessionTimelineInspector threads={threads} />
 
       {/* Tick list — live session injected at top when running */}
       <div className="rounded-xl border border-[var(--border-soft)] bg-[var(--panel)] flex flex-col min-h-0">

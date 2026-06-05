@@ -1,7 +1,7 @@
 // AgentActivityTimeline.tsx - Ordered expandable chat timeline component with keyboard navigation and live update states
 
 import React, { useState, useEffect, useCallback } from 'react'
-import { ChatDisplayEvent } from '../../src/types'
+import type { ChatDisplayEvent } from '../../types'
 import { AgentActivityBubble } from './AgentActivityBubble'
 import { DecisionActivityCard } from './DecisionActivityCard'
 import { getTimelineA11yText, KEYBOARD_HINTS } from '../../lib/accessibilityText'

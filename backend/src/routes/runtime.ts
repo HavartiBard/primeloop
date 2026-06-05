@@ -28,9 +28,11 @@ import {
   listWorkItems,
   updateWorkItem,
 } from '../runtime.js'
+import { SessionStore } from '../session/store.js'
 
 export function createRuntimeRouter({ pool }: { pool: pg.Pool }) {
   const router = Router()
+  const sessionStore = new SessionStore(pool)
 
   router.get('/runtime/overview', async (_req, res) => {
     try {
@@ -45,6 +47,27 @@ export function createRuntimeRouter({ pool }: { pool: pg.Pool }) {
     if (Number.isNaN(limit)) return res.status(400).json({ error: 'limit must be a number' })
     try {
       res.json(await listRuntimeEvents(pool, limit))
+    } catch {
+      res.status(500).json({ error: 'internal error' })
+    }
+  })
+
+  router.get('/sessions/:id/timeline', async (req, res) => {
+    const from = req.query.from != null ? Number(req.query.from) : undefined
+    const to = req.query.to != null ? Number(req.query.to) : undefined
+    const last = req.query.last != null ? Number(req.query.last) : undefined
+    if ([from, to, last].some((value) => value != null && Number.isNaN(value))) {
+      return res.status(400).json({ error: 'from, to, and last must be numbers' })
+    }
+    if (last != null && (from != null || to != null)) {
+      return res.status(400).json({ error: 'last is mutually exclusive with from/to' })
+    }
+
+    try {
+      const session = await sessionStore.getSession(req.params.id)
+      if (!session) return res.status(404).json({ error: 'session not found' })
+      const events = await sessionStore.getEvents(req.params.id, { from, to, last })
+      res.json({ session, events })
     } catch {
       res.status(500).json({ error: 'internal error' })
     }

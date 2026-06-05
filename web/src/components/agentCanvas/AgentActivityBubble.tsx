@@ -1,7 +1,7 @@
 // AgentActivityBubble.tsx - Expandable thinking/tool/message bubble components
 
 import React from 'react'
-import { ChatDisplayEvent, DisplayStatus } from '../../src/types'
+import type { ChatDisplayEvent } from '../../types'
 import { DisplayStatusBadge } from './DisplayStatusBadge'
 import { ContextAttachmentList } from './ContextAttachmentList'
 import { getStatusA11yText } from '../../lib/displayStatus'

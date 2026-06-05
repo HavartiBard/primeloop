@@ -1,6 +1,7 @@
 // displayStatus.ts - Reusable status and formatting helpers for agent canvas UX
 
-import { DisplayStatus, ChatEventKind } from '../types'
+import type { DisplayStatus, ChatEventKind, CircuitNodeStatus } from '../types'
+export type { DisplayStatus } from '../types'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Status to visual label mapping
@@ -167,4 +168,20 @@ export function getStatusA11yText(status: DisplayStatus): string {
   if (isStatusActive(status)) return `${label}, active`
   if (isStatusTerminal(status)) return `${label}, complete`
   return label
+}
+
+export function getNodeStatusColorClasses(status: CircuitNodeStatus): string {
+  switch (status) {
+    case 'active':
+    case 'running':
+      return 'border-emerald-300 bg-emerald-50/60 dark:border-emerald-800 dark:bg-emerald-950/20'
+    case 'blocked':
+    case 'approval':
+      return 'border-amber-300 bg-amber-50/60 dark:border-amber-800 dark:bg-amber-950/20'
+    case 'system':
+      return 'border-slate-300 bg-slate-50/60 dark:border-slate-700 dark:bg-slate-900/40'
+    case 'neutral':
+    default:
+      return 'border-[var(--border-soft)] bg-[var(--panel)]'
+  }
 }

@@ -121,4 +121,24 @@ describe('app smoke tests', () => {
     expect(overview.body.prime.name).toBe('Prime')
     expect(Array.isArray(overview.body.recent_events)).toBe(true)
   })
+
+  it('GET /api/sessions/:id/timeline returns bounded merged session slices', async () => {
+    const thread = await request(app)
+      .post('/api/threads')
+      .send({ title: 'Timeline room' })
+    expect(thread.status).toBe(201)
+
+    await request(app)
+      .post(`/api/threads/${thread.body.id}/messages`)
+      .send({ role: 'user', sender: 'james', content: 'first' })
+    await request(app)
+      .post(`/api/threads/${thread.body.id}/messages`)
+      .send({ role: 'assistant', sender: 'Prime', content: 'second' })
+
+    const res = await request(app).get(`/api/sessions/${thread.body.id}/timeline?last=1`)
+    expect(res.status).toBe(200)
+    expect(res.body.session.session_id).toBe(thread.body.id)
+    expect(Array.isArray(res.body.events)).toBe(true)
+    expect(res.body.events).toHaveLength(1)
+  })
 })

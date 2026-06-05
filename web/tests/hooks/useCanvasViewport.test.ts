@@ -67,7 +67,7 @@ describe('useCanvasViewport', () => {
         stopPropagation: vi.fn(),
       }
       act(() => {
-        result.current.dragHandlers.onPointerDown(mockEvent)
+        result.current.dragHandlers.onPointerDown(mockEvent as any)
       })
     })
 
@@ -81,7 +81,7 @@ describe('useCanvasViewport', () => {
           clientY: 50,
           preventDefault: vi.fn(),
           stopPropagation: vi.fn(),
-        })
+        } as any)
       })
       act(() => {
         result.current.dragHandlers.onPointerMove({
@@ -105,7 +105,7 @@ describe('useCanvasViewport', () => {
           clientY: 50,
           preventDefault: vi.fn(),
           stopPropagation: vi.fn(),
-        })
+        } as any)
       })
       act(() => {
         result.current.dragHandlers.onPointerUp()
@@ -126,7 +126,7 @@ describe('useCanvasViewport', () => {
         preventDefault: vi.fn(),
       }
       act(() => {
-        result.current.wheelHandler.onWheel(mockEvent)
+        result.current.wheelHandler.onWheel(mockEvent as any)
       })
       expect(result.current.viewport.scale).toBeCloseTo(1.1)
     })

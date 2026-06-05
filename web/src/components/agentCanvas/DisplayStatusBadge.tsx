@@ -1,11 +1,14 @@
 // DisplayStatusBadge.tsx - Reusable status badge component for all Primeloop states
 
 import React from 'react'
-import { DisplayStatus, getStatusLabel, getStatusColorClass, getStatusIcon } from '../../lib/displayStatus'
+import { getStatusLabel, getStatusColorClass, getStatusIcon } from '../../lib/displayStatus'
+import type { DisplayStatus } from '../../types'
 
-interface DisplayStatusBadgeProps {
+export interface DisplayStatusBadgeProps {
   status: DisplayStatus
   showLabel?: boolean
+  showIcon?: boolean
+  compact?: boolean
   size?: 'sm' | 'md' | 'lg'
   className?: string
 }
@@ -13,6 +16,8 @@ interface DisplayStatusBadgeProps {
 export function DisplayStatusBadge({
   status,
   showLabel = true,
+  showIcon = true,
+  compact = false,
   size = 'md',
   className = '',
 }: DisplayStatusBadgeProps): React.ReactNode {
@@ -27,7 +32,7 @@ export function DisplayStatusBadge({
     lg: 'px-3 py-1.5 text-base',
   }
 
-  const currentSizeClass = sizeClasses[size] || sizeClasses.md
+  const currentSizeClass = compact ? sizeClasses.sm : (sizeClasses[size] || sizeClasses.md)
 
   return (
     <span
@@ -35,7 +40,7 @@ export function DisplayStatusBadge({
       role="status"
       aria-label={label}
     >
-      <StatusIcon icon={icon} size={size} />
+      {showIcon && <StatusIcon icon={icon} size={compact ? 'sm' : size} />}
       {showLabel && <span>{label}</span>}
     </span>
   )
