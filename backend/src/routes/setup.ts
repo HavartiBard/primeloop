@@ -19,6 +19,7 @@ import type {
 import type { ProviderDraft } from '../registry.js'
 import { convertAssignmentsToModelPreferences, mergePrimeConfigWithDefaults, validateFunctionAssignments, DEFAULT_ONBOARDING_ASSIGNMENTS } from '../prime-agent/config.js'
 import { mapProviderToDraft, insertAgent } from '../registry.js'
+import { isOpenAiCompatibleProviderType, loadLocalLlmConfig, shouldUseEnvLocalLlmApiKey } from '../local-llm.js'
 
 // ─── Onboarding DTO Types ──────────────────────────────────────────────────────
 
@@ -223,6 +224,8 @@ export function createSetupRouter({
 
   router.get('/status', async (_req, res) => {
     try {
+      const localLlm = await loadLocalLlmConfig(process.env)
+
       // Check for legacy completion (has providers or setup_complete)
       const { rows: providerRows } = await pool.query(
         `SELECT COUNT(*)::int AS count
@@ -235,7 +238,20 @@ export function createSetupRouter({
       const legacyComplete = providerRows[0]?.count > 0 || configRows[0]?.setup_complete
 
       if (legacyComplete) {
-        return res.json({ complete: true })
+        return res.json({
+          complete: true,
+          ...(localLlm ? {
+            local_provider_default: {
+              name: localLlm.name,
+              type: localLlm.type,
+              base_url: localLlm.base_url,
+              ...(localLlm.model ? { model: localLlm.model } : {}),
+              api_key_configured: localLlm.api_key_configured,
+              ...(localLlm.autodiscovered ? { autodiscovered: true } : {}),
+              ...(localLlm.discovery_error ? { discovery_error: localLlm.discovery_error } : {}),
+            },
+          } : {}),
+        })
       }
 
       // Check for new onboarding session
@@ -252,6 +268,17 @@ export function createSetupRouter({
           current_step: null,
           status: null,
           can_resume: false,
+          ...(localLlm ? {
+            local_provider_default: {
+              name: localLlm.name,
+              type: localLlm.type,
+              base_url: localLlm.base_url,
+              ...(localLlm.model ? { model: localLlm.model } : {}),
+              api_key_configured: localLlm.api_key_configured,
+              ...(localLlm.autodiscovered ? { autodiscovered: true } : {}),
+              ...(localLlm.discovery_error ? { discovery_error: localLlm.discovery_error } : {}),
+            },
+          } : {}),
         })
       }
 
@@ -265,6 +292,17 @@ export function createSetupRouter({
         can_resume: true,
         has_providers: providers.length > 0,
         last_error: session.last_error ?? undefined,
+        ...(localLlm ? {
+          local_provider_default: {
+            name: localLlm.name,
+            type: localLlm.type,
+            base_url: localLlm.base_url,
+            ...(localLlm.model ? { model: localLlm.model } : {}),
+            api_key_configured: localLlm.api_key_configured,
+            ...(localLlm.autodiscovered ? { autodiscovered: true } : {}),
+            ...(localLlm.discovery_error ? { discovery_error: localLlm.discovery_error } : {}),
+          },
+        } : {}),
       })
     } catch {
       res.status(500).json({ error: 'internal error' })
@@ -292,7 +330,8 @@ export function createSetupRouter({
     const body = req.body as { type?: string; base_url?: string; api_key?: string }
     const type = body.type?.trim()
     const baseUrl = body.base_url?.trim().replace(/\/+$/, '')
-    const apiKey = body.api_key?.trim()
+    const localLlm = await loadLocalLlmConfig(process.env)
+    const apiKey = body.api_key?.trim() || (shouldUseEnvLocalLlmApiKey({ type, base_url: baseUrl }, localLlm) ? localLlm?.api_key : undefined)
 
     if (!type || !baseUrl) {
       return res.status(400).json({ error: 'type and base_url are required' })
@@ -323,20 +362,40 @@ export function createSetupRouter({
             'anthropic-version': '2023-06-01',
           },
         })
-      } else {
-        if (apiKey) {
-          upstream = await fetch(`${baseUrl}/models`, {
+      } else if (type === 'llamacpp') {
+        const headers = apiKey ? { Authorization: `Bearer ${apiKey}` } : undefined
+        upstream = await fetch(`${baseUrl}/v1/models`, {
+          signal: controller.signal,
+          ...(headers ? { headers } : {}),
+        })
+        if (!upstream.ok) {
+          const health = await fetch(`${baseUrl}/health`, {
             signal: controller.signal,
-            headers: { Authorization: `Bearer ${apiKey}` },
+            ...(headers ? { headers } : {}),
           })
-        } else if (type === 'litellm' || type === 'llm') {
-          upstream = await fetch(`${baseUrl}/models`, { signal: controller.signal })
-        } else {
-          // No API key for OpenAI-compatible provider (e.g. subscription/device auth flow).
-          // Return sensible defaults so the UI can still populate model dropdowns.
           clearTimeout(timeout)
-          return res.json({ models: ['gpt-4o', 'gpt-4o-mini', 'gpt-4.1', 'gpt-4.1-mini', 'o3', 'o3-mini', 'o4-mini'] })
+          if (health.ok) {
+            return res.json({ models: [] })
+          }
+          return res.status(upstream.status).json({ error: 'provider rejected model discovery request' })
         }
+      } else if (isOpenAiCompatibleProviderType(type) && type !== 'openai' && type !== 'codex') {
+        const headers = apiKey ? { Authorization: `Bearer ${apiKey}` } : undefined
+        const modelsPath = baseUrl.endsWith('/v1') ? `${baseUrl}/models` : `${baseUrl}/v1/models`
+        upstream = await fetch(modelsPath, {
+          signal: controller.signal,
+          ...(headers ? { headers } : {}),
+        })
+      } else if (apiKey) {
+        upstream = await fetch(`${baseUrl}/models`, {
+          signal: controller.signal,
+          headers: { Authorization: `Bearer ${apiKey}` },
+        })
+      } else {
+        // No API key for OpenAI-compatible provider (e.g. subscription/device auth flow).
+        // Return sensible defaults so the UI can still populate model dropdowns.
+        clearTimeout(timeout)
+        return res.json({ models: ['gpt-4o', 'gpt-4o-mini', 'gpt-4.1', 'gpt-4.1-mini', 'o3', 'o3-mini', 'o4-mini'] })
       }
 
       clearTimeout(timeout)
@@ -396,6 +455,7 @@ export function createSetupRouter({
 
     try {
       const providerNameToId = new Map<string, string>()
+      const localLlm = await loadLocalLlmConfig(process.env)
 
       for (const p of body.providers) {
         if (p.id) {
@@ -416,7 +476,8 @@ export function createSetupRouter({
         )
 
         if (existing.length > 0) {
-          const encKey = p.api_key ? encrypt(p.api_key) : undefined
+          const effectiveApiKey = p.api_key || (shouldUseEnvLocalLlmApiKey({ type: p.type, base_url: p.base_url }, localLlm) ? localLlm?.api_key : undefined)
+          const encKey = effectiveApiKey ? encrypt(effectiveApiKey) : undefined
           if (encKey) {
             await pool.query(
               'UPDATE providers SET type=$2, base_url=$3, model=$4, api_key=$5 WHERE id=$1',
@@ -431,7 +492,8 @@ export function createSetupRouter({
           providerNameToId.set(p.name, existing[0].id)
           if (p.id) providerNameToId.set(p.id, existing[0].id)
         } else {
-          const encKey = p.api_key ? encrypt(p.api_key) : null
+          const effectiveApiKey = p.api_key || (shouldUseEnvLocalLlmApiKey({ type: p.type, base_url: p.base_url }, localLlm) ? localLlm?.api_key : undefined)
+          const encKey = effectiveApiKey ? encrypt(effectiveApiKey) : null
           const { rows: inserted } = await pool.query(
             'INSERT INTO providers (name, type, base_url, api_key, model) VALUES ($1, $2, $3, $4, $5) RETURNING id',
             [p.name, p.type, p.base_url, encKey, p.model ?? null]

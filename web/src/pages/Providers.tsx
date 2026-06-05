@@ -8,13 +8,36 @@ import {
   codexApiKeyAuth,
   codexLogout,
   fetchModelCapability,
+  fetchSetupStatus,
 } from '../api'
 import type { CodexAuthStatus, Provider, ModelCapabilityAssessment } from '../types'
 import { AppModal } from '../components/AppModal'
 
 // ─── Provider add/edit modal ──────────────────────────────────────────────────
 
-const TYPE_OPTIONS = ['codex', 'llm', 'openai', 'anthropic', 'ollama', 'litellm', 'other']
+const TYPE_OPTIONS = ['codex', 'llm', 'openai', 'anthropic', 'ollama', 'llamacpp', 'litellm', 'vllm', 'lmstudio', 'llm-proxy', 'other'] as const
+
+const TYPE_LABELS: Record<(typeof TYPE_OPTIONS)[number], string> = {
+  codex: 'Codex',
+  llm: 'OpenAI-compatible proxy',
+  openai: 'OpenAI',
+  anthropic: 'Anthropic',
+  ollama: 'Ollama',
+  llamacpp: 'llama.cpp',
+  litellm: 'LiteLLM / OpenAI-compatible',
+  vllm: 'vLLM',
+  lmstudio: 'LM Studio',
+  'llm-proxy': 'LLM proxy',
+  other: 'Other',
+}
+
+function typeLabel(type: string): string {
+  return TYPE_LABELS[type as keyof typeof TYPE_LABELS] ?? type
+}
+
+function isOpenAiCompatibleLocalType(type: string): boolean {
+  return ['llm', 'litellm', 'vllm', 'lmstudio', 'llm-proxy'].includes(type)
+}
 
 interface FormState { name: string; type: string; base_url: string; api_key: string; model: string; timeout_ms: number }
 const EMPTY_FORM: FormState = { name: '', type: 'codex', base_url: '', api_key: '', model: '', timeout_ms: 120000 }
@@ -78,7 +101,7 @@ function ProviderModal({ mode, provider, onClose, onSubmit }: {
             <label className="block text-xs text-[var(--muted)] mb-1">Type *</label>
             <select value={form.type} onChange={set('type')}
               className="w-full bg-[var(--panel-subtle)] border border-[var(--border-soft)] rounded px-3 py-2 text-sm text-[var(--text)] focus:outline-none focus:border-[var(--sel-bd)]">
-              {TYPE_OPTIONS.map((t) => <option key={t} value={t}>{t}</option>)}
+              {TYPE_OPTIONS.map((t) => <option key={t} value={t}>{typeLabel(t)}</option>)}
             </select>
           </div>
           {form.type === 'llm' && (
@@ -117,10 +140,19 @@ function ProviderModal({ mode, provider, onClose, onSubmit }: {
           </div>
           <div>
             <label className="block text-xs text-[var(--muted)] mb-1">
-              {form.type === 'llm' ? 'API Proxy URL *' : 'Base URL *'}
+              {form.type === 'llm' ? 'API Proxy URL *' : isOpenAiCompatibleLocalType(form.type) ? 'OpenAI-compatible Base URL *' : 'Base URL *'}
             </label>
-            <input required value={form.base_url} onChange={set('base_url')} placeholder="ws://localhost:10101"
+            <input required value={form.base_url} onChange={set('base_url')} placeholder={form.type === 'ollama' ? 'http://localhost:11434' : form.type === 'llamacpp' ? 'http://localhost:8080' : isOpenAiCompatibleLocalType(form.type) ? 'http://localhost:1234/v1' : 'ws://localhost:10101'}
               className="w-full bg-[var(--panel-subtle)] border border-[var(--border-soft)] rounded px-3 py-2 text-sm text-[var(--text)] placeholder-[var(--muted)] focus:outline-none focus:border-[var(--sel-bd)]" />
+            {isOpenAiCompatibleLocalType(form.type) && (
+              <p className="mt-1 text-[11px] text-[var(--muted)]">Use the local server's OpenAI-style endpoint, usually ending in <span className="font-mono">/v1</span>.</p>
+            )}
+            {form.type === 'ollama' && (
+              <p className="mt-1 text-[11px] text-[var(--muted)]">Use the Ollama server root; PrimeLoop will query <span className="font-mono">/api/tags</span>.</p>
+            )}
+            {form.type === 'llamacpp' && (
+              <p className="mt-1 text-[11px] text-[var(--muted)]">Use the llama.cpp server root; PrimeLoop will try <span className="font-mono">/v1/models</span>.</p>
+            )}
           </div>
           {mode === 'edit' && hasMaskedKey && !replacingKey ? (
             <div>
@@ -427,6 +459,16 @@ export function Providers() {
   const [modal, setModal] = useState<{ mode: 'add' | 'edit'; provider?: Provider } | null>(null)
   const [authModal, setAuthModal] = useState<Provider | null>(null)
   const [deletingId, setDeletingId] = useState<string | null>(null)
+  const { data: setupStatus } = useQuery({
+    queryKey: ['setup-status'],
+    queryFn: fetchSetupStatus,
+    staleTime: Infinity,
+  })
+
+  const envLocalProvider = setupStatus?.local_provider_default
+  const envLocalProviderMatch = envLocalProvider
+    ? providers.find((p) => p.base_url === envLocalProvider.base_url && p.type === envLocalProvider.type)
+    : undefined
 
   const handleSubmit = (form: FormState) => {
     const payload: Omit<Provider, 'id' | 'created_at'> = {
@@ -460,6 +502,42 @@ export function Providers() {
 
       {isError && <p className="text-[var(--s-blk-tx)] text-sm mb-3">Failed to load providers.</p>}
 
+      {envLocalProvider && (
+        <div className="mb-4 rounded-lg border border-[var(--s-att-bd)] bg-[var(--s-att-bg)]/40 p-3 text-xs">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-medium text-[var(--text)]">Local LLM env bootstrap</span>
+            {envLocalProvider.autodiscovered && (
+              <span className="rounded border border-[var(--s-att-bd)] bg-[var(--s-att-bg)] px-2 py-0.5 text-[10px] text-[var(--s-att-tx)]">
+                autodiscovered from LOCAL_LLM_HOST
+              </span>
+            )}
+            {envLocalProviderMatch && (
+              <span className="rounded border border-[var(--s-ok-bd)] bg-[var(--s-ok-bg)] px-2 py-0.5 text-[10px] text-[var(--s-ok-tx)]">
+                matches configured provider {envLocalProviderMatch.name}
+              </span>
+            )}
+          </div>
+          <div className="mt-2 space-y-1 text-[var(--muted)]">
+            <div>
+              PrimeLoop detected <span className="text-[var(--text)]">{typeLabel(envLocalProvider.type)}</span>
+              {envLocalProvider.base_url ? <> at <span className="font-mono text-[var(--text)]">{envLocalProvider.base_url}</span></> : null}.
+            </div>
+            {envLocalProvider.model && (
+              <div>Suggested model: <span className="font-mono text-[var(--text)]">{envLocalProvider.model}</span></div>
+            )}
+            {envLocalProvider.api_key_configured && (
+              <div>Server env includes a local API key/token. You do not need to paste it into the UI unless you want to override it.</div>
+            )}
+            {envLocalProvider.discovery_error && (
+              <div className="text-[var(--s-blk-tx)]">Autodiscovery warning: {envLocalProvider.discovery_error}</div>
+            )}
+            {!envLocalProviderMatch && !envLocalProvider.discovery_error && (
+              <div>No configured provider matches the current LOCAL_LLM_* env settings yet. Add or edit a provider below to align the UI record with the runtime env.</div>
+            )}
+          </div>
+        </div>
+      )}
+
       {isLoading ? (
         <p className="text-[var(--muted)] text-sm">Loading…</p>
       ) : providers.length === 0 ? (
@@ -483,7 +561,7 @@ export function Providers() {
               {providers.map((p) => (
                 <tr key={p.id} className="border-b border-[var(--border-soft)]/50 hover:bg-[var(--panel-subtle)]">
                   <td className="py-2 pr-4 text-[var(--text)] font-mono">{p.name}</td>
-                  <td className="py-2 pr-4 text-[var(--muted)]">{p.type}</td>
+                  <td className="py-2 pr-4 text-[var(--muted)]">{typeLabel(p.type)}</td>
                   <td className="py-2 pr-4">
                     <span className="text-[var(--muted)] font-mono">{p.model ?? '—'}</span>
                     {p.model && <ModelCapabilityBadge model={p.model} />}

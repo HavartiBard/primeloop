@@ -658,6 +658,7 @@ function AppInner() {
   if ((forceSetup || !setupStatus?.complete) && !effectiveSkipped) {
     return (
       <Setup
+        initialSetupStatus={setupStatus}
         onSkip={() => {
           sessionStorage.setItem('setup-skipped', '1')
           setSkipped(true)

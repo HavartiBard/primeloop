@@ -11,7 +11,7 @@ the full app — dashboard and API — on port `3100`.
 ### Prerequisites
 
 - Docker and Docker Compose
-- An LLM provider key (`ANTHROPIC_API_KEY` or `OPENAI_API_KEY`)
+- Either a cloud LLM provider key (`ANTHROPIC_API_KEY` or `OPENAI_API_KEY`) or a local provider you will configure in setup
 - For from-source development only: Node.js 22+
 
 ### Quick start (Docker Compose)
@@ -26,8 +26,11 @@ cp .env.example .env
 # 2. Generate a 32-byte hex encryption key and add it to .env
 echo "SECRET_ENCRYPTION_KEY=$(openssl rand -hex 32)" >> .env
 
-# 3. Edit .env — set at minimum POSTGRES_PASSWORD, LANGGRAPH_API_URL,
-#    and one provider key (ANTHROPIC_API_KEY or OPENAI_API_KEY)
+# 3. Edit .env — set at minimum POSTGRES_PASSWORD.
+#    LANGGRAPH_API_URL is optional.
+#    For LLM access, either set a cloud provider key now
+#    (ANTHROPIC_API_KEY or OPENAI_API_KEY), or configure a local provider
+#    through LOCAL_LLM_* env vars and/or the setup flow.
 
 # 4. Build and start (Postgres + backend + bundled dashboard)
 docker compose up -d --build
@@ -50,8 +53,14 @@ For a production deployment using a pre-built image and persistent volumes, use
 |----------|----------|-------|
 | `POSTGRES_PASSWORD` | yes | Password for the bundled Postgres |
 | `SECRET_ENCRYPTION_KEY` | yes | 64-char hex (`openssl rand -hex 32`) — encrypts stored secrets |
-| `LANGGRAPH_API_URL` | yes | LangGraph agent endpoint |
-| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` | one | Prime's LLM provider |
+| `LANGGRAPH_API_URL` | no | Optional LangGraph agent endpoint |
+| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` | optional | Cloud LLM provider key; not needed if you use a local provider |
+| `LOCAL_LLM_ENABLED` | optional | Set to `1` to explicitly enable local-LLM bootstrap |
+| `LOCAL_LLM_TYPE` | optional | `auto`, `ollama`, `llamacpp`, `litellm`, `vllm`, `lmstudio`, or `llm-proxy` |
+| `LOCAL_LLM_BASE_URL` | optional | Full local endpoint URL, e.g. `http://localhost:11434` or `http://localhost:1234/v1` |
+| `LOCAL_LLM_HOST` | optional | Host/IP only; PrimeLoop will probe common local-LLM ports/endpoints |
+| `LOCAL_LLM_API_KEY` | optional | API key for a local proxy/OpenAI-compatible endpoint |
+| `LOCAL_LLM_MODEL` | optional | Default model to prefill in setup |
 | `GITEA_TOKEN` | optional | Gitea integration for work tracking |
 | `SLACK_BOT_TOKEN` / `SLACK_APP_TOKEN` | optional | Slack notifications |
 
@@ -59,6 +68,91 @@ All Spec 024 managed-agent runtime features ship **disabled by default** (see
 [Feature flags](#feature-flags)) — the app runs its proven legacy paths until you opt
 in. If you enable `CREDENTIAL_BROKER`, also set `CONTROL_PLANE_URL=http://127.0.0.1:3100`
 so Prime can reach the in-process LLM proxy.
+
+For local models, PrimeLoop can bootstrap the setup flow from `.env`. Supported local
+provider modes include Ollama, llama.cpp, LiteLLM/LLM proxy, vLLM, and LM Studio.
+Use `LOCAL_LLM_BASE_URL` when you know the exact endpoint, or `LOCAL_LLM_HOST` when you
+want PrimeLoop to probe common ports such as Ollama (`11434`), LM Studio (`1234`),
+vLLM (`8000`), llama.cpp (`8080`), and proxy-style OpenAI-compatible servers.
+
+Examples:
+
+#### Ollama
+
+```sh
+LOCAL_LLM_ENABLED=1
+LOCAL_LLM_TYPE=ollama
+LOCAL_LLM_BASE_URL=http://localhost:11434
+LOCAL_LLM_MODEL=qwen3:32b
+```
+
+#### llama.cpp
+
+```sh
+LOCAL_LLM_ENABLED=1
+LOCAL_LLM_TYPE=llamacpp
+LOCAL_LLM_BASE_URL=http://localhost:8080
+LOCAL_LLM_MODEL=qwen3-32b
+```
+
+#### LM Studio
+
+```sh
+LOCAL_LLM_ENABLED=1
+LOCAL_LLM_TYPE=lmstudio
+LOCAL_LLM_BASE_URL=http://localhost:1234/v1
+LOCAL_LLM_MODEL=local-model
+```
+
+#### vLLM
+
+```sh
+LOCAL_LLM_ENABLED=1
+LOCAL_LLM_TYPE=vllm
+LOCAL_LLM_BASE_URL=http://localhost:8000/v1
+LOCAL_LLM_MODEL=Qwen/Qwen3-32B
+```
+
+#### LiteLLM / local OpenAI-compatible proxy
+
+```sh
+LOCAL_LLM_ENABLED=1
+LOCAL_LLM_TYPE=litellm
+LOCAL_LLM_BASE_URL=http://localhost:4000/v1
+LOCAL_LLM_API_KEY=
+LOCAL_LLM_MODEL=openai/gpt-4o-mini
+```
+
+#### Generic LLM proxy
+
+```sh
+LOCAL_LLM_ENABLED=1
+LOCAL_LLM_TYPE=llm-proxy
+LOCAL_LLM_BASE_URL=http://localhost:4000/v1
+LOCAL_LLM_API_KEY=optional-token
+LOCAL_LLM_MODEL=my-model
+```
+
+#### Autodiscover from host/IP
+
+```sh
+LOCAL_LLM_ENABLED=1
+LOCAL_LLM_TYPE=auto
+LOCAL_LLM_HOST=192.168.1.50
+LOCAL_LLM_API_KEY=
+```
+
+Autodiscovery is best-effort. PrimeLoop probes common defaults such as:
+- Ollama: `11434`
+- LM Studio: `1234`
+- vLLM: `8000`
+- llama.cpp: `8080`
+- proxy/OpenAI-compatible servers: `4000`, `3000`
+
+If you already know the exact endpoint, prefer `LOCAL_LLM_BASE_URL` over host-only autodiscovery.
+
+`VITE_LOCAL_AI_BASE_URL` remains available as a legacy dev-only Vite prefill, but Docker
+installs should prefer the runtime `LOCAL_LLM_*` variables above.
 
 ### From source (development)
 

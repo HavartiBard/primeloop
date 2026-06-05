@@ -694,6 +694,15 @@ export async function fetchSetupStatus(): Promise<{
   can_resume?: boolean
   has_providers?: boolean
   last_error?: string
+  local_provider_default?: {
+    name: string
+    type: string
+    base_url: string
+    model?: string
+    api_key_configured?: boolean
+    autodiscovered?: boolean
+    discovery_error?: string
+  }
 }> {
   const res = await fetch(`${API_BASE}/setup/status`)
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
