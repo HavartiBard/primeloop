@@ -15,3 +15,39 @@ export interface LeaseResult {
   harness: any  // AgentHarness placeholder
   lease: RuntimeLease
 }
+
+// Launcher-managed runtime status types
+export type LauncherRuntimeState = 'provisioning' | 'ready' | 'unhealthy' | 'reprovisioning' | 'tearing_down' | 'unavailable';
+export type LauncherHealthStatus = 'healthy' | 'degraded' | 'failed' | 'unknown';
+
+export interface MountSpec {
+  path: string;
+  mode: 'ro' | 'rw';
+  purpose: string;
+}
+
+export interface NetworkPolicy {
+  mode: 'default-deny';
+  allowlist: string[];
+}
+
+export interface AcpEndpoint {
+  protocol: 'http' | 'https' | 'ws' | 'wss';
+  host: string;
+  port: number;
+  path: string;
+  authHeader?: string;
+  tlsCaCertPath?: string;
+}
+
+export interface LauncherRuntimeStatus {
+  agentId: string;
+  state: LauncherRuntimeState;
+  healthStatus: LauncherHealthStatus;
+  containerIdentity: string;
+  acpEndpoint: AcpEndpoint;
+  workdir: string;
+  mounts: MountSpec[];
+  networkPolicy: NetworkPolicy;
+  lastTransitionReason?: string;
+}

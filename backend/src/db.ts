@@ -1085,12 +1085,7 @@ export async function seedRegistry(pool: pg.Pool, env: NodeJS.ProcessEnv): Promi
     config: object 
   }> = []
 
-  if (env['RACLETTE_API_URL']) {
-    seeds.push({ name: 'raclette', type: 'hermes', runtime_family: 'custom', execution_mode: 'external', config: { api_url: env['RACLETTE_API_URL'] } })
-  }
-  if (env['LANGGRAPH_API_URL']) {
-    seeds.push({ name: 'langgraph', type: 'langgraph', runtime_family: 'custom', execution_mode: 'external', config: { api_url: env['LANGGRAPH_API_URL'] } })
-  }
+
 
 
   for (const seed of seeds) {

@@ -6,7 +6,13 @@ import { Pool, PoolClient } from 'pg'
 import type { AgentState } from '../registry.js'
 import { insertRuntimeEvent } from '../runtime.js'
 import { RuntimeEventTypes } from '../runtime-event-types.js'
-import type { LeaseResult, RuntimeLease } from './types.js'
+import type {
+  LeaseResult,
+  RuntimeLease,
+  LauncherRuntimeStatus,
+  LauncherRuntimeState,
+  LauncherHealthStatus,
+} from './types.js'
 
 const DEFAULT_RECLAIM_CRON = '*/1 * * * *'
 
@@ -167,6 +173,64 @@ export class RuntimeLeaseManager {
 
   private toIsoString(value: string | Date): string {
     return value instanceof Date ? value.toISOString() : String(value)
+  }
+}
+
+// Launcher-managed runtime reconciliation helpers
+export async function reconcileLauncherRuntime(
+  pool: Pool,
+  agentId: string,
+  status: LauncherRuntimeStatus
+): Promise<void> {
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    await client.query(
+      `UPDATE agents SET state = $2 WHERE id = $1 AND COALESCE(is_prime, false) = false`,
+      [agentId, mapLauncherStateToAgentState(status.state)]
+    )
+
+    await insertRuntimeEvent(pool, {
+      event_type: RuntimeEventTypes.RUNTIME_LAUNCHER_STATUS,
+      actor: 'launcher-reconciliation',
+      payload: { agent_id: agentId, status },
+    })
+
+    await client.query('COMMIT')
+  } catch (error) {
+    await client.query('ROLLBACK')
+    throw error
+  } finally {
+    client.release()
+  }
+}
+
+export function mapLauncherStateToAgentState(state: LauncherRuntimeState): AgentState {
+  switch (state) {
+    case 'ready':
+    case 'provisioning':
+      return 'busy'
+    case 'unhealthy':
+    case 'reprovisioning':
+    case 'tearing_down':
+      return 'error'
+    case 'unavailable':
+      return 'idle'
+    default:
+      return 'idle'
+  }
+}
+
+export function mapLauncherHealthToAgentHealth(health: LauncherHealthStatus): string {
+  switch (health) {
+    case 'healthy':
+      return 'healthy'
+    case 'degraded':
+      return 'degraded'
+    case 'failed':
+      return 'failed'
+    default:
+      return 'unknown'
   }
 }
 

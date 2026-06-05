@@ -1,5 +1,6 @@
 import type pg from 'pg'
 import { insertRuntimeEvent } from '../runtime.js'
+import { RuntimeEventTypes } from '../runtime-event-types.js'
 
 export interface RecoveryReport {
   resumed: string[]
@@ -9,6 +10,10 @@ export interface RecoveryReport {
 
 // How many times we will try to recover a delegation before giving up (FR-002).
 export const MAX_RECOVERY_ATTEMPTS = 3
+
+// Launcher-managed runtime reconciliation outcome types
+export type RecoveryOutcome = 'reattached' | 'reprovisioned' | 'unavailable' | 'cleaned_up';
+export type RecoveryTrigger = 'backend_restart' | 'runtime_exit' | 'health_failure' | 'teardown';
 
 interface ClaimedRow {
   id: string
@@ -82,4 +87,56 @@ export async function recoverInflight(pool: pg.Pool): Promise<RecoveryReport> {
   }
 
   return report
+}
+
+/**
+ * Record a launcher-managed runtime recovery outcome
+ */
+export async function recordLauncherRecoveryOutcome(
+  pool: pg.Pool,
+  agentId: string,
+  trigger: RecoveryTrigger,
+  outcome: RecoveryOutcome,
+  reason: string
+): Promise<void> {
+  await insertRuntimeEvent(pool, {
+    event_type: RuntimeEventTypes.RUNTIME_LAUNCHER_RECOVERY,
+    actor: 'recovery',
+    payload: {
+      agent_id: agentId,
+      trigger,
+      outcome,
+      reason
+    }
+  })
+}
+
+/**
+ * Reconcile launcher-managed runtime state after backend restart
+ */
+export async function reconcileLauncherRuntimeAfterRestart(
+  pool: pg.Pool,
+  agentId: string,
+  launcherStatus: any | null
+): Promise<RecoveryOutcome> {
+  if (!launcherStatus) {
+    await recordLauncherRecoveryOutcome(pool, agentId, 'backend_restart', 'unavailable', 'Runtime not found in launcher')
+    return 'unavailable'
+  }
+
+  // Check if runtime is still valid
+  if (launcherStatus.state === 'ready' || launcherStatus.state === 'provisioning') {
+    await recordLauncherRecoveryOutcome(pool, agentId, 'backend_restart', 'reattached', 'Runtime reattached successfully')
+    return 'reattached'
+  }
+
+  // Runtime needs reprovisioning
+  if (launcherStatus.state === 'unhealthy' || launcherStatus.state === 'tearing_down') {
+    await recordLauncherRecoveryOutcome(pool, agentId, 'backend_restart', 'reprovisioned', 'Runtime reprovisioned after failure')
+    return 'reprovisioned'
+  }
+
+  // Clean up failed runtime
+  await recordLauncherRecoveryOutcome(pool, agentId, 'backend_restart', 'cleaned_up', 'Runtime cleaned up after irrecoverable failure')
+  return 'cleaned_up'
 }

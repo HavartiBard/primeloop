@@ -26,6 +26,13 @@ export const RuntimeEventTypes = {
   
   // Launcher auth events (US5)
   LAUNCHER_AUTH_DENIED: 'launcher.auth_denied',
+  
+  // Launcher runtime events (US1, US2)
+  RUNTIME_LAUNCHER_STATUS: 'launcher.runtime_status',
+  RUNTIME_LAUNCHER_PROVISION: 'launcher.runtime_provision',
+  RUNTIME_LAUNCHER_RESTART: 'launcher.runtime_restart',
+  RUNTIME_LAUNCHER_TEARDOWN: 'launcher.runtime_teardown',
+  RUNTIME_LAUNCHER_RECOVERY: 'launcher.runtime_recovery',
 } as const
 
 export type RuntimeEventType = typeof RuntimeEventTypes[keyof typeof RuntimeEventTypes]

@@ -16,6 +16,7 @@ export class AcpHarness implements AgentHarness {
   private promptPromise: Promise<any> | null = null;
   private currentDelegationId: string | null = null;
   private supportsLoadSession = false;
+  private isRemoteTransport = false;
 
   constructor(
     private agentId: string,
@@ -24,43 +25,88 @@ export class AcpHarness implements AgentHarness {
     private args: string[] = [],
     private workspaceRoot: string,
     private permissionConfig: PermissionConfig = {},
+    private remoteEndpoint?: { protocol: 'http' | 'https' | 'ws' | 'wss'; host: string; port: number; path: string },
   ) {
     this.permissionPolicy = new PermissionPolicy(this.pool);
+    this.isRemoteTransport = !!remoteEndpoint;
   }
 
   async start(opts: { cwd: string; model: ModelRef }): Promise<void> {
     this.fsHandler = new FsHandler(this.workspaceRoot);
 
-    this.client = new AcpClient(
-      {
-        command: this.command,
-        args: this.args,
-        cwd: opts.cwd,
-      },
-      {
-        onSessionUpdate: (update) => {
-          this.eventEmitter.emit('sessionUpdate', update);
+    if (this.isRemoteTransport && this.remoteEndpoint) {
+      // Remote ACP transport via HTTP/WebSocket
+      const endpoint = {
+        protocol: this.remoteEndpoint.protocol,
+        host: this.remoteEndpoint.host,
+        port: this.remoteEndpoint.port,
+        path: this.remoteEndpoint.path,
+      };
+      
+      this.client = new AcpClient(
+        {
+          command: this.command,
+          args: this.args,
+          cwd: opts.cwd,
         },
-        onRequestPermission: async (req) => {
-          return this.permissionPolicy.resolvePermission(req, {
-            agentId: this.agentId,
-            sessionId: this.sessionId!,
-            delegationId: this.currentDelegationId ?? undefined,
-            config: this.permissionConfig,
-          });
+        {
+          onSessionUpdate: (update) => {
+            this.eventEmitter.emit('sessionUpdate', update);
+          },
+          onRequestPermission: async (req) => {
+            return this.permissionPolicy.resolvePermission(req, {
+              agentId: this.agentId,
+              sessionId: this.sessionId!,
+              delegationId: this.currentDelegationId ?? undefined,
+              config: this.permissionConfig,
+            });
+          },
+          onFsReadTextFile: async (req) => {
+            // v0.12.0 uses { sessionId, path } for fs/read_text_file
+            return this.fsHandler!.readTextFile(req.path);
+          },
+          onFsWriteTextFile: async (req) => {
+            // v0.12.0 uses { sessionId, path, content } for fs/write_text_file
+            await this.fsHandler!.writeTextFile(req.path, req.content);
+          },
+        }
+      );
+      
+      console.log(`[acp-harness] Starting remote ACP transport to ${this.remoteEndpoint.protocol}://${this.remoteEndpoint.host}:${this.remoteEndpoint.port}${this.remoteEndpoint.path}`);
+      await this.client.startRemote(endpoint);
+    } else {
+      // Local stdio transport
+      this.client = new AcpClient(
+        {
+          command: this.command,
+          args: this.args,
+          cwd: opts.cwd,
         },
-        onFsReadTextFile: async (req) => {
-          // v0.12.0 uses { sessionId, path } for fs/read_text_file
-          return this.fsHandler!.readTextFile(req.path);
-        },
-        onFsWriteTextFile: async (req) => {
-          // v0.12.0 uses { sessionId, path, content } for fs/write_text_file
-          await this.fsHandler!.writeTextFile(req.path, req.content);
-        },
-      }
-    );
-
-    await this.client.start();
+        {
+          onSessionUpdate: (update) => {
+            this.eventEmitter.emit('sessionUpdate', update);
+          },
+          onRequestPermission: async (req) => {
+            return this.permissionPolicy.resolvePermission(req, {
+              agentId: this.agentId,
+              sessionId: this.sessionId!,
+              delegationId: this.currentDelegationId ?? undefined,
+              config: this.permissionConfig,
+            });
+          },
+          onFsReadTextFile: async (req) => {
+            // v0.12.0 uses { sessionId, path } for fs/read_text_file
+            return this.fsHandler!.readTextFile(req.path);
+          },
+          onFsWriteTextFile: async (req) => {
+            // v0.12.0 uses { sessionId, path, content } for fs/write_text_file
+            await this.fsHandler!.writeTextFile(req.path, req.content);
+          },
+        }
+      );
+      
+      await this.client.start();
+    }
 
     try {
       const initResult = await this.client.initialize({
@@ -266,6 +312,13 @@ export class AcpHarness implements AgentHarness {
     }
     this.sessionId = null;
     this.currentDelegationId = null;
+  }
+
+  /**
+   * Check if this harness is using remote ACP transport
+   */
+  public isRemote(): boolean {
+    return this.isRemoteTransport;
   }
 
   private async recordRuntimeEvent(

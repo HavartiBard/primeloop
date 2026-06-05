@@ -190,7 +190,19 @@ export class OpenCodeProcessManager {
   }
 
   private get launcherUrl(): string {
-    return process.env.RUNTIME_CONTAINER_URL ?? 'http://primeloop-runtime:7700'
+    return process.env.LAUNCHER_URL ?? 'http://launcher:8787'
+  }
+
+  private get launcherEnabled(): boolean {
+    // Launcher is enabled by default when EGRESS_SANDBOX is enabled (the new default)
+    // or explicitly via LAUNCHER_ENABLED=1
+    return process.env.LAUNCHER_ENABLED === '1' || this.egressSandboxEnabled
+  }
+
+  private get launcherDefaultEnabled(): boolean {
+    // Launcher is the DEFAULT path for managed local OpenCode agents when EGRESS_SANDBOX is enabled
+    // This makes launcher-managed isolated runtimes the default deployment path
+    return this.launcherEnabled
   }
 
   constructor(
@@ -307,7 +319,8 @@ export class OpenCodeProcessManager {
 
     const agent = await this.refreshAgent(agentId)
     if (!agent || !isManagedLocalAgent(agent)) return undefined
-    if (agent.runtime_family !== 'acp' && agent.runtime_family !== 'pi') return undefined
+    // OpenCode agents use local process management, not harnesses
+    if (agent.runtime_family !== 'acp' && agent.runtime_family !== 'pi' && agent.runtime_family !== 'opencode') return undefined
 
     await this.ensureAgentStarted(agentId)
     return this.harnesses.get(agentId)
@@ -575,40 +588,64 @@ export class OpenCodeProcessManager {
       this.credentialBrokerEnabled,
     )
 
-    if (this.egressSandboxEnabled) {
-      // T062: delegate process spawn to the runtime container's launcher (FR-023).
-      // The launcher provisions a UID-isolated slot and returns the HTTP endpoint the
-      // harness should drive. The raw key never crosses to the runtime container — the
-      // broker env has already removed it (CREDENTIAL_BROKER path).
-      const brokerEnv = await provisionAgentCredentials(
-        this.broker,
-        agent.id,
-        await this.buildCredentialScope(agent, provider),
-        this.credentialBrokerEnabled,
-      )
-      const launcherToken = process.env.LAUNCHER_TOKEN ?? ''
-      const launcherRes = await this.fetchFn(`${this.launcherUrl}/agents`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${launcherToken}` },
-        body: JSON.stringify({
-          runtimeFamily: agent.runtime_family,
+    if (this.launcherDefaultEnabled) {
+      // Launcher-managed remote ACP transport is now the default path.
+      // The launcher provisions the runtime and returns an ACP endpoint for the harness to connect.
+      try {
+        const { createLauncherClient } = await import('../runtime/launcher-client.js')
+        const launcherClient = createLauncherClient(this.launcherUrl)
+
+        console.log(`[process-manager] Provisioning launcher-managed runtime for agent ${agent.id}`)
+        const provisionResult = await launcherClient.provisionRuntime({
           agentId: agent.id,
+          runtimeFamily: 'opencode' as const,
           workdir: workspaceRoot,
-          env: brokerEnv,
-        }),
-      })
-      if (!launcherRes.ok) {
-        const body = await launcherRes.text()
-        throw new Error(`launcher provisioning failed (${launcherRes.status}): ${body}`)
+          env: {
+            AGENT_ID: agent.id,
+            WORKDIR: workspaceRoot,
+            RUNTIME_FAMILY: 'opencode',
+          },
+          expectedMounts: [
+            { path: workspaceRoot, mode: 'rw' as const, purpose: 'worktree' },
+            { path: '/tmp/launcher-scratch', mode: 'rw' as const, purpose: 'scratch' },
+          ],
+          networkPolicy: { mode: 'default-deny' as const, allowlist: [] },
+          runtimeImage: process.env.OPENSANDBOX_IMAGE_OPENCODE,
+        })
+
+        console.log(`[process-manager] Runtime provisioned for agent ${agent.id}: ${provisionResult.acpEndpoint.protocol}://${provisionResult.acpEndpoint.host}:${provisionResult.acpEndpoint.port}${provisionResult.acpEndpoint.path}`)
+
+        const harness = new AcpHarness(
+          agent.id,
+          this.pool,
+          command,
+          args,
+          workspaceRoot,
+          permissionConfig,
+          {
+            protocol: provisionResult.acpEndpoint.protocol,
+            host: provisionResult.acpEndpoint.host,
+            port: provisionResult.acpEndpoint.port,
+            path: provisionResult.acpEndpoint.path,
+          },
+        )
+
+        await harness.start({
+          cwd: workspaceRoot,
+          model: { providerID: provider?.type ?? 'openai', id: model },
+        })
+
+        console.log(`[process-manager] Launcher-managed AcpHarness started for agent ${agent.id} (${agent.name})`)
+        this.harnesses.set(agent.id, harness)
+        return
+      } catch (error) {
+        console.error(
+          `[process-manager] Failed to provision launcher runtime for agent ${agent.id}:`,
+          error,
+        )
+        // Fall back to local stdio transport if launcher fails
+        console.warn(`[process-manager] Falling back to local runtime for agent ${agent.id}`)
       }
-      const { sessionEndpoint } = await launcherRes.json() as { sessionEndpoint: string }
-      console.log(`[process-manager] Launcher provisioned agent ${agent.id} at ${sessionEndpoint}`)
-      // AcpHarness connects to the launcher-provided HTTP endpoint (T062 transport).
-      // command/args are unused in this path; the harness drives the remote endpoint.
-      const harness = new AcpHarness(agent.id, this.pool, command, args, workspaceRoot, permissionConfig)
-      await harness.start({ cwd: sessionEndpoint, model: { providerID: provider?.type ?? 'openai', id: model } })
-      this.harnesses.set(agent.id, harness)
-      return
     }
 
     console.log(`[process-manager] Selecting AcpHarness for agent ${agent.id} (${agent.name})`)
