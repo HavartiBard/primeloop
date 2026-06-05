@@ -146,16 +146,16 @@ are repository-relative (worktree root).
 
 ### Tests for User Story 3
 
-- [ ] T041 [P] [US3] DB-backed test: with no routed work, no durable runtime is running in `backend/tests/lease.no-eager-boot.test.ts`
-- [ ] T042 [P] [US3] DB-backed test: routing work provisions within readiness budget; identity/records unchanged in `backend/tests/lease.provision.test.ts`
-- [ ] T043 [P] [US3] DB-backed test: 10-min idle reclaim emits `runtime.reclaimed` and frees compute in `backend/tests/lease.reclaim.test.ts`
+- [X] T041 [P] [US3] DB-backed test: with no routed work, no durable runtime is running in `backend/tests/lease.no-eager-boot.test.ts`
+- [X] T042 [P] [US3] DB-backed test: routing work provisions within readiness budget; identity/records unchanged in `backend/tests/lease.provision.test.ts`
+- [X] T043 [P] [US3] DB-backed test: 10-min idle reclaim emits `runtime.reclaimed` and frees compute in `backend/tests/lease.reclaim.test.ts`
 
 ### Implementation for User Story 3
 
-- [ ] T044 [P] [US3] Implement `RuntimeLease` as a **process slot in the runtime container** (`acquire`/`touch`/`release`/`reclaimIdle`; concurrent acquire coalesces; queue work during provisioning; start the runtime container on first use, stop it when empty) over `runtime_leases` in `backend/src/runtime/lease.ts` per contracts/runtime-lease.md
-- [ ] T045 [US3] Remove eager durable-agent spawning from `initialize()`; on work routing, acquire a lease that asks the launcher to start the agent (behind `LAZY_PROVISIONING`) in `backend/src/opencode/process-manager.ts` and the dispatcher (`backend/src/dispatch.ts`)
-- [ ] T046 [US3] Add the `node-cron` idle-reclaim sweep (≥10 min `last_activity_at`) tearing down the sandbox while preserving DB identity in `backend/src/runtime/lease.ts`
-- [ ] T047 [US3] Map lease lifecycle onto `agents.state` and emit `runtime.leased`/`runtime.reclaimed` in `backend/src/runtime/lease.ts`
+- [X] T044 [P] [US3] Implement `RuntimeLease` as a **process slot in the runtime container** (`acquire`/`touch`/`release`/`reclaimIdle`; concurrent acquire coalesces; queue work during provisioning; start the runtime container on first use, stop it when empty) over `runtime_leases` in `backend/src/runtime/lease.ts` per contracts/runtime-lease.md
+- [X] T045 [US3] Remove eager durable-agent spawning from `initialize()`; on work routing, acquire a lease that asks the launcher to start the agent (behind `LAZY_PROVISIONING`) in `backend/src/opencode/process-manager.ts` and the dispatcher (`backend/src/dispatch.ts`)
+- [X] T046 [US3] Add the `node-cron` idle-reclaim sweep (≥10 min `last_activity_at`) tearing down the sandbox while preserving DB identity in `backend/src/runtime/lease.ts`
+- [X] T047 [US3] Map lease lifecycle onto `agents.state` and emit `runtime.leased`/`runtime.reclaimed` in `backend/src/runtime/lease.ts`
 
 **Checkpoint**: US1, US2, US5, US3 all independently functional
 
@@ -185,7 +185,7 @@ are repository-relative (worktree root).
 ## Phase 8: Polish & Cross-Cutting Concerns
 
 - [X] T053 [P] Document new feature flags, runtime model, and broker/proxy ops in `README.md` and `HANDOFF.md`
-- [ ] T054 Review audit trails and observability completeness across all new `runtime_events` types
+- [X] T054 Review audit trails and observability completeness across all new `runtime_events` types
 - [ ] T055 Regression gate: run full `npm test` with all flags OFF and confirm legacy paths pass unchanged (SC-006)
 - [ ] T060 Add a threshold-measurement harness enforcing SC-001 (≥99% of N in-flight delegations resume, zero silent loss) and SC-004 (provisioning p95 ≤5s / p99 ≤10s) in `backend/tests/perf.restart-provision.test.ts`; failing thresholds fail the gate
 - [ ] T056 Run `specs/024-managed-agent-runtime/quickstart.md` validation across all stories

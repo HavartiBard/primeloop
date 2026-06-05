@@ -9,13 +9,21 @@ const TYPE_COLORS: Record<string, string> = {
   'approval.decided': 'border-orange-500',
   'session.active': 'border-blue-400',
   'session.ended': 'border-gray-500',
-  // Restart-recovery events (US1)
   'session.resumed': 'border-indigo-400',
   'delegation.recovered': 'border-teal-400',
   'delegation.recovered_failed': 'border-red-500',
+  'credential.issued': 'border-emerald-500',
+  'credential.rotated': 'border-sky-500',
+  'credential.revoked': 'border-slate-500',
+  'credential.risk_flagged': 'border-amber-500',
+  'runtime.leased': 'border-indigo-500',
+  'runtime.reclaimed': 'border-violet-500',
+  'egress.denied': 'border-rose-500',
+  'fs.denied': 'border-red-500',
+  'llm.proxied': 'border-cyan-500',
+  'launcher.auth_denied': 'border-red-500',
 }
 
-// Status mapping for new agent canvas UX
 const EVENT_TYPE_STATUS: Record<string, DisplayStatus> = {
   'run.started': 'running',
   'run.completed': 'success',
@@ -23,14 +31,51 @@ const EVENT_TYPE_STATUS: Record<string, DisplayStatus> = {
   'approval.decided': 'resolved',
   'session.active': 'streaming',
   'session.ended': 'cancelled',
-  // Restart-recovery events (US1) surface resumed/recovered/failed labels
   'session.resumed': 'resumed',
   'delegation.recovered': 'recovered',
   'delegation.recovered_failed': 'failed',
+  'credential.issued': 'success',
+  'credential.rotated': 'resolved',
+  'credential.revoked': 'cancelled',
+  'credential.risk_flagged': 'risky',
+  'runtime.leased': 'running',
+  'runtime.reclaimed': 'cancelled',
+  'egress.denied': 'blocked',
+  'fs.denied': 'blocked',
+  'llm.proxied': 'streaming',
+  'launcher.auth_denied': 'failed',
 }
 
 function formatTime(iso: string): string {
   return new Date(iso).toLocaleTimeString()
+}
+
+function summarizePayload(type: string, payload: Record<string, unknown>): string | null {
+  switch (type) {
+    case 'credential.issued':
+    case 'credential.rotated':
+    case 'credential.revoked':
+      return [payload['kind'], payload['agent_id']].filter(Boolean).join(' · ') || null
+    case 'credential.risk_flagged':
+      return [payload['kind'], payload['reason'], payload['agent_id']].filter(Boolean).join(' · ') || null
+    case 'runtime.leased':
+    case 'runtime.reclaimed':
+      return [payload['agent_id'], payload['lease_id'], payload['status']].filter(Boolean).join(' · ') || null
+    case 'egress.denied':
+      return [payload['host'], payload['agent_id'], payload['reason']].filter(Boolean).join(' · ') || null
+    case 'fs.denied':
+      return [payload['path'], payload['agent_id'], payload['reason']].filter(Boolean).join(' · ') || null
+    case 'llm.proxied':
+      return [payload['provider'], payload['agent_id'], payload['model']].filter(Boolean).join(' · ') || null
+    case 'launcher.auth_denied':
+      return [payload['agent_id'], payload['reason']].filter(Boolean).join(' · ') || null
+    case 'session.resumed':
+    case 'delegation.recovered':
+    case 'delegation.recovered_failed':
+      return [payload['delegation_id'], payload['agent_id'], payload['error']].filter(Boolean).join(' · ') || null
+    default:
+      return null
+  }
 }
 
 interface Props {
@@ -49,6 +94,7 @@ export function EventFeed({ events, connected }: Props) {
       )}
       {events.map((e) => {
         const status = EVENT_TYPE_STATUS[e.type] || 'unavailable'
+        const payloadSummary = summarizePayload(e.type, e.payload)
         return (
           <div
             key={e.id}
@@ -62,6 +108,9 @@ export function EventFeed({ events, connected }: Props) {
               <span className="text-blue-300 text-xs font-mono">{e.agent}</span>
               <span className="text-white text-xs font-mono">{e.type}</span>
             </div>
+            {payloadSummary && (
+              <div className="mt-1 text-[11px] text-gray-400 break-all">{payloadSummary}</div>
+            )}
           </div>
         )
       })}

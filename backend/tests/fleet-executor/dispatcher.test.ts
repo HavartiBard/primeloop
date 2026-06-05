@@ -180,6 +180,28 @@ describe('FleetDispatcher', () => {
       ['agent-1', 'busy'],
     )
   })
+
+  it('requests an on-demand harness when lazy provisioned work is routed', async () => {
+    const ensureHarness = vi.fn().mockResolvedValue(makeHarness())
+    dispatcher = new FleetDispatcher({
+      pool,
+      primeQueue,
+      getHarness: vi.fn().mockReturnValue(undefined),
+      ensureHarness,
+      pollIntervalMs: 50,
+    })
+
+    routeResultMock.mockResolvedValue(undefined)
+    dispatcher.start()
+    await new Promise((r) => setTimeout(r, 100))
+
+    expect(ensureHarness).toHaveBeenCalledWith('agent-1')
+    expect(routeResultMock).toHaveBeenCalledWith(
+      expect.objectContaining({ pool }),
+      expect.objectContaining({ id: 'del-1' }),
+      expect.objectContaining({ success: true }),
+    )
+  })
 })
 
 function createPoolMock(): pg.Pool {

@@ -13,4 +13,5 @@ export interface RuntimeLease {
 export interface LeaseResult {
   leaseId: string
   harness: any  // AgentHarness placeholder
+  lease: RuntimeLease
 }

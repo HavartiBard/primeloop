@@ -317,6 +317,129 @@ describe('OpenCodeProcessManager', () => {
     expect(spawnFn).toHaveBeenCalledWith('opencode', ['serve', '--port', '4201'], expect.any(Object))
   })
 
+  it('does not eagerly spawn durable managed runtimes when LAZY_PROVISIONING is enabled', async () => {
+    const previousFlag = process.env.LAZY_PROVISIONING
+    process.env.LAZY_PROVISIONING = '1'
+
+    try {
+      const worktreePath = path.join(rootDir, 'agents', 'lazy-durable')
+      const spawnFn = vi.fn()
+      const fetchFn = vi.fn()
+      const execFileFn = vi.fn().mockResolvedValue({ stdout: '', stderr: '' })
+      const query = vi.fn(async (sql: string) => {
+        if (isLifecycleUpdate(sql) || isRuntimeEventInsert(sql)) return { rows: [], rowCount: 1 }
+        if (sql.startsWith('SELECT * FROM agents WHERE id = $1')) {
+          return { rows: [createAgent({ worktree_path: worktreePath, state: 'idle' })] }
+        }
+        if (sql.startsWith('SELECT * FROM providers')) return { rows: [] }
+        if (sql.startsWith('SELECT * FROM agent_runtime_configs WHERE agent_id = $1')) return { rows: [] }
+        if (sql.startsWith('SELECT token FROM agent_tokens')) return { rows: [{ token: 'agent-token-lazy' }] }
+        if (sql.startsWith('INSERT INTO tool_grants')) {
+          return {
+            rows: [{
+              id: 'grant-lazy',
+              agent_id: 'agent-1',
+              delegation_id: null,
+              work_item_id: null,
+              capability_profile_id: null,
+              routing_capability: 'implementation',
+              granted_primitives: [],
+              granted_capability_bundles: [],
+              selected_provider_adapters: [],
+              exclusion_reasons: [],
+              task_scope: {},
+              approval_state: {},
+              environment_context: {},
+              revocation_state: 'active',
+              revoked_at: null,
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            }],
+          }
+        }
+        if (sql.includes('FROM mcp_servers ms')) return { rows: [] }
+        throw new Error(`unexpected query: ${sql}`)
+      })
+      const pool = { query } as unknown as pg.Pool
+      const manager = new OpenCodeProcessManager(pool, {
+        repoRoot: path.join(rootDir, 'repo'),
+        agentsRoot: path.join(rootDir, 'agents'),
+        spawnFn: spawnFn as any,
+        fetchFn: fetchFn as any,
+        execFileFn: execFileFn as any,
+        sleepFn: async () => {},
+      })
+
+      await manager.syncAgent(createAgent({ worktree_path: worktreePath }))
+
+      expect(spawnFn).not.toHaveBeenCalled()
+      expect(fetchFn).not.toHaveBeenCalled()
+      expect(await readFile(path.join(worktreePath, 'opencode.json'), 'utf8')).toContain('control-plane')
+    } finally {
+      if (previousFlag === undefined) delete process.env.LAZY_PROVISIONING
+      else process.env.LAZY_PROVISIONING = previousFlag
+    }
+  })
+
+  it('coalesces concurrent lazy start requests into a single spawn', async () => {
+    const previousFlag = process.env.LAZY_PROVISIONING
+    process.env.LAZY_PROVISIONING = '1'
+
+    try {
+      const worktreePath = path.join(rootDir, 'agents', 'coalesced-durable')
+      const child = { kill: vi.fn().mockReturnValue(true), on: vi.fn(), stdout: null, stderr: null }
+      const spawnFn = vi.fn().mockReturnValue(child)
+      const fetchFn = vi.fn().mockResolvedValue(new Response(JSON.stringify({ status: 'ok' }), { status: 200 }))
+      const execFileFn = vi.fn().mockResolvedValue({ stdout: '', stderr: '' })
+      const query = vi.fn(async (sql: string) => {
+        if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') return { rows: [], rowCount: 0 }
+        if (sql.includes('pg_advisory_xact_lock')) return { rows: [], rowCount: 1 }
+        if (isLifecycleUpdate(sql) || isRuntimeEventInsert(sql)) return { rows: [], rowCount: 1 }
+        if (sql.startsWith('SELECT * FROM agents WHERE id = $1')) {
+          return { rows: [createAgent({ worktree_path: worktreePath, state: 'idle' })] }
+        }
+        if (sql.includes('SELECT id, agent_id, status, sandbox_id, acquired_at, last_activity_at, released_at')) return { rows: [] }
+        if (sql.includes('INSERT INTO runtime_leases')) {
+          return { rows: [{ id: 'lease-1', agent_id: 'agent-1', status: 'active', sandbox_id: null, acquired_at: new Date().toISOString(), last_activity_at: new Date().toISOString(), released_at: null }] }
+        }
+        if (sql.startsWith('SELECT * FROM providers')) return { rows: [] }
+        if (sql.startsWith('SELECT * FROM agent_runtime_configs WHERE agent_id = $1')) return { rows: [] }
+        if (sql.startsWith('SELECT token FROM agent_tokens')) return { rows: [{ token: 'agent-token-coalesce' }] }
+        if (sql.startsWith('INSERT INTO tool_grants')) {
+          return {
+            rows: [{
+              id: 'grant-coalesce', agent_id: 'agent-1', delegation_id: null, work_item_id: null, capability_profile_id: null,
+              routing_capability: 'implementation', granted_primitives: [], granted_capability_bundles: [], selected_provider_adapters: [],
+              exclusion_reasons: [], task_scope: {}, approval_state: {}, environment_context: {}, revocation_state: 'active', revoked_at: null,
+              created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+            }],
+          }
+        }
+        if (sql.includes('FROM mcp_servers ms')) return { rows: [] }
+        throw new Error(`unexpected query: ${sql}`)
+      })
+      const pool = {
+        query,
+        connect: vi.fn(async () => ({ query, release: vi.fn() })),
+      } as unknown as pg.Pool
+      const manager = new OpenCodeProcessManager(pool, {
+        repoRoot: path.join(rootDir, 'repo'),
+        agentsRoot: path.join(rootDir, 'agents'),
+        spawnFn: spawnFn as any,
+        fetchFn: fetchFn as any,
+        execFileFn: execFileFn as any,
+        sleepFn: async () => {},
+      })
+
+      await Promise.all([manager.ensureAgentStarted('agent-1'), manager.ensureAgentStarted('agent-1')])
+
+      expect(spawnFn).toHaveBeenCalledTimes(1)
+    } finally {
+      if (previousFlag === undefined) delete process.env.LAZY_PROVISIONING
+      else process.env.LAZY_PROVISIONING = previousFlag
+    }
+  })
+
   it('stops a running process for disabled local agents', async () => {
     const child = { kill: vi.fn().mockReturnValue(true), on: vi.fn(), stdout: null, stderr: null }
     const spawnFn = vi.fn().mockReturnValue(child)

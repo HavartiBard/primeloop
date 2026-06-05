@@ -410,5 +410,36 @@ describe('routing layer', () => {
       // Should have at least the default templates (implementer, reviewer)
       expect(truth.spawnableTemplates.length).toBeGreaterThanOrEqual(2)
     })
+
+    it('treats durable ACP agents as dispatchable when lazy provisioning is enabled', async () => {
+      const previousFlag = process.env.LAZY_PROVISIONING
+      process.env.LAZY_PROVISIONING = '1'
+
+      try {
+        setupAgentQuery([
+          {
+            id: 'agent-acp',
+            name: 'Lazy ACP Agent',
+            type: 'general',
+            runtime_family: 'acp',
+            execution_mode: 'local',
+            capabilities: ['general'],
+            config: {},
+            enabled: true,
+            role: 'general',
+            tier: 'durable',
+          },
+        ])
+
+        getHarness = () => undefined
+
+        const truth = await buildRuntimeTruth({ pool, getHarness })
+        expect(truth.dispatchableAgents.length).toBe(1)
+        expect(truth.dispatchableAgents[0].agent.id).toBe('agent-acp')
+      } finally {
+        if (previousFlag === undefined) delete process.env.LAZY_PROVISIONING
+        else process.env.LAZY_PROVISIONING = previousFlag
+      }
+    })
   })
 })

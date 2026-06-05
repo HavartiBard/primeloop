@@ -18,7 +18,7 @@ import { listEphemeralTemplates, type EphemeralTemplate } from '../ephemeral-tem
 
 export interface RuntimeCheckerDeps {
   pool: pg.Pool
-  getHarness: (agentId: string) => AgentHarness | undefined
+  getHarness?: (agentId: string) => AgentHarness | undefined
 }
 
 /**
@@ -28,7 +28,8 @@ export async function checkAgentRuntime(
   deps: RuntimeCheckerDeps,
   agent: RegistryAgent,
 ): Promise<RuntimeAvailability> {
-  const { pool, getHarness } = deps
+  const { pool } = deps
+  const getHarness = deps.getHarness ?? (() => undefined)
 
   // Must be enabled to be dispatchable
   if (!agent.enabled) {
@@ -72,6 +73,22 @@ export async function checkAgentRuntime(
         harnessHealthy: false, // Harness not yet loaded but heartbeat is fresh
         lastCheckedAt: new Date().toISOString(),
       }
+    }
+  }
+
+  // Lazy-provisioned durable ACP/PI agents are dispatchable even before the harness is
+  // running because the dispatcher can start them on first routed work.
+  if (
+    process.env.LAZY_PROVISIONING === '1'
+    && agent.tier === 'durable'
+    && (agent.runtime_family === 'acp' || agent.runtime_family === 'pi')
+  ) {
+    return {
+      agentId: agent.id,
+      enabled: true,
+      capacity: 'dispatchable',
+      harnessHealthy: false,
+      lastCheckedAt: new Date().toISOString(),
     }
   }
 

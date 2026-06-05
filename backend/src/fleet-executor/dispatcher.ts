@@ -15,6 +15,7 @@ export interface FleetDispatcherOptions {
   pool: pg.Pool
   primeQueue: PrimeQueue
   getHarness: (agentId: string) => AgentHarness | undefined
+  ensureHarness?: (agentId: string) => Promise<AgentHarness | undefined>
   pollIntervalMs?: number
 }
 
@@ -22,6 +23,7 @@ export class FleetDispatcher {
   private readonly pool: pg.Pool
   private readonly primeQueue: PrimeQueue
   private readonly getHarness: (agentId: string) => AgentHarness | undefined
+  private readonly ensureHarness?: (agentId: string) => Promise<AgentHarness | undefined>
   private readonly pollIntervalMs: number
   private timer: ReturnType<typeof setInterval> | undefined
 
@@ -29,6 +31,7 @@ export class FleetDispatcher {
     this.pool = opts.pool
     this.primeQueue = opts.primeQueue
     this.getHarness = opts.getHarness
+    this.ensureHarness = opts.ensureHarness
     this.pollIntervalMs = opts.pollIntervalMs ?? 5000
   }
 
@@ -73,6 +76,9 @@ export class FleetDispatcher {
     }
 
     let harness = this.getHarness(agentId)
+    if (!harness && this.ensureHarness) {
+      harness = await this.ensureHarness(agentId)
+    }
 
     // If no harness exists, check if this is an ephemeral template spawn request
     if (!harness) {

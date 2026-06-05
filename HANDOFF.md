@@ -17,7 +17,8 @@ Primary goals:
 ### Landed in code
 - feature flags wired: `RESUME_ON_RESTART`, `LAZY_PROVISIONING`, `CREDENTIAL_BROKER`, `EGRESS_SANDBOX`
 - `runtime_events` session/seq migration scaffolding
-- `SessionStore` base implementation
+- merged/bounded `SessionStore` timeline + `/api/sessions/:id/timeline`
+- Prime loop session-timeline inspector UI
 - recovery path for durable/ephemeral restart handling
 - control-plane LLM proxy route and backend implementation
 - Prime LLM proxy client + proxy-based Prime router path
@@ -26,17 +27,36 @@ Primary goals:
 - egress allowlist default derivation + approval-request path
 - Gitea scoped token issuance support
 - risky credential badge surfaced in the agent UI
+- web TypeScript/build debt blocking the timeline UI has been cleaned up enough for `npm run build` to pass
 
 ### Still open / incomplete
 - runtime-container / launcher image and socket transport (`T061`, `T062`, `T066`)
 - real containment enforcement (`T038`, `T039`, `T040`) and associated isolation tests (`T033`, `T034`, `T035`, `T065`)
 - runtime lease / lazy provisioning implementation (`T041`–`T047`)
-- merged/bounded session timeline completion (`T048`–`T052`)
-- final docs / regression / perf / cleanup pass (`T053`–`T057`, `T060`)
+- audit / regression / perf / cleanup pass (`T054`–`T060`)
 
-### Current environment blocker
-- DB-backed session-timeline tests are currently blocked in this shell because the disposable Postgres container reports healthy but the published host port still refuses TCP connections.
-- Before resuming US4 DB-backed validation, re-check the disposable DB path and confirm `TEST_DATABASE_URL` connectivity from the host shell.
+### Observability audit status (T054)
+Implemented + surfaced in the UI/event feed:
+- `session.resumed`
+- `delegation.recovered`
+- `delegation.recovered_failed`
+- `credential.issued`
+- `credential.rotated`
+- `credential.revoked`
+- `credential.risk_flagged`
+- `egress.denied`
+- `llm.proxied`
+
+Defined but still pending their source implementation work:
+- `runtime.leased`
+- `runtime.reclaimed`
+- `fs.denied`
+- `launcher.auth_denied`
+
+### Validation notes
+- DB-backed session timeline verification now runs reliably through the Docker-networked test path instead of the host-published port.
+- Validated backend command: `docker run --rm --network 024-managed-agent-runtime_default -e TEST_DATABASE_URL=postgresql://primeloop:primeloop_test@postgres-test:5432/primeloop_test primeloop-backend-test npm test -- session-store session-timeline app`
+- Validated frontend command: `cd web && npm run build`
 
 ## Previous direction
 

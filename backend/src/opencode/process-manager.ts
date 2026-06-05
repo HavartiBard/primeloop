@@ -22,6 +22,7 @@ import type { AgentHarness } from '../fleet-executor/harness.js'
 import { recoverInflight } from '../recovery/restart.js'
 import { CredentialBroker } from '../credentials/broker.js'
 import { provisionAgentCredentials, revokeAgentCredentials } from '../credentials/lifecycle.js'
+import { RuntimeLeaseManager } from '../runtime/lease.js'
 
 const execFileAsync = promisify(execFile)
 const DEFAULT_PORT_START = 4200
@@ -171,11 +172,17 @@ export class OpenCodeProcessManager {
   private readonly sleepFn: (ms: number) => Promise<void>
   private readonly processes = new Map<string, ProcessState>()
   private readonly harnesses = new Map<string, AgentHarness>()
+  private readonly startingAgents = new Map<string, Promise<void>>()
   private readonly broker: CredentialBroker
+  private readonly leaseManager: RuntimeLeaseManager
 
-  // Read at call time so the flag can be toggled per-process/test.
+  // Read at call time so the flags can be toggled per-process/test.
   private get credentialBrokerEnabled(): boolean {
     return process.env.CREDENTIAL_BROKER === '1'
+  }
+
+  private get lazyProvisioningEnabled(): boolean {
+    return process.env.LAZY_PROVISIONING === '1'
   }
 
   constructor(
@@ -183,6 +190,7 @@ export class OpenCodeProcessManager {
     deps: ProcessManagerDeps = {},
   ) {
     this.broker = new CredentialBroker(this.pool)
+    this.leaseManager = new RuntimeLeaseManager(this.pool)
     this.repoRoot = deps.repoRoot ?? process.env.AGENT_REPO_ROOT ?? DEFAULT_REPO_ROOT
     this.agentsRoot = deps.agentsRoot ?? process.env.AGENT_WORKTREE_ROOT ?? DEFAULT_AGENTS_ROOT
     this.controlPlaneUrl = deps.controlPlaneUrl ?? process.env.CONTROL_PLANE_URL ?? DEFAULT_CONTROL_PLANE_URL
@@ -225,13 +233,19 @@ export class OpenCodeProcessManager {
       await this.ensureWorktree(preparedAgent)
       await this.writeConfigFiles(preparedAgent)
 
+      const shouldStartImmediately = preparedAgent.tier === 'ephemeral' || !this.lazyProvisioningEnabled
       const existing = this.processes.get(preparedAgent.id)
-      if (!existing) {
+      if (shouldStartImmediately && !existing) {
         await this.startAgent(preparedAgent)
       }
 
-      const readyState = preparedAgent.tier === 'ephemeral' ? 'ready' : 'idle'
-      await this.setAgentState(preparedAgent.id, readyState, 'managed local runtime ready')
+      const readyState = preparedAgent.tier === 'ephemeral'
+        ? 'ready'
+        : (this.lazyProvisioningEnabled ? 'idle' : 'idle')
+      const readyReason = shouldStartImmediately
+        ? 'managed local runtime ready'
+        : 'managed local runtime prepared for lazy provisioning'
+      await this.setAgentState(preparedAgent.id, readyState, readyReason)
       return await this.refreshAgent(preparedAgent.id) ?? preparedAgent
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
@@ -241,6 +255,53 @@ export class OpenCodeProcessManager {
   }
 
   getRunningHarness(agentId: string): AgentHarness | undefined {
+    return this.harnesses.get(agentId)
+  }
+
+  async ensureAgentStarted(agentId: string): Promise<void> {
+    const existingStart = this.startingAgents.get(agentId)
+    if (existingStart) {
+      await existingStart
+      return
+    }
+
+    const startPromise = (async () => {
+      const agent = await this.refreshAgent(agentId)
+      if (!agent || !isManagedLocalAgent(agent)) return
+
+      if (this.lazyProvisioningEnabled && agent.tier === 'durable') {
+        await this.leaseManager.acquire(agentId)
+      }
+
+      const preparedAgent = await this.prepareAgent(agent)
+      await this.ensureWorktree(preparedAgent)
+      await this.writeConfigFiles(preparedAgent)
+
+      const hasProcess = this.processes.has(preparedAgent.id)
+      const hasHarness = this.harnesses.has(preparedAgent.id)
+      if (!hasProcess && !hasHarness) {
+        await this.startAgent(preparedAgent)
+        await this.setAgentState(preparedAgent.id, 'idle', 'managed local runtime started on demand')
+      }
+    })()
+
+    this.startingAgents.set(agentId, startPromise)
+    try {
+      await startPromise
+    } finally {
+      this.startingAgents.delete(agentId)
+    }
+  }
+
+  async ensureHarness(agentId: string): Promise<AgentHarness | undefined> {
+    const existingHarness = this.harnesses.get(agentId)
+    if (existingHarness) return existingHarness
+
+    const agent = await this.refreshAgent(agentId)
+    if (!agent || !isManagedLocalAgent(agent)) return undefined
+    if (agent.runtime_family !== 'acp' && agent.runtime_family !== 'pi') return undefined
+
+    await this.ensureAgentStarted(agentId)
     return this.harnesses.get(agentId)
   }
 

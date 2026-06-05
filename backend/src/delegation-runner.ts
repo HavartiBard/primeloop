@@ -42,6 +42,19 @@ function supportsInjectedContext(runtimeFamily: string): boolean {
   return runtimeFamily === 'opencode' || runtimeFamily === 'codex-app-server'
 }
 
+let runtimeStarter: ((agentId: string) => Promise<void>) | null = null
+
+export function setDelegationRuntimeStarter(starter: ((agentId: string) => Promise<void>) | null): void {
+  runtimeStarter = starter
+}
+
+function isLazyManagedLocalAgent(runtimeFamily: string, executionMode: string, tier?: string): boolean {
+  return process.env.LAZY_PROVISIONING === '1'
+    && tier === 'durable'
+    && executionMode === 'local'
+    && (runtimeFamily === 'opencode' || runtimeFamily === 'codex-app-server')
+}
+
 export async function runDelegation(pool: pg.Pool, delegationId: string): Promise<DelegationRunResult> {
   let delegation = await getDelegation(pool, delegationId)
   if (!delegation) {
@@ -181,6 +194,10 @@ export async function runDelegation(pool: pg.Pool, delegationId: string): Promis
     delegation_id: delegation.id,
     payload: { to_agent_id: agent.id, agent: agent.name, capability: delegation.capability },
   })
+
+  if (runtimeStarter && isLazyManagedLocalAgent(agent.runtime_family, agent.execution_mode, agent.tier)) {
+    await runtimeStarter(agent.id)
+  }
 
   const adapter = createAgentAdapter(agent)
   const resultEvents: Array<Record<string, unknown>> = []

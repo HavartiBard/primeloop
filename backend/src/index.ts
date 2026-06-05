@@ -4,6 +4,7 @@ import { createPool, runMigrations, seedRegistry } from './db.js'
 import { listAgents, upsertLocalCodexProvider } from './registry.js'
 import { createBroadcaster } from './ws/broadcast.js'
 import { createApp } from './app.js'
+import { setDelegationRuntimeStarter } from './delegation-runner.js'
 import { createSlackBot, notifyApprovalNeeded } from './slack/bot.js'
 import { insertEvent } from './events/store.js'
 import type { AgentEvent } from './events/types.js'
@@ -13,6 +14,7 @@ import { OpenCodeProcessManager } from './opencode/process-manager.js'
 import { PostgresCheckpointStore } from './checkpoint-store.js'
 import { createPrimeAgentService } from './prime-agent/service.js'
 import { FleetDispatcher } from './fleet-executor/dispatcher.js'
+import { startRuntimeLeaseReclaimScheduler } from './runtime/lease.js'
 
 const {
   DATABASE_URL = '',
@@ -69,6 +71,7 @@ if (recoveredCount > 0) {
 traceStep('checkpoint recovery complete')
 
 const processManager = new OpenCodeProcessManager(pool)
+setDelegationRuntimeStarter((agentId) => processManager.ensureAgentStarted(agentId))
 traceStep('process manager created')
 
 async function publishStoredEvent(type: string, payload: Record<string, unknown>): Promise<void> {
@@ -91,6 +94,7 @@ const fleetDispatcher = new FleetDispatcher({
   pool,
   primeQueue: primeAgentService.queue,
   getHarness: (agentId) => processManager.getRunningHarness(agentId),
+  ensureHarness: (agentId) => processManager.ensureHarness(agentId),
 })
 
 traceStep('starting prime agent service')
@@ -125,6 +129,9 @@ function broadcast(event: AgentEvent): void {
 }
 
 // Start integrations for all enabled agents from the registry
+let auditTasks: Array<{ stop: () => void }> = []
+let leaseReclaimTask: { stop: () => void } | null = null
+
 if (!minimalBoot) {
   traceStep('starting integrations')
   const agents = await listAgents(pool)
@@ -132,11 +139,19 @@ if (!minimalBoot) {
     startIntegration(agent, { pool, broadcast })
   }
   traceStep('starting audit scheduler')
-  const auditTasks = await startAuditScheduler(pool)
+  auditTasks = await startAuditScheduler(pool)
   if (auditTasks.length > 0) {
     console.log(`Started ${auditTasks.length} audit scheduler(s)`)
   }
   traceStep('audit scheduler started')
+
+  traceStep('starting runtime lease reclaim scheduler')
+  leaseReclaimTask = startRuntimeLeaseReclaimScheduler(pool, {
+    onReclaimed: async (agentId) => {
+      processManager.stopAgent(agentId)
+    },
+  })
+  traceStep('runtime lease reclaim scheduler started')
 }
 
 const app = createApp({
@@ -193,6 +208,9 @@ server.listen(parseInt(PORT), () => {
 })
 
 process.on('SIGTERM', async () => {
+  setDelegationRuntimeStarter(null)
+  for (const task of auditTasks) task.stop()
+  leaseReclaimTask?.stop()
   await fleetDispatcher.stop()
   await primeAgentService.close()
   server.close()
