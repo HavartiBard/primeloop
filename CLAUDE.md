@@ -1,5 +1,5 @@
 <!-- SPECKIT START -->
-Current Speckit plan: `specs/024-managed-agent-runtime/plan.md`
+Current Speckit plan: `specs/026-agent-catalog/plan.md`
 
 Completed specs:
 - specs/017-expand-agent-canvas-ux
