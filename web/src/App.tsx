@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from 'react'
 import { useQuery, QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { ActivitySquare, Bot, BookOpen, CalendarClock, CircuitBoard, MessageSquare, PuzzleIcon, Server, Settings as SettingsIcon, Sliders } from 'lucide-react'
+import { ActivitySquare, Bot, BookOpen, CalendarClock, CircuitBoard, Library, MessageSquare, PuzzleIcon, Server, Settings as SettingsIcon, Sliders } from 'lucide-react'
 import { Sidebar } from './components/Sidebar'
 import { FloatingTabbedWindow } from './components/FloatingTabbedWindow'
 import type { NavItem } from './components/Sidebar'
@@ -12,6 +12,7 @@ import { Settings, type SettingsTabId } from './pages/Settings'
 import { GoalList, GoalDetail } from './pages/goals'
 import { ApprovalQueue } from './pages/approvals/ApprovalQueue'
 import { LearningRecords } from './pages/learning/LearningRecords'
+import { Catalog } from './pages/Catalog'
 import { LoopPage } from './pages/prime/LoopPage'
 import { useApprovals } from './hooks/useApprovals'
 import { useSetupStatus } from './hooks/useSetupStatus.js'
@@ -31,6 +32,7 @@ const NAV: NavItem[] = [
   { label: 'Rooms',     icon: <MessageSquare className={ICON_CLS} />, href: '/' },
   { label: 'Goals',     icon: <Bot className={ICON_CLS} />,           href: '/goals' },
   { label: 'Approvals', icon: <Server className={ICON_CLS} />,        href: '/approvals' },
+  { label: 'Catalog',   icon: <Library className={ICON_CLS} />,       href: '/catalog' },
   { label: 'Schedule',  icon: <CalendarClock className={ICON_CLS} />, href: '/schedule' },
   { label: 'Settings',  icon: <SettingsIcon className={ICON_CLS} />,  href: '/settings' },
 ]
@@ -433,6 +435,7 @@ function Layout() {
     : page.startsWith('/goals/') ? GoalDetail
     : page === '/goals'      ? GoalList
     : page === '/approvals'  ? ApprovalQueue
+    : page === '/catalog'    ? Catalog
     : page === '/learning'   ? LearningRecords
     : page === '/prime/loop' ? LoopPage
     : page === '/schedule'   ? Schedule
