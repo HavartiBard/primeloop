@@ -1,88 +1,91 @@
 # Contract: Catalog Template File Schema (YAML)
 
-The authoring contract for an agent template. One template per YAML file in a catalog source. Field names are the contract; `catalog/schema.ts` enforces required/optional and `catalog/validator.ts` enforces semantics.
+The authoring contract for an agent template. One template per YAML file in a catalog source. Field names are the contract; `catalog/schema.ts` enforces required/optional structure and `catalog/validator.ts` enforces semantics. This doc is reconciled to the **implemented** schema (flat fields, `string[]` for deny/credential lists).
 
 ## Required fields
 
+`catalog/schema.ts` `REQUIRED_FIELDS`:
+
 | Field | Type | Description |
 |-------|------|-------------|
-| `apiVersion` | string | Schema version, e.g. `catalog/v1`. Enables future migration. |
-| `id` | string | Stable, durable identifier (slug). Unique within the catalog. |
+| `templateId` | string | Stable, durable identifier (slug). Unique within the catalog. |
 | `name` | string | Human-readable display name. |
 | `version` | string | Author-supplied version (semver recommended). Immutable once registered. |
-| `agentType` | string | Runtime family / type (must be a known runtime family). |
+| `agentType` | string | Agent type. |
+| `runtimeFamily` | string | Runtime family (e.g. `opencode`, `acp`). |
 | `lifecycleIntent` | enum | `durable` \| `ephemeral`. |
-| `definition.systemPrompt` | string \| `{ file: <path> }` | Full system prompt, inline or file reference. |
-| `definition.soul` | string \| `{ file: <path> }` | Soul definition, inline or file reference. |
-| `definition.persona` | string \| `{ file: <path> }` | Persona content, inline or file reference. |
-| `capabilityProfile.platformPrimitives` | string[] | Declared platform primitives. |
-| `capabilityProfile.capabilityBundles` | string[] | Declared capability bundles. |
-| `runtimeRequirements` | object | See below; runtime bounds the agent must run within. |
-| `approvalPolicy` | object | See below. |
-
-### `runtimeRequirements` (required object)
-| Field | Type | Req | Description |
-|-------|------|-----|-------------|
-| `limits` | object | yes | e.g. `{ maxTokens, maxDurationMs, maxConcurrentProcesses }`. |
-| `filesystemScope` | string | yes | Working-dir scope (default-deny outside). |
-| `egressAllowlist` | string[] | yes | Allowed outbound hosts (default-deny; empty = none). |
-| `trustZone` | string | no | Defaults to `local`. |
-
-### `approvalPolicy` (required object)
-| Field | Type | Req | Description |
-|-------|------|-----|-------------|
-| `default` | enum | yes | `human` (default) \| `auto`. |
-| `autoEligible` | boolean | no | If true, auto-approval is *requested* — honored only within the safe baseline. |
+| `capabilityProfile` | object | The declared powers (see below). |
 
 ## Optional fields
 
+The complete agent definition is carried via these (system prompt / soul / persona may be inline **or** referenced by a sibling `*File` path; file refs are resolved into the frozen snapshot at registration):
+
 | Field | Type | Description |
 |-------|------|-------------|
-| `description` | string | Notes/summary. |
-| `metadata` | object | Tags, owner, etc. |
-| `capabilityProfile.denyRules` | object[] | Explicit deny rules (e.g. block a primitive/bundle). |
-| `toolAccess` | string[] / object[] | Tools the agent may use (bounded by the capability profile). |
+| `systemPrompt` | string | Inline system prompt. |
+| `systemPromptFile` | string | Path to a system-prompt file in the catalog (alternative to inline). |
+| `soul` | string | Inline soul. |
+| `soulFile` | string | Path to a soul file. |
+| `persona` | string | Inline persona. |
+| `personaFile` | string | Path to a persona file. |
+| `toolAccess` | string[] | Tools the agent may use (bounded by the capability profile). |
 | `mcpAccess` | string[] | MCP server names (must exist in `mcp_servers`). |
-| `credentialNeeds` | object[] | `{ name, scope? }` named brokered credentials. **No secret values.** |
-| `routing` | object | `{ capabilities: string[], role?: string }` for Prime dispatch. |
-| `source` | object | `{ repo, ref, path }` provenance when published to Git (omitted for local-only). |
+| `credentialNeeds` | string[] | Named brokered credentials required. **No secret values.** |
+| `runtimeRequirements` | object | Runtime bounds (see below). |
+| `approvalPolicy` | object | `{ autoEligible?: boolean }` — auto-approval is honored only if grants are within the safe baseline; otherwise forced to human approval. |
+| `routing` | object | `{ preferredRole?: string, workClass?: string }` for Prime dispatch. |
+
+### `capabilityProfile` (required object)
+| Field | Type | Description |
+|-------|------|-------------|
+| `platformPrimitives` | string[] | Declared platform primitives (validated against the real primitive set — see `catalog/primitives.ts`). |
+| `capabilityBundles` | string[] | Declared capability bundles (validated against `capability_bundle_adapters`). |
+| `denyRules` | string[] | Explicit deny entries. |
+
+### `runtimeRequirements` (optional object)
+| Field | Type | Description |
+|-------|------|-------------|
+| `limits` | object | `{ maxTokens?, maxMemoryMB? }`. |
+| `filesystemScope` | object | `{ read?: string[], write?: string[] }`. |
+| `egress` | object | `{ allowlist?: string[] }` (default-deny). |
+
+> **Note:** `provenance` (source / commitSha / sourcePath / sourceRef / version) is **system-populated** at sync/registration time and is not an authored field.
 
 ## Example
 
 ```yaml
-apiVersion: catalog/v1
-id: research-specialist
+templateId: research-specialist
 name: Research Specialist
 version: 1.0.0
-agentType: opencode
+agentType: research-specialist
+runtimeFamily: opencode
 lifecycleIntent: ephemeral
-description: Read-only repository research with one MCP server.
-definition:
-  systemPrompt: { file: ./prompts/research-specialist.system.md }
-  soul: "Methodical researcher. Reads broadly, cites precisely, never writes."
-  persona: { file: ./prompts/research-specialist.persona.md }
+soul: "Methodical researcher. Reads broadly, cites precisely, never writes."
+systemPromptFile: ./prompts/research-specialist.system.md
+personaFile: ./prompts/research-specialist.persona.md
 capabilityProfile:
   platformPrimitives: [update_work_item, soul.read, memory.read]
   capabilityBundles: [repo.read]
-  denyRules:
-    - { kind: bundle, bundle: repo.write, reason: read-only researcher }
-toolAccess: [grep, read, web.search]
+  denyRules: [repo.write]
+toolAccess: [grep, read]
 mcpAccess: [hister]
 runtimeRequirements:
-  limits: { maxTokens: 30000, maxDurationMs: 180000, maxConcurrentProcesses: 1 }
-  filesystemScope: workdir
-  egressAllowlist: []
+  limits: { maxTokens: 30000, maxMemoryMB: 512 }
+  filesystemScope: { read: ["."], write: [] }
+  egress: { allowlist: [] }
 approvalPolicy:
-  default: human
-  autoEligible: true   # honored only because grants are read-only & within safe baseline
+  autoEligible: true   # honored only because grants are read-only & within the safe baseline
 routing:
-  capabilities: [research]
+  preferredRole: research
 ```
 
 ## Validation contract (summary)
 
-- Missing any required field → `MISSING_REQUIRED_FIELD` (rejected, not approvable).
-- Unknown bundle/primitive/MCP/credential/provider → corresponding `UNKNOWN_*` (rejected).
-- `toolAccess`/`mcpAccess`/`credentialNeeds` exceeding the capability profile → `LEAST_PRIVILEGE_VIOLATION` (rejected).
-- Inline secret in `credentialNeeds` or elsewhere → `SECRET_VALUE_PRESENT` (rejected).
-- `autoEligible: true` but grants exceed the safe baseline → `APPROVAL_POLICY_DOWNGRADED` (warning; forced to human approval, not rejected).
+- Missing any required field → `MISSING_REQUIRED_FIELD`; wrong shape → `INVALID_FIELD_TYPE` (rejected, not approvable).
+- Unknown bundle / primitive / MCP / credential → corresponding `UNKNOWN_*` (rejected).
+- `toolAccess`/`mcpAccess` exceeding what the capability profile enables → `LEAST_PRIVILEGE_VIOLATION` (rejected). Declaring `credentialNeeds` is **not** itself a violation; provisioning is checked at instantiation.
+- Real secret *values* (PEM blocks, `sk-…`, `AKIA…`, high-entropy strings, `key:/password=` assignments) in prompt/soul/persona → `SECRET_VALUE_PRESENT` (rejected). Merely mentioning words like "password" is not flagged.
+- `autoEligible: true` but grants exceed the safe baseline → `APPROVAL_POLICY_DOWNGRADED` — a **warning**, not a rejection: the template is validated but forced to human approval.
+- `VERSION_CONFLICT` — the same `templateId@version` appears twice (or is reused with different content); `DUPLICATE_TEMPLATE_ID` — same `templateId` twice in a batch.
+
+`validateTemplate(yamlContent, context)` returns `{ errors: FailureReason[]; warnings: FailureReason[] }`; an entry is rejected only when `errors` is non-empty.

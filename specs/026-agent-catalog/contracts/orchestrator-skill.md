@@ -1,5 +1,7 @@
 # Contract: Orchestrator (Prime) Catalog Skill
 
+> **Implementation status: ⬜ planned (US4).** Not yet implemented — this is the design contract for the orchestrator skill phase.
+
 Lets Prime curate and instantiate agents from registered templates. Exposed as control-plane tools through the existing `mcp/service.ts` `listControlPlaneTools` mechanism (same surface Prime already uses), plus a skill prompt describing curation behavior. Instantiation always routes through the template's approval policy and the existing approval queue; Prime can never widen authority beyond the declaration (FR-029/FR-030).
 
 ## Control-plane tools

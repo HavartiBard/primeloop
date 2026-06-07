@@ -4,4 +4,4 @@ build/
 *.log
 .env*
 coverage/
-catalog/
+/catalog/

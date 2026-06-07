@@ -59,13 +59,13 @@ Web app: backend at `backend/src/`, tests at `backend/tests/`, UI at `web/src/`.
 
 ### Implementation for User Story 1
 
-- [ ] T016 [P] [US1] Implement the local source reader in `backend/src/catalog/source.ts`: list/read YAML files from a local source and resolve `{ file: ... }` references for `systemPrompt`/`soul`/`persona` into a fully-resolved definition
-- [ ] T017 [US1] Implement the registrar in `backend/src/catalog/registrar.ts`: on approval, upsert a `capability_profiles` row from the declared profile, freeze the version snapshot, set `catalog_templates.current_version_id`, and record the `capability_profile_id` (depends on T008, T009)
-- [ ] T018 [US1] Implement instantiation in `backend/src/catalog/instantiate.ts`: registered version → `agents` row (tier from `lifecycleIntent`) + `agent_runtime_configs` + `agent_mcp_assignments` + `tool_grant_defaults`, linked via `catalog_template_version_id`; **no process boot**; return `CREDENTIAL_NOT_PROVISIONED` block when a declared credential is absent (depends on T017)
-- [ ] T019 [US1] Wire the admission sync orchestration (local) in `backend/src/catalog/admission.ts`: discovered → validate → validated; return `SyncEntryResult[]` (depends on T010, T016)
-- [ ] T020 [US1] Implement US1 endpoints in `backend/src/routes/catalog.ts`: `GET /templates`, `GET /templates/:id`, `POST /sync` (local), `POST /templates/:id/versions/:v/validate`, `POST /templates/:id/versions/:v/approve`, `POST /templates/:id/versions/:v/instantiate` (depends on T017, T018, T019)
-- [ ] T021 [US1] Integrate approval-queue linkage: approval creates/links an `approvals` row and records the `approval_id` on the version (per data-model.md)
-- [ ] T022 [US1] Add structured logging + error handling for sync/approve/instantiate and append admission events with `actor` for each transition in `backend/src/routes/catalog.ts` and `backend/src/catalog/admission.ts`
+- [x] T016 [P] [US1] Implement the local source reader in `backend/src/catalog/source.ts`: list/read YAML files from a local source and resolve `{ file: ... }` references for `systemPrompt`/`soul`/`persona` into a fully-resolved definition
+- [x] T017 [US1] Implement the registrar in `backend/src/catalog/registrar.ts`: on approval, upsert a `capability_profiles` row from the declared profile, freeze the version snapshot, set `catalog_templates.current_version_id`, and record the `capability_profile_id` (depends on T008, T009)
+- [x] T018 [US1] Implement instantiation in `backend/src/catalog/instantiate.ts`: registered version → `agents` row (tier from `lifecycleIntent`) + `agent_runtime_configs` + `agent_mcp_assignments` + `tool_grant_defaults`, linked via `catalog_template_version_id`; **no process boot**; return `CREDENTIAL_NOT_PROVISIONED` block when a declared credential is absent (depends on T017)
+- [x] T019 [US1] Wire the admission sync orchestration (local) in `backend/src/catalog/admission.ts`: discovered → validate → validated; return `SyncEntryResult[]` (depends on T010, T016)
+- [x] T020 [US1] Implement US1 endpoints in `backend/src/routes/catalog.ts`: `GET /templates`, `GET /templates/:id`, `POST /sync` (local), `POST /templates/:id/versions/:v/validate`, `POST /templates/:id/versions/:v/approve`, `POST /templates/:id/versions/:v/instantiate` (depends on T017, T018, T019)
+- [x] T021 [US1] Integrate approval-queue linkage: approval creates/links an `approvals` row and records the `approval_id` on the version (per data-model.md)
+- [x] T022 [US1] Add structured logging + error handling for sync/approve/instantiate and append admission events with `actor` for each transition in `backend/src/routes/catalog.ts` and `backend/src/catalog/admission.ts`
 - [ ] T023 [P] [US1] Build the Catalog admin view in `web/src/` (list templates with admission-state badges, detail view, Approve + Instantiate actions) reusing settings/admin (021) + approval-queue (008) patterns, with loading/empty/success/error states
 
 **Checkpoint**: A valid local template can be imported, approved, registered, and instantiated end-to-end (SC-001). MVP complete.
