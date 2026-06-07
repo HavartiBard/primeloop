@@ -111,7 +111,7 @@ async function probeCandidate(candidate: DiscoveryCandidate, apiKey?: string): P
       return healthResponse.ok
     }
 
-    const headers = apiKey ? { Authorization: `Bearer ${apiKey}` } : {}
+    const headers: Record<string, string> = apiKey ? { Authorization: `Bearer ${apiKey}` } : {}
     const v1Response = await fetchJson(`${candidate.baseUrl}/v1/models`, headers)
     if (v1Response.ok) return true
     const modelsResponse = await fetchJson(`${candidate.baseUrl}/models`, headers)
