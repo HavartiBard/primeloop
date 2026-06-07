@@ -1,4 +1,6 @@
 node_modules/
 dist/
-*.js.map
-.env
+build/
+*.log
+.env*
+coverage/

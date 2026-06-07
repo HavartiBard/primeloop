@@ -1069,6 +1069,91 @@ VALUES ('role_architect', 'Architect', 'durable', ARRAY['development','cross_dom
   'Durable quality role — grading review, playbooks, template updates, cross-cutting consistency', false)
 ON CONFLICT (name) DO NOTHING;
 
+-- =============================================================
+-- Agent Catalog tables — Spec 026
+-- Idempotent: safe to re-run. Uses CREATE TABLE IF NOT EXISTS.
+-- =============================================================
+
+CREATE TABLE IF NOT EXISTS catalog_sources (
+  id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  kind       TEXT NOT NULL CHECK (kind IN ('local', 'git')),
+  name       TEXT NOT NULL UNIQUE,
+  location   TEXT NOT NULL,
+  default_ref TEXT NULL,
+  subpath    TEXT NULL,
+  enabled    BOOLEAN NOT NULL DEFAULT true,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS catalog_templates (
+  id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  template_id         TEXT NOT NULL UNIQUE,
+  name                TEXT NOT NULL,
+  -- current_version_id FK is added via ALTER below, after
+  -- catalog_template_versions exists (avoids a forward-reference failure on a
+  -- fresh database where neither table exists yet).
+  current_version_id  UUID NULL,
+  lifecycle_state     TEXT NOT NULL DEFAULT 'available' CHECK (lifecycle_state IN ('available', 'deprecated')),
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS catalog_template_versions (
+  id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  template_pk           UUID NOT NULL REFERENCES catalog_templates(id) ON DELETE CASCADE,
+  version               TEXT NOT NULL,
+  admission_state       TEXT NOT NULL CHECK (admission_state IN ('discovered', 'validated', 'rejected', 'pending_approval', 'registered', 'deprecated', 'active')),
+  resolved_definition   JSONB NOT NULL,
+  content_hash          TEXT NOT NULL,
+  source_id             UUID NULL REFERENCES catalog_sources(id) ON DELETE SET NULL,
+  commit_sha            TEXT NULL,
+  source_path           TEXT NULL,
+  source_ref            TEXT NULL,
+  capability_profile_id UUID NULL REFERENCES capability_profiles(id) ON DELETE SET NULL,
+  failure_reasons       JSONB NOT NULL DEFAULT '[]',
+  approval_id           TEXT NULL REFERENCES approvals(id) ON DELETE SET NULL,
+  auto_approved         BOOLEAN NOT NULL DEFAULT false,
+  created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (template_pk, version)
+);
+
+CREATE INDEX IF NOT EXISTS idx_catalog_template_versions_admission_state ON catalog_template_versions (admission_state);
+CREATE INDEX IF NOT EXISTS idx_catalog_template_versions_content_hash ON catalog_template_versions (content_hash);
+
+-- Now that catalog_template_versions exists, wire the catalog_templates ->
+-- current_version_id FK (idempotent).
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'catalog_templates_current_version_id_fkey'
+  ) THEN
+    ALTER TABLE catalog_templates
+      ADD CONSTRAINT catalog_templates_current_version_id_fkey
+      FOREIGN KEY (current_version_id) REFERENCES catalog_template_versions(id) ON DELETE SET NULL;
+  END IF;
+END $$;
+
+CREATE TABLE IF NOT EXISTS catalog_admission_events (
+  id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  version_id   UUID NOT NULL REFERENCES catalog_template_versions(id) ON DELETE CASCADE,
+  from_state   TEXT NULL,
+  to_state     TEXT NOT NULL,
+  actor        TEXT NOT NULL CHECK (actor IN ('operator', 'prime', 'sync', 'migrate')),
+  reason       TEXT NULL,
+  metadata     JSONB NOT NULL DEFAULT '{}',
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Add provenance column to agents table
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS catalog_template_version_id UUID NULL REFERENCES catalog_template_versions(id) ON DELETE SET NULL;
+
+-- Seed default local source (idempotent)
+INSERT INTO catalog_sources (kind, name, location, enabled)
+VALUES ('local', 'default-local', 'backend/catalog', true)
+ON CONFLICT (name) DO NOTHING;
+
   `)
 }
 

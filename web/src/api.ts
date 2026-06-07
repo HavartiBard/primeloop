@@ -886,6 +886,154 @@ export async function patchPrimeProfileSection(
   return res.json()
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Agent Catalog (spec 026)
+// ─────────────────────────────────────────────────────────────────────────────
+
+import type { CatalogSource, CatalogTemplateVersionSnapshot, FailureReason } from './types/catalog'
+
+export interface CatalogTemplateSummary {
+  id: string
+  templateId: string
+  name: string
+  currentVersionId?: string
+  lifecycleState: string
+  createdAt: string
+  updatedAt: string
+}
+
+export async function fetchCatalogTemplates(): Promise<CatalogTemplateSummary[]> {
+  const res = await fetch(`${API_BASE}/catalog/templates`)
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  const data = await res.json() as { templates: CatalogTemplateSummary[] }
+  return data.templates
+}
+
+export async function fetchCatalogTemplate(id: string): Promise<{
+  template: CatalogTemplateSummary
+  versions: CatalogTemplateVersionSnapshot[]
+}> {
+  const res = await fetch(`${API_BASE}/catalog/templates/${encodeURIComponent(id)}`)
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json()
+}
+
+export async function syncCatalog(opts?: { sourceId?: string; ref?: string }): Promise<{
+  results: Array<{
+    templateId: string
+    version: string
+    outcome: 'admitted' | 'rejected' | 'duplicate'
+    admissionState?: string
+    failureReasons?: FailureReason[]
+  }>
+}> {
+  const res = await fetch(`${API_BASE}/catalog/sync`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(opts ?? {}),
+  })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json()
+}
+
+export async function validateCatalogVersion(templateId: string, version: string): Promise<{
+  state: string
+  failureReasons: FailureReason[]
+}> {
+  const res = await fetch(`${API_BASE}/catalog/templates/${encodeURIComponent(templateId)}/versions/${encodeURIComponent(version)}/validate`, {
+    method: 'POST',
+  })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json()
+}
+
+export async function approveCatalogVersion(templateId: string, version: string, note?: string): Promise<{
+  state: string
+  capabilityProfileId?: string
+}> {
+  const res = await fetch(`${API_BASE}/catalog/templates/${encodeURIComponent(templateId)}/versions/${encodeURIComponent(version)}/approve`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ note }),
+  })
+  if (!res.ok) {
+    const body = await readResponseBody<{ error?: string; code?: string }>(res) as { error?: string; code?: string } | null
+    throw new Error(body?.error ?? `HTTP ${res.status}`)
+  }
+  return res.json()
+}
+
+export async function instantiateCatalogVersion(templateId: string, version: string, overrides?: { name?: string }): Promise<{
+  agentId?: string
+  state?: string
+  error?: string
+  code?: string
+  missingCredentials?: string[]
+}> {
+  const res = await fetch(`${API_BASE}/catalog/templates/${encodeURIComponent(templateId)}/versions/${encodeURIComponent(version)}/instantiate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ overrides }),
+  })
+  const body = await readResponseBody<{ agentId?: string; state?: string; error?: string; code?: string; missingCredentials?: string[] }>(res)
+  if (!res.ok) return body as { error?: string; code?: string } ?? { error: `HTTP ${res.status}` }
+  return body as { agentId?: string; state?: string }
+}
+
+export async function rollbackCatalogTemplate(templateId: string, version: string): Promise<{ success: boolean; versionId?: string }> {
+  const res = await fetch(`${API_BASE}/catalog/templates/${encodeURIComponent(templateId)}/rollback`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ version }),
+  })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json()
+}
+
+export async function deprecateCatalogTemplate(templateId: string): Promise<{ success: boolean }> {
+  const res = await fetch(`${API_BASE}/catalog/templates/${encodeURIComponent(templateId)}/deprecate`, {
+    method: 'POST',
+  })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json()
+}
+
+export async function fetchCatalogSources(): Promise<CatalogSource[]> {
+  const res = await fetch(`${API_BASE}/catalog/sources`)
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  const data = await res.json() as { sources: CatalogSource[] }
+  return data.sources
+}
+
+export async function createCatalogSource(data: {
+  kind: 'local' | 'git'
+  name: string
+  location: string
+  defaultRef?: string
+  subpath?: string
+}): Promise<CatalogSource> {
+  const res = await fetch(`${API_BASE}/catalog/sources`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  const body = await res.json() as { source: CatalogSource }
+  return body.source
+}
+
+export async function runCatalogMigrate(write = false): Promise<{
+  drafts: Array<{ templateId: string; filename: string; yaml: string }>
+  written: string[]
+  errors: string[]
+}> {
+  const res = await fetch(`${API_BASE}/catalog/migrate${write ? '?write=true' : ''}`, {
+    method: 'POST',
+  })
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json()
+}
+
 // Canvas layout persistence
 
 export async function fetchCanvasLayout(): Promise<Record<string, { x: number; y: number }>> {

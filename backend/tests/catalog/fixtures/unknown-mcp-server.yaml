@@ -1,0 +1,10 @@
+templateId: unknown-mcp
+name: Unknown MCP Server
+version: "1.0.0"
+agentType: opencode
+runtimeFamily: opencode
+lifecycleIntent: ephemeral
+capabilityProfile:
+  platformPrimitives: []
+  capabilityBundles: []
+mcpAccess: [nonexistent-mcp-server-xyz]

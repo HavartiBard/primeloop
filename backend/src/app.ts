@@ -17,6 +17,7 @@ import { createSetupRouter } from './routes/setup.js'
 import { createPrimeProfileRouter } from './routes/prime-profile.js'
 import { createCanvasRouter } from './routes/canvas.js'
 import { createLlmProxyRouter } from './routes/llm-proxy.js'
+import { createCatalogRouter } from './routes/catalog.js'
 import type { PrimeQueue } from './prime-agent/queue.js'
 import type { RegistryAgent } from './registry.js'
 import type WebSocket from 'ws'
@@ -124,6 +125,7 @@ export function createApp(deps: AppDeps): express.Express {
     onSetupCompleted: deps.onSetupCompleted,
   }))
   app.use('/api/canvas', createCanvasRouter({ pool: deps.pool }))
+  app.use('/api/catalog', createCatalogRouter({ pool: deps.pool }))
   app.use('/', createLlmProxyRouter({ pool: deps.pool }))
   app.use('/api', createRuntimeRouter({ pool: deps.pool }))
 

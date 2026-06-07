@@ -1,0 +1,9 @@
+templateId: invalid-types
+name: Invalid Field Types
+version: "1.0.0"
+agentType: opencode
+runtimeFamily: opencode
+lifecycleIntent: ephemeral
+capabilityProfile:
+  platformPrimitives: "should-be-an-array"
+  capabilityBundles: []

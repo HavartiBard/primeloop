@@ -117,6 +117,42 @@ See `specs/025-launcher-path-deployment/` for detailed documentation:
 - Runtime containment enforcement audited
 - Operator UX/status terminology reviewed
 
+## Agent Catalog [✓ COMPLETE]
+
+The Agent Catalog (spec 026) is implemented and live. All new managed agents must be created through the catalog. See `docs/agent-catalog.md` for the full architecture and usage guide.
+
+### Key rules for catalog work
+
+- **Never create agents by writing directly to the `agents` table.** Use `POST /api/catalog/templates/:id/versions/:v/instantiate` or the Prime control-plane tools (`catalog_instantiate`).
+- **Never widen grants.** Effective grants = declaration ∩ runtime policy. `resolveToolGrant` enforces this at instantiation; do not attempt to bypass it.
+- **All catalog writes flow through the state machine.** Do not update `catalog_template_versions.admission_state` directly. Use `approveVersion`, `validateVersion`, `rollbackVersion`, `deprecateTemplate` from `backend/src/catalog/admission.ts`.
+- **`catalog_template_version_id` must be set** on every managed agent row created from a template version. `instantiateFromVersion` does this; direct inserts must include it.
+- **`spawnEphemeralAgent` checks the catalog first.** The in-code `DEFAULT_EPHEMERAL_TEMPLATES` literals are now fallbacks only — the catalog is authoritative once the seed templates are registered.
+- **`bootstrapDurableStaff` checks the catalog first.** Same pattern: catalog wins, in-code fallback used for unseeded roles.
+
+### Module locations
+
+| Concern | File |
+|---------|------|
+| Types | `backend/src/catalog/types.ts` |
+| Validation | `backend/src/catalog/validator.ts` |
+| Admission state machine | `backend/src/catalog/admission.ts` |
+| DB store | `backend/src/catalog/store.ts` |
+| Instantiation | `backend/src/catalog/instantiate.ts` |
+| Migration from in-code | `backend/src/catalog/migrate.ts` |
+| Prime tools | `backend/src/catalog/orchestrator-tools.ts` |
+| REST router | `backend/src/routes/catalog.ts` |
+| Seed YAML files | `backend/catalog/*.yaml` |
+| Persona files | `backend/prompts/agents/*.md` |
+
+### Catalog implementation phases [✓ ALL COMPLETE]
+
+**US1 (Foundational)**: DB tables, validator, admission state machine, local sync, approve, instantiate
+**US2 (Failure modes)**: All 13 failure codes, batch isolation, reject-then-fix workflow
+**US3 (Versioning)**: Git sync with SHA provenance, versioning, rollback, deprecation
+**US4 (Prime tools)**: `catalog_list_registered`, `catalog_propose_instantiation`, `catalog_instantiate`; Prime skill doc
+**US5 (Migration)**: Seed YAML files, migrator, spawn/bootstrap repointed to catalog, parity tests
+
 ## Verification
 
 - Run only the verification command requested in the task.

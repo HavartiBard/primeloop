@@ -1,0 +1,20 @@
+templateId: valid-researcher
+name: Valid Researcher
+version: "1.0.0"
+agentType: opencode
+runtimeFamily: opencode
+lifecycleIntent: ephemeral
+soul: "Methodical researcher. Reads broadly, cites precisely."
+systemPrompt: "You are a research specialist. Read the repository and summarize findings."
+capabilityProfile:
+  platformPrimitives: [update_work_item, soul.read, memory.read]
+  capabilityBundles: []
+  denyRules: []
+runtimeRequirements:
+  limits:
+    maxTokens: 30000
+    maxMemoryMB: 512
+  egress:
+    allowlist: []
+approvalPolicy:
+  autoEligible: false
