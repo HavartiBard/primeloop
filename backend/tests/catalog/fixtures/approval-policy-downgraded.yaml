@@ -1,0 +1,11 @@
+templateId: auto-eligible-exceeds-baseline
+name: Auto Eligible But Exceeds Baseline
+version: "1.0.0"
+agentType: opencode
+runtimeFamily: opencode
+lifecycleIntent: ephemeral
+capabilityProfile:
+  platformPrimitives: [delegate, update_work_item]
+  capabilityBundles: []
+approvalPolicy:
+  autoEligible: true

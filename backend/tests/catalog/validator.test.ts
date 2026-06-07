@@ -345,3 +345,99 @@ approvalPolicy:
     expect(codes(warnings)).not.toContain('APPROVAL_POLICY_DOWNGRADED');
   });
 });
+
+// ─── T024: Full failure-code matrix via fixture files ────────────────────────
+// Each fixture is a YAML file designed to trigger exactly one failure code.
+// SC-002: 100% of templates violating a rule are rejected with a named reason.
+import { readFileSync } from 'fs';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const FIXTURE = (name: string) =>
+  readFileSync(join(__dirname, 'fixtures', name), 'utf8');
+
+describe('Validator - Failure-code matrix (SC-002, T024)', () => {
+  it('MISSING_REQUIRED_FIELD — template missing version/agentType/runtimeFamily/lifecycleIntent/capabilityProfile', async () => {
+    const { errors } = await validateTemplate(FIXTURE('missing-required-field.yaml'), CTX);
+    expect(errors.length).toBeGreaterThan(0);
+    expect(codes(errors)).toContain('MISSING_REQUIRED_FIELD');
+  });
+
+  it('INVALID_FIELD_TYPE — capabilityProfile.platformPrimitives is a string not an array', async () => {
+    const { errors } = await validateTemplate(FIXTURE('invalid-field-type.yaml'), CTX);
+    expect(errors.length).toBeGreaterThan(0);
+    expect(codes(errors)).toContain('INVALID_FIELD_TYPE');
+  });
+
+  it('UNKNOWN_CAPABILITY_BUNDLE — bundle not in context.capabilityBundleAdapters', async () => {
+    const { errors } = await validateTemplate(FIXTURE('unknown-capability-bundle.yaml'), CTX);
+    expect(codes(errors)).toContain('UNKNOWN_CAPABILITY_BUNDLE');
+  });
+
+  it('UNKNOWN_PLATFORM_PRIMITIVE — primitive not in the canonical set', async () => {
+    const { errors } = await validateTemplate(FIXTURE('unknown-platform-primitive.yaml'), CTX);
+    expect(codes(errors)).toContain('UNKNOWN_PLATFORM_PRIMITIVE');
+  });
+
+  it('UNKNOWN_MCP_SERVER — MCP name not in context.mcpServers', async () => {
+    const { errors } = await validateTemplate(FIXTURE('unknown-mcp-server.yaml'), CTX);
+    expect(codes(errors)).toContain('UNKNOWN_MCP_SERVER');
+  });
+
+  it('UNKNOWN_CREDENTIAL — credential name not in context.brokerCredentials', async () => {
+    const { errors } = await validateTemplate(FIXTURE('unknown-credential.yaml'), CTX);
+    expect(codes(errors)).toContain('UNKNOWN_CREDENTIAL');
+  });
+
+  it('LEAST_PRIVILEGE_VIOLATION — mcpAccess references a server not enabled by any declared bundle', async () => {
+    const { errors } = await validateTemplate(FIXTURE('least-privilege-violation.yaml'), CTX);
+    expect(codes(errors)).toContain('LEAST_PRIVILEGE_VIOLATION');
+  });
+
+  it('SECRET_VALUE_PRESENT — sk-style secret in systemPrompt', async () => {
+    const { errors } = await validateTemplate(FIXTURE('secret-value-present.yaml'), CTX);
+    expect(codes(errors)).toContain('SECRET_VALUE_PRESENT');
+  });
+
+  it('APPROVAL_POLICY_DOWNGRADED — autoEligible declared but grants exceed safe baseline (warning, not error)', async () => {
+    const { errors, warnings } = await validateTemplate(
+      FIXTURE('approval-policy-downgraded.yaml'),
+      CTX,
+    );
+    expect(codes(errors)).not.toContain('APPROVAL_POLICY_DOWNGRADED');
+    expect(codes(warnings)).toContain('APPROVAL_POLICY_DOWNGRADED');
+    // Template is still valid (not rejected)
+    expect(errors.length).toBe(0);
+  });
+
+  it('valid template passes all checks with no errors or warnings', async () => {
+    const { errors, warnings } = await validateTemplate(FIXTURE('valid-template.yaml'), CTX);
+    expect(errors).toHaveLength(0);
+    expect(warnings).toHaveLength(0);
+  });
+
+  it('DUPLICATE_TEMPLATE_ID — same templateId twice in a batch', () => {
+    const t = (id: string): CatalogTemplate => ({
+      templateId: id, name: id, version: '1.0.0',
+      agentType: 'opencode', runtimeFamily: 'opencode', lifecycleIntent: 'ephemeral',
+      capabilityProfile: {},
+    });
+    const errors = checkDuplicateTemplateIds([t('dup'), t('dup')]);
+    expect(codes(errors)).toContain('DUPLICATE_TEMPLATE_ID');
+    // Does NOT flag distinct ids
+    expect(checkDuplicateTemplateIds([t('a'), t('b')])).toHaveLength(0);
+  });
+
+  it('VERSION_CONFLICT — same templateId+version appearing twice in a batch', () => {
+    const t = (id: string, v: string): CatalogTemplate => ({
+      templateId: id, name: id, version: v,
+      agentType: 'opencode', runtimeFamily: 'opencode', lifecycleIntent: 'ephemeral',
+      capabilityProfile: {},
+    });
+    const errors = checkDuplicateVersions([t('x', '1.0.0'), t('x', '1.0.0')]);
+    expect(codes(errors)).toContain('VERSION_CONFLICT');
+    // Different templates sharing a version string is NOT a conflict
+    expect(checkDuplicateVersions([t('a', '1.0.0'), t('b', '1.0.0')])).toHaveLength(0);
+  });
+});

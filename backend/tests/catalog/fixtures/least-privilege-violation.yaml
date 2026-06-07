@@ -1,0 +1,12 @@
+templateId: least-privilege-violation
+name: Least Privilege Violation
+version: "1.0.0"
+agentType: opencode
+runtimeFamily: opencode
+lifecycleIntent: ephemeral
+capabilityProfile:
+  platformPrimitives: [soul.read]
+  capabilityBundles: []
+  denyRules: [repo.write]
+toolAccess: [soul.read]
+mcpAccess: [some-server]

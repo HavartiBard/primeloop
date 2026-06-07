@@ -1,0 +1,3 @@
+# Missing: version, agentType, runtimeFamily, lifecycleIntent, capabilityProfile
+templateId: missing-required
+name: Missing Required Fields

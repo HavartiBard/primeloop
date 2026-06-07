@@ -1,0 +1,9 @@
+templateId: unknown-bundle
+name: Unknown Bundle
+version: "1.0.0"
+agentType: opencode
+runtimeFamily: opencode
+lifecycleIntent: ephemeral
+capabilityProfile:
+  platformPrimitives: []
+  capabilityBundles: [nonexistent.bundle.xyz]
