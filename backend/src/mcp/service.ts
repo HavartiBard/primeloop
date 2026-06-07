@@ -1,4 +1,9 @@
 import type pg from 'pg'
+import {
+  catalogListRegistered,
+  catalogProposeInstantiation,
+  catalogInstantiate,
+} from '../catalog/orchestrator-tools.js'
 import { decideApproval, ensurePendingApproval } from '../approvals.js'
 import { runDelegation } from '../delegation-runner.js'
 import { detectLoopWarnings } from '../loop-detector.js'
@@ -649,6 +654,104 @@ const TOOL_DEFINITIONS: McpToolDefinition[] = [
       annotations: { destructiveHint: true, idempotentHint: false, openWorldHint: false, readOnlyHint: false },
       prime_only: true,
     },
+    // ── Agent Catalog tools (US4) ──────────────────────────────────────────
+    {
+      name: 'catalog_list_registered',
+      title: 'List Registered Agent Templates',
+      description:
+        'List registered, non-deprecated agent templates that Prime can instantiate. ' +
+        'Optionally filter by capability or lifecycle intent.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          capability: { type: 'string', description: 'Filter by routing capability (e.g. "research", "repo.read")' },
+          lifecycleIntent: { type: 'string', enum: ['durable', 'ephemeral'], description: 'Filter by lifecycle intent' },
+        },
+        additionalProperties: false,
+      },
+      outputSchema: {
+        type: 'object',
+        properties: {
+          templates: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                templateId: { type: 'string' },
+                name: { type: 'string' },
+                version: { type: 'string' },
+                lifecycleIntent: { type: 'string' },
+                routingCapabilities: { type: 'array', items: { type: 'string' } },
+                summary: { type: 'string' },
+              },
+            },
+          },
+        },
+      },
+      annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false, readOnlyHint: true },
+      prime_only: true,
+    },
+    {
+      name: 'catalog_propose_instantiation',
+      title: 'Propose Agent Instantiation',
+      description:
+        'Produce a human-readable proposal for instantiating an agent from a registered template, ' +
+        'with rationale and whether human approval is required. No side effects.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          intent: { type: 'string', description: 'The operator intent that the agent should fulfil' },
+          templateId: { type: 'string', description: 'Specific template to propose (optional; auto-selected if omitted)' },
+        },
+        required: ['intent'],
+        additionalProperties: false,
+      },
+      outputSchema: {
+        type: 'object',
+        properties: {
+          templateId: { type: 'string' },
+          version: { type: 'string' },
+          rationale: { type: 'string' },
+          requiresHumanApproval: { type: 'boolean' },
+          estimatedGrants: { type: 'object' },
+        },
+      },
+      annotations: { destructiveHint: false, idempotentHint: true, openWorldHint: false, readOnlyHint: true },
+      prime_only: true,
+    },
+    {
+      name: 'catalog_instantiate',
+      title: 'Instantiate Agent from Catalog Template',
+      description:
+        'Request instantiation of a registered agent template. ' +
+        'Templates requiring human approval return status=pending_approval; ' +
+        'auto-eligible templates within the safe baseline return status=active. ' +
+        'Effective grants never exceed the template declaration.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          templateId: { type: 'string', description: 'The stable template identifier to instantiate' },
+          version: { type: 'string', description: 'Specific version to instantiate (optional; defaults to current registered)' },
+          name: { type: 'string', description: 'Optional display name for the created agent' },
+        },
+        required: ['templateId'],
+        additionalProperties: false,
+      },
+      outputSchema: {
+        type: 'object',
+        properties: {
+          status: { type: 'string', enum: ['active', 'pending_approval', 'blocked'] },
+          agentId: { type: 'string' },
+          approvalId: { type: 'string' },
+          message: { type: 'string' },
+          code: { type: 'string' },
+          detail: { type: 'string' },
+          missingCredentials: { type: 'array', items: { type: 'string' } },
+        },
+      },
+      annotations: { destructiveHint: false, idempotentHint: false, openWorldHint: false, readOnlyHint: false },
+      prime_only: true,
+    },
 ]
 
 function validatePrimitive(path: string, schema: JsonSchemaShape, value: unknown): void {
@@ -1289,6 +1392,13 @@ export async function callControlPlaneTool(
       return updateAgentSoul(pool, ctx, args)
     case 'resolve_approval':
       return resolveApprovalTool(pool, ctx, args)
+    // ── Catalog tools (US4) ─────────────────────────────────────────────────
+    case 'catalog_list_registered':
+      return catalogListRegistered(pool, args as any)
+    case 'catalog_propose_instantiation':
+      return catalogProposeInstantiation(pool, args as any) as any
+    case 'catalog_instantiate':
+      return catalogInstantiate(pool, args as any)
     default:
       throw new Error(`unknown tool: ${name}`)
   }
