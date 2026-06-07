@@ -1,0 +1,42 @@
+templateId: reviewer
+name: Reviewer
+version: "1.0.0"
+agentType: reviewer
+runtimeFamily: local
+lifecycleIntent: ephemeral
+
+soul: "Code review specialist. Analyzes changes for correctness, quality, and compliance."
+
+personaFile: prompts/agents/reviewer.md
+
+capabilityProfile:
+  platformPrimitives:
+    - update_work_item
+    - soul.read
+    - memory.read
+  capabilityBundles:
+    - repo.read
+  denyRules:
+    - kind: primitive
+      primitive: delegate
+      reason: ephemeral agents cannot delegate
+    - kind: primitive
+      primitive: request_approval
+      reason: ephemeral agents cannot request approval
+    - kind: bundle
+      bundle: repo.write
+      reason: reviewers read-only
+
+credentialNeeds: []
+
+runtimeRequirements:
+  limits:
+    max_tokens: 30000
+    max_duration_ms: 180000
+    max_concurrent_processes: 1
+
+approvalPolicy:
+  autoEligible: false
+
+routing:
+  preferredRole: reviewer

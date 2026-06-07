@@ -9,6 +9,7 @@ import {
   type ToolGrant,
 } from './registry.js'
 import { resolveToolGrant } from './tool-grants.js'
+import { createCatalogStore } from './catalog/store.js'
 
 /**
  * Ephemeral agent template definition.
@@ -98,6 +99,14 @@ const DEFAULT_EPHEMERAL_TEMPLATES: EphemeralTemplate[] = [
 ]
 
 /**
+ * Expose the in-code defaults for the catalog migrator.
+ * Do not call this from runtime paths — use the catalog instead.
+ */
+export function DEFAULT_EPHEMERAL_TEMPLATES_FOR_MIGRATION(): EphemeralTemplate[] {
+  return DEFAULT_EPHEMERAL_TEMPLATES;
+}
+
+/**
  * Get an ephemeral template by ID.
  */
 export function getEphemeralTemplate(
@@ -128,13 +137,48 @@ export function listEphemeralTemplates(
  *
  * Returns the created agent and its tool grant.
  */
+/**
+ * Try to resolve an EphemeralTemplate from the catalog (registered version).
+ * Returns undefined when the catalog has no registered version for this templateId.
+ */
+async function templateFromCatalog(
+  pool: pg.Pool,
+  templateId: string,
+): Promise<EphemeralTemplate | undefined> {
+  try {
+    const store = createCatalogStore(pool)
+    const version = await store.getLatestRegisteredVersion(templateId)
+    if (!version) return undefined
+    const def = version.resolvedDefinition as Record<string, unknown>
+    if (def.lifecycleIntent !== 'ephemeral') return undefined
+    const cap = (def.capabilityProfile as Record<string, unknown> | undefined) ?? {}
+    return {
+      id: def.templateId as string,
+      name: def.name as string,
+      type: def.agentType as string,
+      role: ((def.routing as Record<string, string> | undefined)?.preferredRole) ?? (def.agentType as string),
+      personaFile: (def.personaFile as string | undefined) ?? 'AGENTS.md',
+      soul: (def.soul as string | undefined) ?? '',
+      platformPrimitives: (cap.platformPrimitives as string[] | undefined) ?? [],
+      capabilityBundles: (cap.capabilityBundles as string[] | undefined) ?? [],
+      denyRules: (cap.denyRules as Array<Record<string, unknown>> | undefined) ?? [],
+      resourceLimits: ((def.runtimeRequirements as Record<string, unknown> | undefined)?.limits as Record<string, unknown> | undefined) ?? {},
+    }
+  } catch {
+    return undefined
+  }
+}
+
 export async function spawnEphemeralAgent(
   pool: pg.Pool,
   templateId: string,
   context: SpawnContext,
   templates: EphemeralTemplate[] = DEFAULT_EPHEMERAL_TEMPLATES,
 ): Promise<SpawnResult> {
-  const template = getEphemeralTemplate(templateId, templates)
+  // Prefer catalog definition; fall back to in-code for backwards compat (FR-035)
+  const template =
+    (await templateFromCatalog(pool, templateId)) ??
+    getEphemeralTemplate(templateId, templates)
   if (!template) {
     throw new Error(`ephemeral template not found: ${templateId}`)
   }

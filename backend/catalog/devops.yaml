@@ -1,0 +1,39 @@
+templateId: devops
+name: DevOps
+version: "1.0.0"
+agentType: devops
+runtimeFamily: local
+lifecycleIntent: durable
+
+soul: "Infrastructure and deployment engineer. Manages CI/CD pipelines, environments, and production releases."
+
+personaFile: prompts/agents/devops.md
+
+capabilityProfile:
+  platformPrimitives:
+    - delegate
+    - update_work_item
+    - request_approval
+    - soul.read
+    - memory.read
+    - memory.write
+    - lesson.read
+    - lesson.write
+    - context.assemble
+  capabilityBundles:
+    - repo.read
+    - repo.write
+    - ci.inspect
+    - deploy.production
+  denyRules: []
+
+credentialNeeds: []
+
+runtimeRequirements:
+  limits: {}
+
+approvalPolicy:
+  autoEligible: false
+
+routing:
+  preferredRole: devops

@@ -9,6 +9,7 @@ import {
   type RegistryAgent,
   type CapabilityProfile,
 } from './registry.js'
+import { createCatalogStore } from './catalog/store.js'
 
 /**
  * Durable staff role definition.
@@ -99,17 +100,74 @@ const DEFAULT_DURABLE_STAFF: DurableStaffDefinition[] = [
  *
  * Returns a summary of created, updated, and unchanged agents.
  */
+
+/**
+ * Expose the in-code defaults for the catalog migrator.
+ * Do not call this from runtime paths — use the catalog instead.
+ */
+export function DEFAULT_DURABLE_STAFF_FOR_MIGRATION(): DurableStaffDefinition[] {
+  return DEFAULT_DURABLE_STAFF;
+}
+
+/**
+ * Resolve durable staff definitions from the catalog (registered versions).
+ * Returns only durable templates found in the catalog; caller falls back to
+ * in-code definitions for any roles not yet seeded.
+ */
+async function definitionsFromCatalog(pool: pg.Pool): Promise<DurableStaffDefinition[]> {
+  try {
+    const store = createCatalogStore(pool)
+    const { rows } = await pool.query<{ template_id: string }>(
+      `SELECT template_id FROM catalog_templates WHERE lifecycle_state = 'available' AND current_version_id IS NOT NULL`
+    )
+    const defs: DurableStaffDefinition[] = []
+    for (const row of rows) {
+      const version = await store.getLatestRegisteredVersion(row.template_id)
+      if (!version) continue
+      const def = version.resolvedDefinition as Record<string, unknown>
+      if (def.lifecycleIntent !== 'durable') continue
+      const cap = (def.capabilityProfile as Record<string, unknown> | undefined) ?? {}
+      defs.push({
+        role: (def.templateId as string),
+        name: def.name as string,
+        type: def.agentType as string,
+        personaFile: (def.personaFile as string | undefined) ?? 'AGENTS.md',
+        soul: (def.soul as string | undefined) ?? '',
+        platformPrimitives: (cap.platformPrimitives as string[] | undefined) ?? [],
+        capabilityBundles: (cap.capabilityBundles as string[] | undefined) ?? [],
+        denyRules: (cap.denyRules as Array<Record<string, unknown>> | undefined) ?? [],
+        approvalRules: {},
+      })
+    }
+    return defs
+  } catch {
+    return []
+  }
+}
+
 export async function bootstrapDurableStaff(
   pool: pg.Pool,
-  definitions: DurableStaffDefinition[] = DEFAULT_DURABLE_STAFF,
+  definitions?: DurableStaffDefinition[],
 ): Promise<DurableStaffBootstrapResult> {
+  // Prefer catalog definitions; merge with in-code for any roles not seeded yet (FR-035)
+  let resolvedDefinitions = definitions
+  if (!resolvedDefinitions) {
+    const catalogDefs = await definitionsFromCatalog(pool)
+    if (catalogDefs.length > 0) {
+      const catalogRoles = new Set(catalogDefs.map((d) => d.role))
+      const inCodeFallbacks = DEFAULT_DURABLE_STAFF.filter((d) => !catalogRoles.has(d.role))
+      resolvedDefinitions = [...catalogDefs, ...inCodeFallbacks]
+    } else {
+      resolvedDefinitions = DEFAULT_DURABLE_STAFF
+    }
+  }
   const result: DurableStaffBootstrapResult = {
     created: [],
     updated: [],
     unchanged: [],
   }
 
-  for (const def of definitions) {
+  for (const def of resolvedDefinitions) {
     // Ensure capability profile exists for this role
     const profileName = `${def.role}-default`
     let profile = await getCapabilityProfileByName(pool, profileName)

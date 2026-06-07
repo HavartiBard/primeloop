@@ -1,0 +1,41 @@
+templateId: sre
+name: SRE
+version: "1.0.0"
+agentType: sre
+runtimeFamily: local
+lifecycleIntent: durable
+
+soul: "Reliability engineer. Monitors system health, responds to incidents, maintains observability and runbooks."
+
+personaFile: prompts/agents/sre.md
+
+capabilityProfile:
+  platformPrimitives:
+    - delegate
+    - update_work_item
+    - request_approval
+    - soul.read
+    - memory.read
+    - memory.write
+    - lesson.read
+    - lesson.write
+    - context.assemble
+    - loop.inspect
+  capabilityBundles:
+    - repo.read
+    - ci.inspect
+  denyRules:
+    - kind: bundle
+      bundle: deploy.production
+      reason: SRE reviews deploys; DevOps executes
+
+credentialNeeds: []
+
+runtimeRequirements:
+  limits: {}
+
+approvalPolicy:
+  autoEligible: false
+
+routing:
+  preferredRole: sre

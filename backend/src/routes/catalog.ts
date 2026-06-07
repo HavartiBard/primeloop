@@ -17,6 +17,7 @@ import { syncFromLocalSource, syncFromGitSource, validateVersion, requestApprova
 import { instantiateFromVersion } from '../catalog/instantiate.js';
 import { createRegistrar } from '../catalog/registrar.js';
 import { createCatalogStore } from '../catalog/store.js';
+import { migrateToCatalog } from '../catalog/migrate.js';
 
 /**
  * Resolve a (templateId text, version string) pair to a version row id.
@@ -294,6 +295,19 @@ export function createCatalogRouter(deps: CatalogDeps): Router {
       res.status(201).json({ source });
     } catch (err) {
       console.error('[catalog] POST /sources error:', err);
+      res.status(500).json({ error: 'internal server error' });
+    }
+  });
+
+  // POST /migrate - generate catalog YAML drafts from in-code templates
+  // ?write=true also persists them to backend/catalog/
+  router.post('/migrate', async (req, res) => {
+    try {
+      const write = req.query['write'] === 'true' || (req.body as Record<string, unknown>)?.write === true;
+      const result = await migrateToCatalog({ write });
+      res.status(200).json(result);
+    } catch (err) {
+      console.error('[catalog] POST /migrate error:', err);
       res.status(500).json({ error: 'internal server error' });
     }
   });

@@ -8,7 +8,7 @@ import * as yaml from 'yaml';
 import type { CatalogTemplate, FailureReason } from './types.js';
 
 // Required fields for a valid template
-const REQUIRED_FIELDS = [
+export const REQUIRED_FIELDS = [
   'templateId',
   'name',
   'version',

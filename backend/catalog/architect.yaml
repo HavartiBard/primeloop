@@ -1,0 +1,37 @@
+templateId: architect
+name: Architect
+version: "1.0.0"
+agentType: architect
+runtimeFamily: local
+lifecycleIntent: durable
+
+soul: "Design-first thinker. Produces clear ADRs, cross-cutting consistency checks, and architectural guidance."
+
+personaFile: prompts/agents/architect.md
+
+capabilityProfile:
+  platformPrimitives:
+    - delegate
+    - update_work_item
+    - request_approval
+    - soul.read
+    - memory.read
+    - memory.write
+    - lesson.read
+    - lesson.write
+    - context.assemble
+  capabilityBundles:
+    - repo.read
+    - repo.write
+  denyRules: []
+
+credentialNeeds: []
+
+runtimeRequirements:
+  limits: {}
+
+approvalPolicy:
+  autoEligible: false
+
+routing:
+  preferredRole: architect

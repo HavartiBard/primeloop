@@ -1,0 +1,40 @@
+templateId: implementer
+name: Implementer
+version: "1.0.0"
+agentType: implementer
+runtimeFamily: local
+lifecycleIntent: ephemeral
+
+soul: "Focused implementation specialist. Executes scoped code changes with verification."
+
+personaFile: prompts/agents/implementer.md
+
+capabilityProfile:
+  platformPrimitives:
+    - update_work_item
+    - soul.read
+    - memory.read
+  capabilityBundles:
+    - repo.read
+    - repo.write
+  denyRules:
+    - kind: primitive
+      primitive: delegate
+      reason: ephemeral agents cannot delegate
+    - kind: primitive
+      primitive: request_approval
+      reason: ephemeral agents cannot request approval
+
+credentialNeeds: []
+
+runtimeRequirements:
+  limits:
+    max_tokens: 50000
+    max_duration_ms: 300000
+    max_concurrent_processes: 2
+
+approvalPolicy:
+  autoEligible: false
+
+routing:
+  preferredRole: implementer
