@@ -10,7 +10,7 @@ import { createHash } from 'crypto';
 import type { FailureReason, SyncEntryResult, AdmissionState } from './types.js';
 import { isLegalTransition, validateTransition } from './admission-state.js';
 import { checkDuplicateTemplateIds, checkVersionConflicts, checkDuplicateVersions, validateTemplate, handleRejection } from './validator.js';
-import { readLocalSource } from './source.js';
+import { readLocalSource, readGitSourceLocal, resolveRefToSha } from './source.js';
 import { createCatalogStore } from './store.js';
 import { createRegistrar } from './registrar.js';
 
@@ -33,6 +33,16 @@ export interface SyncContext {
   pool: Pool;
   sourceId: string;
   sourcePath: string;
+  subpath?: string;
+  /** For git sources: the ref supplied by the operator (branch/tag/SHA). */
+  sourceRef?: string;
+}
+
+export interface GitSyncContext {
+  pool: Pool;
+  sourceId: string;
+  repoPath: string;   // path to the local git repo (or remote URL for clone-based)
+  ref: string;        // branch, tag, or commit SHA — resolved to SHA at sync time
   subpath?: string;
 }
 
@@ -91,7 +101,9 @@ export async function syncFromLocalSource(
   const results: SyncEntryResult[] = [];
 
   for (const template of templates as any[]) {
-    const result = await processTemplate(pool, store, template, sourceId, existingVersions, validationContext);
+    const result = await processTemplate(pool, store, template, sourceId, existingVersions, validationContext, {
+      sourceRef: context.sourceRef,
+    });
     results.push(result);
     if (result.outcome === 'rejected') {
       console.warn(
@@ -104,6 +116,66 @@ export async function syncFromLocalSource(
   }
 
   console.log(`[catalog:sync] complete: ${results.filter(r => r.outcome === 'admitted').length} admitted, ${results.filter(r => r.outcome === 'rejected').length} rejected`);
+  return results;
+}
+
+/**
+ * Sync templates from a local git repository at a specific ref (T036, T038).
+ * Resolves the ref to an immutable commit SHA at sync time (FR-014).
+ */
+export async function syncFromGitSource(
+  context: GitSyncContext,
+): Promise<SyncEntryResult[]> {
+  const { pool, sourceId, repoPath, ref, subpath } = context;
+  const store = createCatalogStore(pool);
+
+  console.log(`[catalog:sync:git] starting git sync sourceId=${sourceId} repo=${repoPath} ref=${ref}`);
+
+  // Resolve the (possibly moving) ref to an immutable SHA (FR-014)
+  let commitSha: string;
+  try {
+    commitSha = await resolveRefToSha(repoPath, ref);
+  } catch (err) {
+    return [{ templateId: 'unknown', version: '0.0.0', outcome: 'rejected',
+      failureReasons: [{ code: 'INVALID_FIELD_TYPE', detail: `Cannot resolve ref '${ref}': ${(err as Error).message}` }] }];
+  }
+
+  console.log(`[catalog:sync:git] resolved ref=${ref} → sha=${commitSha}`);
+
+  const { templates, errors: readErrors } = await readGitSourceLocal(repoPath, commitSha, subpath);
+
+  if (readErrors.length > 0) {
+    return readErrors.map(err => ({ templateId: 'unknown', version: '0.0.0', outcome: 'rejected', failureReasons: [err] }));
+  }
+
+  const duplicateErrors = checkDuplicateTemplateIds(templates as any);
+  if (duplicateErrors.length > 0) {
+    return duplicateErrors.map(err => ({ templateId: err.field || 'unknown', version: '0.0.0', outcome: 'rejected', failureReasons: [err] }));
+  }
+
+  const duplicateVersionErrors = checkDuplicateVersions(templates as any);
+  if (duplicateVersionErrors.length > 0) {
+    return duplicateVersionErrors.map(err => ({ templateId: 'unknown', version: '0.0.0', outcome: 'rejected', failureReasons: [err] }));
+  }
+
+  const validationContext = await buildValidationContext(pool);
+  const existingVersions = new Map<string, string>();
+  const results: SyncEntryResult[] = [];
+
+  for (const template of templates as any[]) {
+    const result = await processTemplate(pool, store, template, sourceId, existingVersions, validationContext, {
+      commitSha,
+      sourceRef: ref,
+    });
+    results.push(result);
+    if (result.outcome === 'rejected') {
+      console.warn(`[catalog:sync:git] rejected templateId=${result.templateId} reasons=${result.failureReasons?.map(r => r.code).join(',')}`);
+    } else {
+      console.log(`[catalog:sync:git] ${result.outcome} templateId=${result.templateId} version=${result.version} sha=${commitSha}`);
+    }
+  }
+
+  console.log(`[catalog:sync:git] complete sha=${commitSha}: ${results.filter(r => r.outcome === 'admitted').length} admitted, ${results.filter(r => r.outcome === 'rejected').length} rejected`);
   return results;
 }
 
@@ -127,6 +199,12 @@ async function buildValidationContext(pool: Pool) {
 /**
  * Process a single template through admission pipeline.
  */
+interface TemplateProvenance {
+  commitSha?: string;
+  sourceRef?: string;
+  sourcePath?: string;
+}
+
 async function processTemplate(
   pool: Pool,
   store: ReturnType<typeof createCatalogStore>,
@@ -134,9 +212,25 @@ async function processTemplate(
   sourceId: string,
   existingVersions: Map<string, string>,
   validationContext: Awaited<ReturnType<typeof buildValidationContext>>,
+  provenance: TemplateProvenance = {},
 ): Promise<SyncEntryResult> {
   const templateId = (template.templateId as string | undefined) ?? 'unknown';
   const version = (template.version as string | undefined) ?? '';
+
+  // Compute content hash first — if this exact version already exists and
+  // hasn't changed (same hash), return 'duplicate' without re-processing.
+  const contentHash = computeHash(template);
+  const existingByHash = await pool.query<{ id: string; admission_state: string }>(
+    `SELECT v.id, v.admission_state
+       FROM catalog_template_versions v
+       JOIN catalog_templates t ON t.id = v.template_pk
+      WHERE t.template_id = $1 AND v.version = $2 AND v.content_hash = $3
+      LIMIT 1`,
+    [templateId, version, contentHash],
+  );
+  if (existingByHash.rows.length > 0 && existingByHash.rows[0].admission_state !== 'rejected') {
+    return { templateId, version, outcome: 'duplicate', admissionState: existingByHash.rows[0].admission_state as any };
+  }
 
   // Serialize the resolved template back to YAML for the validator.
   // (readLocalSource already resolved file references into the object.)
@@ -158,7 +252,6 @@ async function processTemplate(
         templateRecord = await store.getTemplateById(templatePk);
       }
       if (templateRecord) {
-        const contentHash = computeHash(template);
         const versionPk = await store.createVersion({
           templatePk: templateRecord.id,
           version,
@@ -166,6 +259,9 @@ async function processTemplate(
           resolvedDefinition: template as unknown as Record<string, unknown>,
           contentHash,
           sourceId,
+          commitSha: provenance.commitSha,
+          sourceRef: provenance.sourceRef,
+          sourcePath: provenance.sourcePath,
           failureReasons: validationErrors,
           autoApproved: false,
         });
@@ -197,7 +293,6 @@ async function processTemplate(
     (template.approvalPolicy as { autoEligible?: boolean } | undefined)?.autoEligible === true &&
     validationWarnings.length === 0;
 
-  const contentHash = computeHash(template);
   const versionPk = await store.createVersion({
     templatePk: templateRecord.id,
     version,
@@ -205,6 +300,9 @@ async function processTemplate(
     resolvedDefinition: template as unknown as Record<string, unknown>,
     contentHash,
     sourceId,
+    commitSha: provenance.commitSha,
+    sourceRef: provenance.sourceRef,
+    sourcePath: provenance.sourcePath,
     failureReasons: [],
     autoApproved,
   });
@@ -373,31 +471,33 @@ export async function rollbackVersion(
   toVersion: string
 ): Promise<{ success: boolean; versionId?: string }> {
   const store = createCatalogStore(pool);
-  
-  // Get the target version
-  const versions = await store.listVersions(templateId);
+
+  // templateId is the stable slug — resolve to the UUID PK first
+  const tmpl = await store.getTemplateByTemplateId(templateId);
+  if (!tmpl) return { success: false };
+
+  const versions = await store.listVersions(tmpl.id);
   const targetVersion = versions.find(v => v.version === toVersion);
-  
+
   if (!targetVersion) {
     return { success: false, versionId: undefined };
   }
-  
-  // Verify target version is registered
+
   if (targetVersion.admissionState !== 'registered') {
     return { success: false, versionId: undefined };
   }
-  
-  // Record rollback event
-  const currentVersion = await store.getLatestRegisteredVersion(templateId);
-  await recordAdmissionEvent(
-    pool,
-    targetVersion.id,
-    currentVersion?.admissionState || 'registered',
-    'registered',
-    'operator',
-    `Rollback from ${currentVersion?.version || 'unknown'} to ${toVersion}`
+
+  const currentVersion = versions.find(v => v.id === tmpl.currentVersionId);
+
+  // Write a rollback audit event directly (bypasses state-machine validation —
+  // this is a pointer update, not a real state transition; both versions stay 'registered').
+  const auditVersionId = currentVersion?.id ?? targetVersion.id;
+  await pool.query(
+    `INSERT INTO catalog_admission_events (version_id, from_state, to_state, actor, reason, metadata)
+     VALUES ($1, 'registered', 'registered', 'operator', $2, '{}')`,
+    [auditVersionId, `Rollback: current version changed from ${currentVersion?.version ?? 'unknown'} to ${toVersion}`],
   );
-  
+
   // Update template's current version
   await store.updateTemplateCurrentVersion(templateId, targetVersion.id);
   
@@ -420,8 +520,8 @@ export async function deprecateTemplate(
     return { success: false };
   }
   
-  // Record deprecation event for all active versions
-  const versions = await store.listVersions(templateId);
+  // Record deprecation event for all active versions (listVersions needs UUID PK)
+  const versions = await store.listVersions(template.id);
   for (const version of versions) {
     if (['active', 'registered'].includes(version.admissionState)) {
       await recordAdmissionEvent(
@@ -441,19 +541,3 @@ export async function deprecateTemplate(
   return { success: true };
 }
 
-/**
- * Sync from Git source.
- */
-export async function syncFromGitSource(
-  pool: Pool,
-  sourceId: string,
-  url: string,
-  ref: string,
-  subpath?: string
-): Promise<SyncEntryResult[]> {
-  const store = createCatalogStore(pool);
-  
-  // TODO: Implement Git sync
-  // For now, return placeholder results
-  return [];
-}

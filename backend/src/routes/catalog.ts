@@ -13,7 +13,7 @@
 import { Router } from 'express';
 import type pg from 'pg';
 
-import { syncFromLocalSource, validateVersion, requestApproval, approveVersion, rollbackVersion, deprecateTemplate, VersionStateError } from '../catalog/admission.js';
+import { syncFromLocalSource, syncFromGitSource, validateVersion, requestApproval, approveVersion, rollbackVersion, deprecateTemplate, VersionStateError } from '../catalog/admission.js';
 import { instantiateFromVersion } from '../catalog/instantiate.js';
 import { createRegistrar } from '../catalog/registrar.js';
 import { createCatalogStore } from '../catalog/store.js';
@@ -113,16 +113,26 @@ export function createCatalogRouter(deps: CatalogDeps): Router {
         }
       }
 
-      if (source.kind !== 'local') {
-        return res.status(400).json({ error: 'git sync not yet implemented; use a local source', code: 'GIT_NOT_IMPLEMENTED' });
+      let results;
+      if (source.kind === 'local') {
+        results = await syncFromLocalSource({
+          pool: deps.pool,
+          sourceId: source.id,
+          sourcePath: source.location,
+          subpath: source.subpath,
+          sourceRef: (req.body as any).ref,
+        });
+      } else {
+        // Git source: resolve ref→SHA at sync time (FR-014)
+        const ref = (req.body as any).ref ?? source.defaultRef ?? 'main';
+        results = await syncFromGitSource({
+          pool: deps.pool,
+          sourceId: source.id,
+          repoPath: source.location,
+          ref,
+          subpath: source.subpath,
+        });
       }
-
-      const results = await syncFromLocalSource({
-        pool: deps.pool,
-        sourceId: source.id,
-        sourcePath: source.location,
-        subpath: source.subpath,
-      });
 
       res.json({ results });
     } catch (err) {
@@ -252,5 +262,41 @@ export function createCatalogRouter(deps: CatalogDeps): Router {
     }
   });
   
+  // ── Sources endpoints (T037) ──────────────────────────────────────────────
+
+  // GET /sources - list configured catalog sources
+  router.get('/sources', async (req, res) => {
+    try {
+      const store = createCatalogStore(deps.pool);
+      const sources = await store.listSources();
+      res.json({ sources });
+    } catch (err) {
+      console.error('[catalog] GET /sources error:', err);
+      res.status(500).json({ error: 'internal server error' });
+    }
+  });
+
+  // POST /sources - add or update a catalog source
+  router.post('/sources', async (req, res) => {
+    try {
+      const { kind, name, location, defaultRef, subpath } = req.body as {
+        kind?: string; name?: string; location?: string; defaultRef?: string; subpath?: string;
+      };
+      if (!kind || !name || !location) {
+        return res.status(400).json({ error: 'kind, name, and location are required' });
+      }
+      if (kind !== 'local' && kind !== 'git') {
+        return res.status(400).json({ error: "kind must be 'local' or 'git'" });
+      }
+      const store = createCatalogStore(deps.pool);
+      const id = await store.createSource({ kind, name, location, defaultRef, subpath, enabled: true });
+      const source = await store.getSourceById(id);
+      res.status(201).json({ source });
+    } catch (err) {
+      console.error('[catalog] POST /sources error:', err);
+      res.status(500).json({ error: 'internal server error' });
+    }
+  });
+
   return router;
 }

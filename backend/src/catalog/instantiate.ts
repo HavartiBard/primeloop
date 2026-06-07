@@ -21,7 +21,8 @@ import { createCatalogStore } from './store.js';
 export type InstantiationBlock =
   | { code: 'CREDENTIAL_NOT_PROVISIONED'; missingCredentials: string[] }
   | { code: 'NOT_REGISTERED'; detail: string }
-  | { code: 'NO_CAPABILITY_PROFILE'; detail: string };
+  | { code: 'NO_CAPABILITY_PROFILE'; detail: string }
+  | { code: 'TEMPLATE_DEPRECATED'; detail: string };
 
 export interface InstantiationResult {
   agentId?: string;
@@ -93,6 +94,18 @@ export async function instantiateFromVersion(
       blocked: {
         code: 'NOT_REGISTERED',
         detail: `Version must be 'registered' to instantiate, got '${version.admissionState}'`,
+      },
+    };
+  }
+
+  // Block instantiation when the parent template is deprecated (FR-024).
+  // Running agents from prior instantiations continue; only new ones are blocked.
+  const template = await store.getTemplateByTemplateId(version.templateId);
+  if (template?.lifecycleState === 'deprecated') {
+    return {
+      blocked: {
+        code: 'TEMPLATE_DEPRECATED',
+        detail: `Template '${version.templateId}' is deprecated; new instantiation is not allowed`,
       },
     };
   }

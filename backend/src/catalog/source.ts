@@ -261,7 +261,7 @@ async function createTempClone(url: string, ref: string): Promise<string> {
  */
 export async function getGitCommitSha(url: string, ref: string = 'main'): Promise<string> {
   const tempDir = path.join('/tmp', `catalog-sha-${Date.now()}-${Math.random().toString(36).substring(7)}`);
-  
+
   try {
     await execAsync(`git clone --depth 1 --branch ${ref} ${url} ${tempDir}`);
     const { stdout } = await execAsync('git rev-parse HEAD', { cwd: tempDir });
@@ -269,4 +269,117 @@ export async function getGitCommitSha(url: string, ref: string = 'main'): Promis
   } finally {
     await fs.rm(tempDir, { recursive: true, force: true });
   }
+}
+
+// ─── Local-repo Git support ───────────────────────────────────────────────────
+// Uses git commands in-place against a repo on the local filesystem.
+// Preferred for tests and for catalog sources that point at a local git repo.
+
+/**
+ * Resolve a branch/tag ref to an immutable commit SHA in a local git repo.
+ * If `ref` is already a 40-char SHA it is returned as-is.
+ */
+export async function resolveRefToSha(repoPath: string, ref: string): Promise<string> {
+  if (/^[0-9a-f]{40}$/i.test(ref)) return ref;
+  const { stdout } = await execAsync(`git rev-parse "${ref}"`, { cwd: repoPath });
+  return stdout.trim();
+}
+
+/**
+ * Read all YAML templates from a local git repo at a specific commit SHA.
+ * Uses `git show <sha>:<path>` so no working-tree modification occurs.
+ * Returns parsed+resolved templates plus the concrete SHA used.
+ */
+export async function readGitSourceLocal(
+  repoPath: string,
+  ref: string,
+  subpath?: string,
+): Promise<{ templates: CatalogTemplate[]; errors: FailureReason[]; commitSha: string }> {
+  const commitSha = await resolveRefToSha(repoPath, ref);
+  const templates: CatalogTemplate[] = [];
+  const errors: FailureReason[] = [];
+
+  // List YAML files in the catalog directory at this commit
+  const treePath = subpath ? subpath.replace(/\/$/, '') : '.';
+  let lsOutput: string;
+  try {
+    const { stdout } = await execAsync(
+      `git ls-tree --name-only "${commitSha}" "${treePath}/"`,
+      { cwd: repoPath },
+    );
+    lsOutput = stdout;
+  } catch {
+    // Subpath may not exist at this commit — treat as empty
+    return { templates, errors, commitSha };
+  }
+
+  const files = lsOutput
+    .split('\n')
+    .map(f => f.trim())
+    .filter(f => f.endsWith('.yaml') || f.endsWith('.yml'));
+
+  for (const filePath of files) {
+    const gitPath = treePath === '.' ? filePath : `${treePath}/${path.basename(filePath)}`;
+    let content: string;
+    try {
+      const { stdout } = await execAsync(
+        `git show "${commitSha}:${gitPath}"`,
+        { cwd: repoPath },
+      );
+      content = stdout;
+    } catch (err) {
+      errors.push({ code: 'INVALID_FIELD_TYPE', field: filePath, detail: `git show failed: ${(err as Error).message}` });
+      continue;
+    }
+
+    try {
+      const parsed = yaml.parse(content);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        // File references (systemPromptFile etc.) are resolved relative to the
+        // commit tree — read them via git show as well
+        const resolved = await resolveGitFileReferences(parsed as CatalogTemplate, repoPath, commitSha, treePath);
+        templates.push(resolved);
+      } else {
+        errors.push({ code: 'INVALID_FIELD_TYPE', field: filePath, detail: 'YAML root must be an object' });
+      }
+    } catch (err) {
+      errors.push({ code: 'INVALID_FIELD_TYPE', field: filePath, detail: `YAML parse error: ${(err as Error).message}` });
+    }
+  }
+
+  return { templates, errors, commitSha };
+}
+
+/**
+ * Resolve { file: ... } references within a template by reading them from git
+ * at the given commit, keeping the operation reproducible and working-tree-free.
+ */
+async function resolveGitFileReferences(
+  template: CatalogTemplate,
+  repoPath: string,
+  commitSha: string,
+  treePath: string,
+): Promise<CatalogTemplate> {
+  const resolved = { ...template } as any;
+
+  const refs: Array<[string, string]> = [
+    ['systemPromptFile', 'systemPrompt'],
+    ['soulFile', 'soul'],
+    ['personaFile', 'persona'],
+  ];
+
+  for (const [fileField, targetField] of refs) {
+    const filePath = resolved[fileField];
+    if (typeof filePath === 'string' && !resolved[targetField]) {
+      const gitPath = filePath.startsWith('./') ? `${treePath}/${filePath.slice(2)}` : filePath;
+      try {
+        const { stdout } = await execAsync(`git show "${commitSha}:${gitPath}"`, { cwd: repoPath });
+        resolved[targetField] = stdout;
+      } catch {
+        // Leave unresolved — validator will catch if required
+      }
+    }
+  }
+
+  return resolved as CatalogTemplate;
 }
