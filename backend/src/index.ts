@@ -64,6 +64,16 @@ if (EGRESS_SANDBOX_ENABLED || process.env.LAUNCHER_ENABLED === '1') {
 traceStep('running migrations')
 await runMigrations(pool)
 traceStep('migrations complete')
+
+// spec 025 US3: announce the active runtime mode and validate launcher rollout readiness.
+traceStep('evaluating runtime mode')
+const { announceRuntimeMode } = await import('./runtime/mode.js')
+const runtimeModeStatus = await announceRuntimeMode(pool)
+console.log(
+  `[runtime-mode] active=${runtimeModeStatus.mode} rolloutReady=${runtimeModeStatus.rolloutReady}` +
+  (runtimeModeStatus.notes.length ? ` notes=${runtimeModeStatus.notes.join('; ')}` : ''),
+)
+traceStep('runtime mode evaluated')
 traceStep('seeding registry')
 await seedRegistry(pool, process.env)
 traceStep('registry seeded')

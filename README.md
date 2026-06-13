@@ -217,6 +217,47 @@ The runtime event taxonomy now includes:
 - `llm.proxied`
 - `launcher.auth_denied`
 
+## Launcher Path Deployment (Spec 025)
+
+Spec 025 makes **launcher-managed isolated runtimes the default execution path** for managed
+local OpenCode agents. Instead of the backend spawning `opencode serve` as a local child
+process, a dedicated `launcher` service provisions one persistent isolated runtime container
+per agent (via Docker or OpenSandbox) and the backend connects out over remote ACP. The backend
+remains the sole owner of agent records and worktree creation/mutation; the launcher only mounts
+the assigned worktree.
+
+### Deployment
+
+`docker-compose.yml` and `docker-compose.prod.yml` now ship a `launcher` service alongside the
+backend. The backend depends on it and is configured with:
+
+- `LAUNCHER_ENABLED` — `1` by default in compose; selects launcher-managed runtime mode
+- `LAUNCHER_URL` — backend → launcher base URL (default `http://launcher:8787`)
+- `LAUNCHER_AUTH_SECRET` — **required**; bearer secret the backend uses to authenticate to the launcher
+- `LAUNCHER_ADAPTER` — `docker` (default) or `opensandbox`
+- `OPENSANDBOX_URL` / `OPENSANDBOX_API_KEY` / `OPENSANDBOX_IMAGE_OPENCODE` — used when the adapter is `opensandbox`
+
+The `docker` adapter mounts the host Docker socket into the launcher so it can provision sibling
+runtime containers.
+
+### Runtime mode, rollout validation, and rollback
+
+- `GET /api/runtime/mode` reports the active mode (`launcher-managed` | `backend-local`),
+  whether the launcher is reachable, and whether a launcher rollout is **ready**
+  (`rolloutReady`). At boot the backend emits `runtime.mode_active` plus
+  `runtime.mode_rollout_validated` or `runtime.mode_rollout_blocked`.
+- **Rollback**: set `LAUNCHER_ENABLED=0` (and `EGRESS_SANDBOX=0`) and redeploy to return to the
+  legacy backend-local runtime path. `POST /api/runtime/mode/rollback` records an auditable
+  `runtime.mode_rollback` event with an operator-supplied `reason`.
+
+### Runtime events added for Spec 025
+
+- `runtime.mode_active`
+- `runtime.mode_rollout_validated`
+- `runtime.mode_rollout_blocked`
+- `runtime.mode_rollback`
+- `launcher.runtime_provision` / `launcher.runtime_restart` / `launcher.runtime_teardown` / `launcher.runtime_recovery` / `launcher.runtime_status`
+
 ## Dev Startup
 
 Use the repo wrapper so backend and web come up with the expected local dev settings:

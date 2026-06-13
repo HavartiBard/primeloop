@@ -121,7 +121,8 @@ describe('OpenCodeProcessManager', () => {
       sleepFn: async () => {},
     })
 
-    await manager.syncAgent(createAgent({ worktree_path: worktreePath }))
+    // ephemeral agents start immediately on sync (durable agents are lazily provisioned)
+    await manager.syncAgent(createAgent({ worktree_path: worktreePath, tier: 'ephemeral' }))
 
     expect(execFileFn).toHaveBeenCalledWith('git', [
       '-C',
@@ -213,7 +214,7 @@ describe('OpenCodeProcessManager', () => {
         sleepFn: async () => {},
       })
 
-      await manager.syncAgent(createAgent({ worktree_path: worktreePath }))
+      await manager.syncAgent(createAgent({ worktree_path: worktreePath, tier: 'ephemeral' }))
 
       expect(spawnFn).toHaveBeenCalledWith('opencode', ['serve', '--port', '4200'], expect.objectContaining({
         cwd: worktreePath,
@@ -238,6 +239,7 @@ describe('OpenCodeProcessManager', () => {
       endpoint: 'http://127.0.0.1:4201',
       local_port: 4201,
       worktree_path: path.join(rootDir, 'agents', 'builder-one'),
+      tier: 'ephemeral',
     })
     const child = { kill: vi.fn().mockReturnValue(true), on: vi.fn(), stdout: null, stderr: null }
     const spawnFn = vi.fn().mockReturnValue(child)
@@ -478,7 +480,8 @@ describe('OpenCodeProcessManager', () => {
       sleepFn: async () => {},
     })
 
-    const agent = createAgent({ worktree_path: path.join(rootDir, 'agents', 'builder-one') })
+    // ephemeral so the first sync starts a process that the disable sync then stops
+    const agent = createAgent({ worktree_path: path.join(rootDir, 'agents', 'builder-one'), tier: 'ephemeral' })
     await manager.syncAgent(agent)
     await manager.syncAgent({ ...agent, enabled: false })
 
@@ -525,9 +528,10 @@ describe('OpenCodeProcessManager', () => {
     const fetchFn = vi.fn().mockResolvedValue(new Response(JSON.stringify({ status: 'ok' }), { status: 200 }))
     const execFileFn = vi.fn().mockResolvedValue({ stdout: '', stderr: '' })
     const query = vi.fn(async (sql: string) => {
-      if (sql.includes(`UPDATE delegations
-       SET status = 'failed'`)) {
-        return { rows: [{ id: 'del-1', to_agent_id: durable.id }] }
+      // T057: recovery now always runs recoverInflight (claim-and-transition CTE)
+      // instead of the legacy fail-and-requeue UPDATE. No in-flight delegations here.
+      if (sql.includes('WITH claimed AS')) {
+        return { rows: [] }
       }
       if (sql.includes(`SELECT id
        FROM agents`)) {
@@ -621,13 +625,14 @@ describe('OpenCodeProcessManager', () => {
 
     await manager.initialize()
 
-    expect(spawnFn).toHaveBeenCalledTimes(1)
-    expect(spawnFn).toHaveBeenCalledWith('opencode', ['serve', '--port', '4200'], expect.any(Object))
+    // Durable agents are lazily provisioned — initialize no longer eager-spawns them.
+    expect(spawnFn).not.toHaveBeenCalled()
+    // Recovery runs via recoverInflight (claim-and-transition), not the legacy fail UPDATE.
     expect(query).toHaveBeenCalledWith(
-      expect.stringContaining(`UPDATE delegations
-       SET status = 'failed'`),
-      ['failed during harness restart recovery'],
+      expect.stringContaining('WITH claimed AS'),
+      expect.any(Array),
     )
+    // Unstable non-prime agents are reset to error during recovery.
     expect(query).toHaveBeenCalledWith(
       expect.stringContaining('UPDATE agents'),
       [durable.id, 'error'],
@@ -718,12 +723,15 @@ describe('OpenCodeProcessManager', () => {
   // ─── Spec 023: Pi ACP migration ───────────────────────────────────────────
 
   describe('Pi ACP routing (spec-023)', () => {
+    // Ephemeral so syncAgent/ensureAgentStarted starts the runtime immediately without the
+    // durable lease path (which requires pool.connect). local_port/endpoint inherit the
+    // createAgent defaults (4200) so prepareAgent issues no UPDATE. Pi routing is driven by
+    // runtime_family, independent of tier.
     function createPiAgent(overrides: Partial<RegistryAgent> = {}): RegistryAgent {
       return createAgent({
         runtime_family: 'pi',
-        tier: 'durable',
+        tier: 'ephemeral',
         worktree_path: '/tmp/placeholder-pi',
-        local_port: undefined,
         config: {},
         ...overrides,
       })
@@ -755,27 +763,22 @@ describe('OpenCodeProcessManager', () => {
 
     it('T007 — routes Pi agent to AcpHarness using the pi-acp command (not a legacy bridge)', async () => {
       const worktreePath = path.join(rootDir, 'agents', 'pi-agent')
-      const capturedHarnessArgs: unknown[] = []
-      const mockHarness = {
-        start: vi.fn().mockResolvedValue(undefined),
-        stop: vi.fn(),
-        delegate: vi.fn(),
-        wake: vi.fn(),
-      }
+      const capturedCommands: string[] = []
 
-      // Spy on AcpHarness construction to capture the command argument
-      const { AcpHarness } = await import('../../src/fleet-executor/acp-harness.js')
-      const AcpHarnessSpy = vi.spyOn({ AcpHarness }, 'AcpHarness').mockImplementation((...args: unknown[]) => {
-        capturedHarnessArgs.push(...args)
-        return mockHarness as unknown as InstanceType<typeof AcpHarness>
-      })
+      // Spy on the module-level AcpHarness export so construction is actually intercepted.
+      const acp = await import('../../src/fleet-executor/acp-harness.js')
+      vi.spyOn(acp, 'AcpHarness' as never).mockImplementation(((_id: string, _pool: unknown, cmd: string) => {
+        capturedCommands.push(cmd)
+        return { start: vi.fn().mockResolvedValue(undefined), stop: vi.fn() }
+      }) as never)
 
       const execFileFn = vi.fn().mockResolvedValue({ stdout: '', stderr: '' })
       const query = vi.fn(makeBaseQuery(worktreePath))
       const pool = { query } as unknown as pg.Pool
 
-      // Use a process manager with EGRESS_SANDBOX off so launcher path is skipped
+      // EGRESS_SANDBOX off so the launcher path is skipped and we hit the local AcpHarness path.
       const originalSandbox = process.env.EGRESS_SANDBOX
+      const originalLauncher = process.env.LAUNCHER_ENABLED
       delete process.env.EGRESS_SANDBOX
       delete process.env.LAUNCHER_ENABLED
       try {
@@ -787,15 +790,13 @@ describe('OpenCodeProcessManager', () => {
         })
 
         await manager.syncAgent(createPiAgent({ worktree_path: worktreePath }))
-        // Pi agents are durable — lazy provisioning means syncAgent doesn't start them
-        // We confirm the agent state was set to idle (not started)
-        const lifecycleCall = query.mock.calls.find(
-          ([sql]) => typeof sql === 'string' && sql.includes('UPDATE agents') && sql.includes('SET state = $2')
-        )
-        expect(lifecycleCall).toBeDefined()
+
+        // Pi runtime family routes through AcpHarness with the built-in pi-acp command.
+        expect(capturedCommands).toContain('pi-acp')
       } finally {
         if (originalSandbox !== undefined) process.env.EGRESS_SANDBOX = originalSandbox
-        AcpHarnessSpy.mockRestore()
+        if (originalLauncher !== undefined) process.env.LAUNCHER_ENABLED = originalLauncher
+        vi.restoreAllMocks()
       }
     })
 
@@ -1043,7 +1044,7 @@ describe('OpenCodeProcessManager', () => {
         const acpWorktree = path.join(rootDir, 'agents', 'acp-regression')
         const acpAgent = createAgent({
           runtime_family: 'acp',
-          tier: 'durable',
+          tier: 'ephemeral',
           worktree_path: acpWorktree,
           config: { command: 'my-custom-acp', args: [] },
         })

@@ -33,8 +33,44 @@ services:
       LOCAL_LLM_API_KEY: ${LOCAL_LLM_API_KEY:-}
       LOCAL_LLM_MODEL: ${LOCAL_LLM_MODEL:-}
       LOCAL_LLM_NAME: ${LOCAL_LLM_NAME:-local-env}
+      GITEA_TOKEN: ${GITEA_TOKEN:-}
+      AGENT_REPO_ROOT: ${AGENT_REPO_ROOT:-/workspace/repo}
+      AGENT_WORKTREE_ROOT: ${AGENT_WORKTREE_ROOT:-/workspace/agents}
+      # Launcher-managed isolated runtimes (spec 025). LAUNCHER_ENABLED=1 makes
+      # launcher-provisioned OpenSandbox runtimes the default path for managed
+      # local OpenCode agents; the backend connects out over remote ACP.
+      LAUNCHER_AUTH_SECRET: ${LAUNCHER_AUTH_SECRET:?required}
+      LAUNCHER_URL: ${LAUNCHER_URL:-http://launcher:8787}
+      LAUNCHER_ENABLED: ${LAUNCHER_ENABLED:-1}
+      LAUNCHER_ADAPTER: ${LAUNCHER_ADAPTER:-docker}
     ports:
       - "3100:3100"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      launcher:
+        condition: service_started
+    restart: unless-stopped
+
+  launcher:
+    build: .
+    command: ["node", "dist/launcher/index.js"]
+    environment:
+      LAUNCHER_AUTH_SECRET: ${LAUNCHER_AUTH_SECRET:?required}
+      LAUNCHER_PORT: ${LAUNCHER_PORT:-8787}
+      LAUNCHER_VERSION: ${LAUNCHER_VERSION:-1.0.0}
+      LAUNCHER_ADAPTER: ${LAUNCHER_ADAPTER:-docker}
+      OPENSANDBOX_URL: ${OPENSANDBOX_URL:-http://opensandbox:8080}
+      OPENSANDBOX_API_KEY: ${OPENSANDBOX_API_KEY:-}
+      OPENSANDBOX_IMAGE_OPENCODE: ${OPENSANDBOX_IMAGE_OPENCODE:-opencode/opencode:latest}
+    ports:
+      - "8787:8787"
+    volumes:
+      # Docker adapter needs the host socket to provision sibling runtime
+      # containers; the workspace mount lets the launcher bind worktrees that
+      # the backend exclusively creates/mutates.
+      - /var/run/docker.sock:/var/run/docker.sock
+      - primeloop_workspace:/workspace
     depends_on:
       postgres:
         condition: service_healthy
@@ -42,3 +78,4 @@ services:
 
 volumes:
   postgres_data:
+  primeloop_workspace:

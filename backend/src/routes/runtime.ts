@@ -29,6 +29,7 @@ import {
   updateWorkItem,
 } from '../runtime.js'
 import { SessionStore } from '../session/store.js'
+import { evaluateRuntimeMode, recordRuntimeModeRollback } from '../runtime/mode.js'
 
 export function createRuntimeRouter({ pool }: { pool: pg.Pool }) {
   const router = Router()
@@ -37,6 +38,29 @@ export function createRuntimeRouter({ pool }: { pool: pg.Pool }) {
   router.get('/runtime/overview', async (_req, res) => {
     try {
       res.json(await getRuntimeOverview(pool))
+    } catch {
+      res.status(500).json({ error: 'internal error' })
+    }
+  })
+
+  // spec 025 US3: surface the active runtime mode + launcher rollout readiness so operators
+  // can validate adoption of the launcher path and detect when rollback is warranted.
+  router.get('/runtime/mode', async (_req, res) => {
+    try {
+      res.json(await evaluateRuntimeMode())
+    } catch {
+      res.status(500).json({ error: 'internal error' })
+    }
+  })
+
+  // spec 025 US3: record an explicit operator-initiated rollback to backend-local mode.
+  router.post('/runtime/mode/rollback', async (req, res) => {
+    const reason = typeof req.body?.reason === 'string' && req.body.reason.trim()
+      ? req.body.reason.trim()
+      : 'operator-initiated rollback'
+    try {
+      await recordRuntimeModeRollback(pool, reason)
+      res.status(202).json({ recorded: true, reason })
     } catch {
       res.status(500).json({ error: 'internal error' })
     }

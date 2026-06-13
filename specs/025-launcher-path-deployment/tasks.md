@@ -24,11 +24,11 @@
 
 **Purpose**: Add the launcher/OpenSandbox scaffolding and OpenCode runtime deployment placeholders needed by all stories.
 
-- [ ] T001 Create launcher adapter structure for Docker/OpenSandbox backends in `backend/src/launcher/`
-- [ ] T002 Create OpenCode runtime image/bootstrap scaffolding for remote container execution in deployment/runtime build files
-- [ ] T003 [P] Add launcher/OpenSandbox environment placeholders and service stubs to `docker-compose.yml`, `docker-compose.dev.yml`, and `docker-compose.prod.yml`
-- [ ] T004 [P] Document launcher/OpenSandbox env vars, OpenCode runtime image expectations, and deployment prerequisites in `specs/025-launcher-path-deployment/quickstart.md` and `README.md`
-- [ ] T005 [P] Update feature contract/docs references to reflect OpenCode-first remote harness scope and Pi deferral
+- [X] T001 Create launcher adapter structure for Docker/OpenSandbox backends in `backend/src/launcher/`
+- [X] T002 Create OpenCode runtime image/bootstrap scaffolding for remote container execution in deployment/runtime build files
+- [X] T003 [P] Add launcher/OpenSandbox environment placeholders and service stubs to `docker-compose.yml`, `docker-compose.dev.yml`, and `docker-compose.prod.yml`
+- [X] T004 [P] Document launcher/OpenSandbox env vars, OpenCode runtime image expectations, and deployment prerequisites in `specs/025-launcher-path-deployment/quickstart.md` and `README.md`
+- [X] T005 [P] Update feature contract/docs references to reflect OpenCode-first remote harness scope and Pi deferral
 
 ---
 
@@ -38,14 +38,14 @@
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete.
 
-- [ ] T006 Implement launcher auth validation and request guards in `backend/src/launcher/auth.ts` and `backend/src/launcher/server.ts`
-- [ ] T007 [P] Implement launcher health reporting for selected adapter plus OpenSandbox reachability in `backend/src/launcher/health.ts`
-- [ ] T008 [P] Implement backend-side launcher API client/helpers for provision, inspect, restart, and teardown in `backend/src/runtime/launcher-client.ts`
-- [ ] T009 Implement transport abstraction in `backend/src/acp/client.ts` so ACP can run over local stdio and remote transport
-- [ ] T010 Implement remote ACP harness support in `backend/src/fleet-executor/acp-harness.ts` and related harness types
-- [ ] T011 [P] Add shared launcher/runtime/remote-session status types in `backend/src/runtime/types.ts` and `backend/src/runtime/lease.ts`
-- [ ] T012 Implement recovery outcome recording and runtime-state reconciliation helpers for launcher/OpenSandbox runtimes in `backend/src/recovery/` and `backend/src/runtime/`
-- [ ] T013 [P] Add observability hooks for launcher auth failure, provisioning, restart, teardown, remote ACP connect, and recovery outcomes in `backend/src/runtime-event-types.ts`, `backend/src/events/`, and `backend/src/index.ts`
+- [X] T006 Implement launcher auth validation and request guards in `backend/src/launcher/auth.ts` and `backend/src/launcher/server.ts`
+- [X] T007 [P] Implement launcher health reporting for selected adapter plus OpenSandbox reachability in `backend/src/launcher/health.ts`
+- [X] T008 [P] Implement backend-side launcher API client/helpers for provision, inspect, restart, and teardown in `backend/src/runtime/launcher-client.ts`
+- [X] T009 Implement transport abstraction in `backend/src/acp/client.ts` so ACP can run over local stdio and remote transport
+- [X] T010 Implement remote ACP harness support in `backend/src/fleet-executor/acp-harness.ts` and related harness types
+- [X] T011 [P] Add shared launcher/runtime/remote-session status types in `backend/src/runtime/types.ts` and `backend/src/runtime/lease.ts`
+- [X] T012 Implement recovery outcome recording and runtime-state reconciliation helpers for launcher/OpenSandbox runtimes in `backend/src/recovery/` and `backend/src/runtime/`
+- [X] T013 [P] Add observability hooks for launcher auth failure, provisioning, restart, teardown, remote ACP connect, and recovery outcomes in `backend/src/runtime-event-types.ts`, `backend/src/events/`, and `backend/src/index.ts`
 
 **Checkpoint**: Launcher boundary, remote ACP transport, shared runtime types, and recovery hooks are ready; user story work can proceed.
 
@@ -59,21 +59,21 @@
 
 ### Verification for User Story 1
 
-- [ ] T014 [P] [US1] Add backend tests for launcher-backed OpenCode runtime provisioning and ACP endpoint handoff in `backend/tests/opencode/process-manager.test.ts`
-- [ ] T015 [P] [US1] Add launcher API route tests for `POST /agents` and `GET /agents/{agentId}` in `backend/tests/launcher/launcher.route.test.ts`
-- [ ] T016 [P] [US1] Add ACP remote transport tests in `backend/tests/acp/` and `backend/tests/fleet-executor/`
+- [X] T014 [P] [US1] Add backend tests for launcher-backed OpenCode runtime provisioning and ACP endpoint handoff in `backend/tests/opencode/process-manager.test.ts`
+- [X] T015 [P] [US1] Add launcher API route tests for `POST /agents` and `GET /agents/{agentId}` in `backend/tests/launcher/launcher.route.test.ts`
+- [X] T016 [P] [US1] Add ACP remote transport tests in `backend/tests/acp/` and `backend/tests/fleet-executor/`
 
 ### Implementation for User Story 1
 
-- [ ] T017 [P] [US1] Implement launcher POST `/agents` and GET `/agents/{agentId}` handlers in `backend/src/launcher/server.ts`
-- [ ] T018 [P] [US1] Implement launcher runtime lifecycle management through OpenSandbox in `backend/src/launcher/runtime-manager.ts` and `backend/src/launcher/adapters.ts`
-- [ ] T019 [US1] Implement OpenSandbox-backed OpenCode runtime provisioning contract and endpoint mapping in `backend/src/launcher/` and `specs/025-launcher-path-deployment/contracts/launcher-api.yaml`
-- [ ] T020 [US1] Update `backend/src/opencode/process-manager.ts` to make launcher-managed remote ACP provisioning the default path for managed local OpenCode agents
-- [ ] T021 [US1] Update `backend/src/index.ts` and `backend/src/app.ts` to boot the launcher service, surface launcher/OpenSandbox health, and wire default-on runtime mode configuration
-- [ ] T022 [US1] Enforce persistent one-runtime-per-agent behavior and backend-owned worktree assignment in `backend/src/opencode/process-manager.ts` and `backend/src/launcher/runtime-manager.ts`
-- [ ] T023 [US1] Ensure launcher-managed runtime status is surfaced through existing runtime/agent status paths in `backend/src/routes/runtime.ts`, `backend/src/routes/agents.ts`, and related runtime status surfaces
-- [ ] T024 [US1] Update Docker Compose service wiring and runtime image mounts so launcher-managed OpenSandbox runtimes can be provisioned in the default deployment path
-- [ ] T025 [US1] Update operator-facing runtime/install documentation for the new OpenCode-first default path in `README.md` and `specs/025-launcher-path-deployment/quickstart.md`
+- [X] T017 [P] [US1] Implement launcher POST `/agents` and GET `/agents/{agentId}` handlers in `backend/src/launcher/server.ts`
+- [X] T018 [P] [US1] Implement launcher runtime lifecycle management through OpenSandbox in `backend/src/launcher/runtime-manager.ts` and `backend/src/launcher/adapters.ts`
+- [X] T019 [US1] Implement OpenSandbox-backed OpenCode runtime provisioning contract and endpoint mapping in `backend/src/launcher/` and `specs/025-launcher-path-deployment/contracts/launcher-api.yaml`
+- [X] T020 [US1] Update `backend/src/opencode/process-manager.ts` to make launcher-managed remote ACP provisioning the default path for managed local OpenCode agents
+- [X] T021 [US1] Update `backend/src/index.ts` and `backend/src/app.ts` to boot the launcher service, surface launcher/OpenSandbox health, and wire default-on runtime mode configuration
+- [X] T022 [US1] Enforce persistent one-runtime-per-agent behavior and backend-owned worktree assignment in `backend/src/opencode/process-manager.ts` and `backend/src/launcher/runtime-manager.ts`
+- [X] T023 [US1] Ensure launcher-managed runtime status is surfaced through existing runtime/agent status paths in `backend/src/routes/runtime.ts`, `backend/src/routes/agents.ts`, and related runtime status surfaces
+- [X] T024 [US1] Update Docker Compose service wiring and runtime image mounts so launcher-managed OpenSandbox runtimes can be provisioned in the default deployment path
+- [X] T025 [US1] Update operator-facing runtime/install documentation for the new OpenCode-first default path in `README.md` and `specs/025-launcher-path-deployment/quickstart.md`
 
 **Checkpoint**: Managed local OpenCode agents provision through launcher-managed persistent isolated OpenSandbox runtimes by default and are independently testable.
 
@@ -87,18 +87,18 @@
 
 ### Verification for User Story 2
 
-- [ ] T026 [P] [US2] Add backend recovery tests for launcher-managed runtime reconciliation in `backend/tests/recovery/restart.test.ts` and `backend/tests/opencode/process-manager.test.ts`
-- [ ] T027 [P] [US2] Add launcher restart/teardown route tests for `POST /agents/{agentId}/restart` and `DELETE /agents/{agentId}` in `backend/tests/launcher/launcher.route.test.ts`
-- [ ] T028 [P] [US2] Add remote ACP reconnect/replacement tests in `backend/tests/acp/` and `backend/tests/fleet-executor/`
+- [X] T026 [P] [US2] Add backend recovery tests for launcher-managed runtime reconciliation in `backend/tests/recovery/restart.test.ts` and `backend/tests/opencode/process-manager.test.ts`
+- [X] T027 [P] [US2] Add launcher restart/teardown route tests for `POST /agents/{agentId}/restart` and `DELETE /agents/{agentId}` in `backend/tests/launcher/launcher.route.test.ts`
+- [X] T028 [P] [US2] Add remote ACP reconnect/replacement tests in `backend/tests/acp/` and `backend/tests/fleet-executor/`
 
 ### Implementation for User Story 2
 
-- [ ] T029 [P] [US2] Implement launcher restart and teardown handlers in `backend/src/launcher/server.ts` and `backend/src/launcher/runtime-manager.ts`
-- [ ] T030 [US2] Implement backend restart reconciliation against launcher/OpenSandbox state in `backend/src/recovery/restart.ts`, `backend/src/runtime/lease.ts`, and `backend/src/opencode/process-manager.ts`
-- [ ] T031 [US2] Record explicit recovery outcomes and remote ACP transition reasons in `backend/src/events/`, `backend/src/runtime/`, and `backend/src/recovery/`
-- [ ] T032 [US2] Add health degradation, reprovisioning, stale-runtime clearing, and remote endpoint replacement logic in `backend/src/launcher/health.ts`, `backend/src/runtime/launcher-client.ts`, and runtime status/recovery helpers
-- [ ] T033 [US2] Update operator-visible runtime/agent status responses to surface restart, teardown, and unavailable reasons consistently for diagnosis
-- [ ] T034 [US2] Extend `specs/025-launcher-path-deployment/quickstart.md` and `README.md` with restart, teardown, and rollback verification steps
+- [X] T029 [P] [US2] Implement launcher restart and teardown handlers in `backend/src/launcher/server.ts` and `backend/src/launcher/runtime-manager.ts`
+- [X] T030 [US2] Implement backend restart reconciliation against launcher/OpenSandbox state in `backend/src/recovery/restart.ts`, `backend/src/runtime/lease.ts`, and `backend/src/opencode/process-manager.ts`
+- [X] T031 [US2] Record explicit recovery outcomes and remote ACP transition reasons in `backend/src/events/`, `backend/src/runtime/`, and `backend/src/recovery/`
+- [X] T032 [US2] Add health degradation, reprovisioning, stale-runtime clearing, and remote endpoint replacement logic in `backend/src/launcher/health.ts`, `backend/src/runtime/launcher-client.ts`, and runtime status/recovery helpers
+- [X] T033 [US2] Update operator-visible runtime/agent status responses to surface restart, teardown, and unavailable reasons consistently for diagnosis
+- [X] T034 [US2] Extend `specs/025-launcher-path-deployment/quickstart.md` and `README.md` with restart, teardown, and rollback verification steps
 
 **Checkpoint**: Launcher-managed OpenCode runtimes recover or fail explicitly under restart and teardown scenarios and remain independently testable.
 
@@ -112,14 +112,14 @@
 
 ### Verification for User Story 3
 
-- [ ] T035 [P] [US3] Add deployment-level verification coverage or scripted validation notes for migration/rollback expectations in `backend/tests/runtime/` and `specs/025-launcher-path-deployment/quickstart.md`
+- [X] T035 [P] [US3] Add deployment-level verification coverage or scripted validation notes for migration/rollback expectations in `backend/tests/runtime/` and `specs/025-launcher-path-deployment/quickstart.md`
 
 ### Implementation for User Story 3
 
-- [ ] T036 [P] [US3] Implement migration-mode/runtime-mode compatibility checks in `backend/src/index.ts`, `backend/src/runtime/`, and `backend/src/opencode/process-manager.ts`
-- [ ] T037 [US3] Add rollout validation and rollback status signaling in `backend/src/routes/runtime.ts`, `backend/src/events/`, and `backend/src/runtime-event-types.ts`
-- [ ] T038 [US3] Document end-to-end migration, validation, and rollback procedures in `README.md` and `specs/025-launcher-path-deployment/quickstart.md`
-- [ ] T039 [US3] Update `AGENTS.md` and any feature-scoped operator guidance files that reference runtime isolation expectations for the new default deployment path
+- [X] T036 [P] [US3] Implement migration-mode/runtime-mode compatibility checks in `backend/src/index.ts`, `backend/src/runtime/`, and `backend/src/opencode/process-manager.ts`
+- [X] T037 [US3] Add rollout validation and rollback status signaling in `backend/src/routes/runtime.ts`, `backend/src/events/`, and `backend/src/runtime-event-types.ts`
+- [X] T038 [US3] Document end-to-end migration, validation, and rollback procedures in `README.md` and `specs/025-launcher-path-deployment/quickstart.md`
+- [X] T039 [US3] Update `AGENTS.md` and any feature-scoped operator guidance files that reference runtime isolation expectations for the new default deployment path
 
 **Checkpoint**: Operators can adopt the launcher-managed OpenCode default path and execute the documented rollback flow independently.
 
@@ -129,11 +129,11 @@
 
 **Purpose**: Final consistency, containment, and verification passes across all stories.
 
-- [ ] T040 [P] Review launcher contract, quickstart, and plan/spec consistency across `specs/025-launcher-path-deployment/spec.md`, `plan.md`, `research.md`, `data-model.md`, `quickstart.md`, and `contracts/launcher-api.yaml`
-- [ ] T041 Audit runtime containment enforcement and secret-handling paths in `backend/src/launcher/`, `backend/src/credentials/`, `backend/src/opencode/`, and isolation-related tests
-- [ ] T042 [P] Review operator UX/status terminology for launcher-managed OpenCode runtimes across UI/runtime status responses
-- [ ] T043 Run the feature quickstart validation and record any required doc adjustments in `specs/025-launcher-path-deployment/quickstart.md` and `README.md`
-- [ ] T044 Review and explicitly document Pi-as-remote-harness deferral/non-goals in feature docs and operator guidance
+- [X] T040 [P] Review launcher contract, quickstart, and plan/spec consistency across `specs/025-launcher-path-deployment/spec.md`, `plan.md`, `research.md`, `data-model.md`, `quickstart.md`, and `contracts/launcher-api.yaml`
+- [X] T041 Audit runtime containment enforcement and secret-handling paths in `backend/src/launcher/`, `backend/src/credentials/`, `backend/src/opencode/`, and isolation-related tests
+- [X] T042 [P] Review operator UX/status terminology for launcher-managed OpenCode runtimes across UI/runtime status responses
+- [X] T043 Run the feature quickstart validation and record any required doc adjustments in `specs/025-launcher-path-deployment/quickstart.md` and `README.md`
+- [X] T044 Review and explicitly document Pi-as-remote-harness deferral/non-goals in feature docs and operator guidance
 
 ---
 
