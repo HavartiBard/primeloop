@@ -73,13 +73,13 @@
 
 ### Tests for User Story 2
 
-- [ ] T012 [P] [US2] Add model/provider passthrough assertions for Pi ACP startup in `backend/tests/opencode/process-manager.test.ts`
-- [ ] T013 [P] [US2] Add Pi ACP startup failure coverage for missing `pi-acp` or underlying `pi` runtime in `backend/tests/opencode/process-manager.test.ts`
+- [X] T012 [P] [US2] Add model/provider passthrough assertions for Pi ACP startup in `backend/tests/opencode/process-manager.test.ts`
+- [X] T013 [P] [US2] Add Pi ACP startup failure coverage for missing `pi-acp` or underlying `pi` runtime in `backend/tests/opencode/process-manager.test.ts`
 
 ### Implementation for User Story 2
 
-- [ ] T014 [US2] Preserve resolved `PI_MODEL` and `PI_PROVIDER` environment passthrough on the Pi ACP launch path in `backend/src/opencode/process-manager.ts`
-- [ ] T015 [US2] Ensure Pi startup surfaces actionable ACP launch failures through existing error handling in `backend/src/opencode/process-manager.ts`
+- [X] T014 [US2] Preserve resolved `PI_MODEL` and `PI_PROVIDER` environment passthrough on the Pi ACP launch path in `backend/src/opencode/process-manager.ts`
+- [X] T015 [US2] Ensure Pi startup surfaces actionable ACP launch failures through existing error handling in `backend/src/opencode/process-manager.ts`
 
 **Checkpoint**: Pi ACP runs keep the same model/provider configuration behavior and actionable startup failures
 
@@ -114,12 +114,12 @@
 ### Tests for User Story 4
 
 - [X] T020 [P] [US4] Remove or replace any remaining direct PiHarness expectations in `backend/tests/opencode/process-manager.test.ts`
-- [ ] T021 [P] [US4] Add regression coverage proving Pi runtime selection uses ACP while generic ACP agents keep configurable command behavior in `backend/tests/opencode/process-manager.test.ts`
+- [X] T021 [P] [US4] Add regression coverage proving Pi runtime selection uses ACP while generic ACP agents keep configurable command behavior in `backend/tests/opencode/process-manager.test.ts`
 
 ### Implementation for User Story 4
 
-- [ ] T022 [US4] Remove any remaining PiHarness references from backend runtime code in `backend/src/opencode/process-manager.ts`
-- [ ] T023 [US4] Update ACP harness-facing runtime expectations, imports, or comments affected by the removal in `backend/src/fleet-executor/acp-harness.ts`
+- [X] T022 [US4] Remove any remaining PiHarness references from backend runtime code in `backend/src/opencode/process-manager.ts`
+- [X] T023 [US4] Update ACP harness-facing runtime expectations, imports, or comments affected by the removal in `backend/src/fleet-executor/acp-harness.ts`
 
 **Checkpoint**: The obsolete Pi-specific bridge is fully removed and Pi has one supported subprocess protocol path
 
@@ -129,8 +129,8 @@
 
 **Purpose**: Final cleanup, documentation alignment, and requested verification
 
-- [ ] T024 [P] Update migration documentation and implementation notes in `specs/023-pi-acp-migration/research.md`, `specs/023-pi-acp-migration/data-model.md`, and `specs/023-pi-acp-migration/contracts/pi-runtime-launch.md` if the delivered code differs from planned wording
-- [ ] T025 Run the requested backend verification for the touched runtime path in `backend/tests/opencode/process-manager.test.ts` and record the result in `specs/023-pi-acp-migration/quickstart.md`
+- [X] T024 [P] Update migration documentation and implementation notes in `specs/023-pi-acp-migration/research.md`, `specs/023-pi-acp-migration/data-model.md`, and `specs/023-pi-acp-migration/contracts/pi-runtime-launch.md` if the delivered code differs from planned wording
+- [X] T025 Run the requested backend verification for the touched runtime path in `backend/tests/opencode/process-manager.test.ts` and record the result in `specs/023-pi-acp-migration/quickstart.md`
 
 ---
 

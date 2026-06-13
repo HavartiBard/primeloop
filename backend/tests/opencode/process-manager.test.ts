@@ -898,5 +898,183 @@ describe('OpenCodeProcessManager', () => {
       // Verify PiHarness no longer exists
       await expect(import('../../src/fleet-executor/pi-harness.js')).rejects.toThrow()
     })
+
+    it('T012 — Pi agent start passes PI_MODEL and PI_PROVIDER env vars to AcpHarness', async () => {
+      const worktreePath = path.join(rootDir, 'agents', 'pi-env-test')
+      const capturedStartOpts: Array<{ cwd: string; env?: Record<string, string> }> = []
+
+      const acp = await import('../../src/fleet-executor/acp-harness.js')
+      vi.spyOn(acp, 'AcpHarness' as never).mockImplementation(((_id: string, _pool: unknown, _cmd: string, _args: string[], _root: string, _perm: unknown) => ({
+        start: vi.fn().mockImplementation((opts: { cwd: string; env?: Record<string, string> }) => {
+          capturedStartOpts.push(opts)
+          return Promise.resolve()
+        }),
+        stop: vi.fn(),
+      })) as never)
+
+      const piAgent = createPiAgent({ worktree_path: worktreePath })
+      const piQuery = vi.fn(async (sql: string) => {
+        if (isLifecycleUpdate(sql) || isRuntimeEventInsert(sql)) return { rows: [], rowCount: 1 }
+        if (sql.startsWith('SELECT * FROM agents WHERE id = $1')) return { rows: [piAgent] }
+        if (sql.startsWith('SELECT * FROM providers')) return { rows: [{ id: 'provider-1', type: 'pi', model: 'pi-gemma-3', base_url: null, api_key: null }] }
+        if (sql.startsWith('SELECT api_key FROM providers')) return { rows: [{ api_key: null }] }
+        if (sql.startsWith('SELECT * FROM agent_runtime_configs WHERE agent_id = $1')) return { rows: [] }
+        if (sql.startsWith('SELECT token FROM agent_tokens')) return { rows: [{ token: 'tok' }] }
+        if (sql.startsWith('INSERT INTO tool_grants')) {
+          return { rows: [{ id: 'g', agent_id: 'agent-1', delegation_id: null, work_item_id: null, capability_profile_id: null, routing_capability: 'implementation', granted_primitives: [], granted_capability_bundles: [], selected_provider_adapters: [], exclusion_reasons: [], task_scope: {}, approval_state: {}, environment_context: {}, revocation_state: 'active', revoked_at: null, created_at: new Date().toISOString(), updated_at: new Date().toISOString() }] }
+        }
+        if (sql.includes('FROM mcp_servers ms')) return { rows: [] }
+        throw new Error(`unexpected query: ${sql}`)
+      })
+
+      const originalSandbox = process.env.EGRESS_SANDBOX
+      const originalLauncher = process.env.LAUNCHER_ENABLED
+      delete process.env.EGRESS_SANDBOX
+      delete process.env.LAUNCHER_ENABLED
+
+      try {
+        const pool = { query: piQuery } as unknown as pg.Pool
+        const manager = new OpenCodeProcessManager(pool, {
+          repoRoot: path.join(rootDir, 'repo'),
+          agentsRoot: path.join(rootDir, 'agents'),
+          execFileFn: vi.fn().mockResolvedValue({ stdout: '', stderr: '' }) as any,
+          sleepFn: async () => {},
+        })
+
+        await manager.ensureAgentStarted('agent-1')
+
+        expect(capturedStartOpts.length).toBeGreaterThan(0)
+        const startOpts = capturedStartOpts[0]
+        expect(startOpts.env).toBeDefined()
+        expect(startOpts.env?.PI_MODEL).toBe('pi-gemma-3')
+        expect(startOpts.env?.PI_PROVIDER).toBe('pi')
+      } finally {
+        if (originalSandbox !== undefined) process.env.EGRESS_SANDBOX = originalSandbox
+        if (originalLauncher !== undefined) process.env.LAUNCHER_ENABLED = originalLauncher
+        vi.restoreAllMocks()
+      }
+    })
+
+    it('T013 — Pi startup failure from missing pi-acp surfaces an actionable error', async () => {
+      const worktreePath = path.join(rootDir, 'agents', 'pi-missing-binary')
+
+      const acp = await import('../../src/fleet-executor/acp-harness.js')
+      vi.spyOn(acp, 'AcpHarness' as never).mockImplementation(((_id: string, _pool: unknown, _cmd: string, _args: string[], _root: string, _perm: unknown) => ({
+        start: vi.fn().mockRejectedValue(Object.assign(new Error("spawn pi-acp ENOENT"), { code: 'ENOENT' })),
+        stop: vi.fn(),
+      })) as never)
+
+      const piAgent = createPiAgent({ worktree_path: worktreePath })
+      const piQuery = vi.fn(async (sql: string) => {
+        if (isLifecycleUpdate(sql) || isRuntimeEventInsert(sql)) return { rows: [], rowCount: 1 }
+        if (sql.startsWith('SELECT * FROM agents WHERE id = $1')) return { rows: [piAgent] }
+        if (sql.startsWith('SELECT * FROM providers')) return { rows: [] }
+        if (sql.startsWith('SELECT api_key FROM providers')) return { rows: [{ api_key: null }] }
+        if (sql.startsWith('SELECT * FROM agent_runtime_configs WHERE agent_id = $1')) return { rows: [] }
+        if (sql.startsWith('SELECT token FROM agent_tokens')) return { rows: [{ token: 'tok' }] }
+        if (sql.startsWith('INSERT INTO tool_grants')) {
+          return { rows: [{ id: 'g', agent_id: 'agent-1', delegation_id: null, work_item_id: null, capability_profile_id: null, routing_capability: 'implementation', granted_primitives: [], granted_capability_bundles: [], selected_provider_adapters: [], exclusion_reasons: [], task_scope: {}, approval_state: {}, environment_context: {}, revocation_state: 'active', revoked_at: null, created_at: new Date().toISOString(), updated_at: new Date().toISOString() }] }
+        }
+        if (sql.includes('FROM mcp_servers ms')) return { rows: [] }
+        throw new Error(`unexpected query: ${sql}`)
+      })
+
+      const originalSandbox = process.env.EGRESS_SANDBOX
+      const originalLauncher = process.env.LAUNCHER_ENABLED
+      delete process.env.EGRESS_SANDBOX
+      delete process.env.LAUNCHER_ENABLED
+
+      try {
+        const pool = { query: piQuery } as unknown as pg.Pool
+        const manager = new OpenCodeProcessManager(pool, {
+          repoRoot: path.join(rootDir, 'repo'),
+          agentsRoot: path.join(rootDir, 'agents'),
+          execFileFn: vi.fn().mockResolvedValue({ stdout: '', stderr: '' }) as any,
+          sleepFn: async () => {},
+        })
+
+        await expect(manager.ensureAgentStarted('agent-1')).rejects.toThrow(/pi-acp.*not found|Pi ACP startup failed/i)
+      } finally {
+        if (originalSandbox !== undefined) process.env.EGRESS_SANDBOX = originalSandbox
+        if (originalLauncher !== undefined) process.env.LAUNCHER_ENABLED = originalLauncher
+        vi.restoreAllMocks()
+      }
+    })
+
+    it('T021 — Pi uses pi-acp command; generic ACP agents use their config command', async () => {
+      const capturedCommands: string[] = []
+      const acp = await import('../../src/fleet-executor/acp-harness.js')
+      vi.spyOn(acp, 'AcpHarness' as never).mockImplementation(((_id: string, _pool: unknown, cmd: string, _args: string[], _root: string, _perm: unknown) => {
+        capturedCommands.push(cmd)
+        return { start: vi.fn().mockResolvedValue(undefined), stop: vi.fn() }
+      }) as never)
+
+      const originalSandbox = process.env.EGRESS_SANDBOX
+      const originalLauncher = process.env.LAUNCHER_ENABLED
+      delete process.env.EGRESS_SANDBOX
+      delete process.env.LAUNCHER_ENABLED
+
+      try {
+        // --- Pi agent ---
+        const piWorktree = path.join(rootDir, 'agents', 'pi-regression')
+        const piAgent = createPiAgent({ worktree_path: piWorktree })
+        const piPool = {
+          query: vi.fn(async (sql: string) => {
+            if (isLifecycleUpdate(sql) || isRuntimeEventInsert(sql)) return { rows: [], rowCount: 1 }
+            if (sql.startsWith('SELECT * FROM agents WHERE id = $1')) return { rows: [piAgent] }
+            if (sql.startsWith('SELECT * FROM providers')) return { rows: [] }
+            if (sql.startsWith('SELECT api_key FROM providers')) return { rows: [{ api_key: null }] }
+            if (sql.startsWith('SELECT * FROM agent_runtime_configs WHERE agent_id = $1')) return { rows: [] }
+            if (sql.startsWith('SELECT token FROM agent_tokens')) return { rows: [{ token: 'tok' }] }
+            if (sql.startsWith('INSERT INTO tool_grants')) return { rows: [{ id: 'g', agent_id: 'agent-1', delegation_id: null, work_item_id: null, capability_profile_id: null, routing_capability: 'implementation', granted_primitives: [], granted_capability_bundles: [], selected_provider_adapters: [], exclusion_reasons: [], task_scope: {}, approval_state: {}, environment_context: {}, revocation_state: 'active', revoked_at: null, created_at: new Date().toISOString(), updated_at: new Date().toISOString() }] }
+            if (sql.includes('FROM mcp_servers ms')) return { rows: [] }
+            throw new Error(`unexpected: ${sql}`)
+          }),
+        } as unknown as pg.Pool
+        const piManager = new OpenCodeProcessManager(piPool, {
+          repoRoot: path.join(rootDir, 'repo'),
+          agentsRoot: path.join(rootDir, 'agents'),
+          execFileFn: vi.fn().mockResolvedValue({ stdout: '', stderr: '' }) as any,
+          sleepFn: async () => {},
+        })
+        await piManager.ensureAgentStarted('agent-1')
+
+        // --- Generic ACP agent ---
+        const acpWorktree = path.join(rootDir, 'agents', 'acp-regression')
+        const acpAgent = createAgent({
+          runtime_family: 'acp',
+          tier: 'durable',
+          worktree_path: acpWorktree,
+          config: { command: 'my-custom-acp', args: [] },
+        })
+        const acpPool = {
+          query: vi.fn(async (sql: string) => {
+            if (isLifecycleUpdate(sql) || isRuntimeEventInsert(sql)) return { rows: [], rowCount: 1 }
+            if (sql.startsWith('SELECT * FROM agents WHERE id = $1')) return { rows: [acpAgent] }
+            if (sql.startsWith('SELECT * FROM providers')) return { rows: [] }
+            if (sql.startsWith('SELECT api_key FROM providers')) return { rows: [{ api_key: null }] }
+            if (sql.startsWith('SELECT * FROM agent_runtime_configs WHERE agent_id = $1')) return { rows: [] }
+            if (sql.startsWith('SELECT token FROM agent_tokens')) return { rows: [{ token: 'tok' }] }
+            if (sql.startsWith('INSERT INTO tool_grants')) return { rows: [{ id: 'g', agent_id: 'agent-1', delegation_id: null, work_item_id: null, capability_profile_id: null, routing_capability: 'implementation', granted_primitives: [], granted_capability_bundles: [], selected_provider_adapters: [], exclusion_reasons: [], task_scope: {}, approval_state: {}, environment_context: {}, revocation_state: 'active', revoked_at: null, created_at: new Date().toISOString(), updated_at: new Date().toISOString() }] }
+            if (sql.includes('FROM mcp_servers ms')) return { rows: [] }
+            throw new Error(`unexpected: ${sql}`)
+          }),
+        } as unknown as pg.Pool
+        const acpManager = new OpenCodeProcessManager(acpPool, {
+          repoRoot: path.join(rootDir, 'repo'),
+          agentsRoot: path.join(rootDir, 'agents'),
+          execFileFn: vi.fn().mockResolvedValue({ stdout: '', stderr: '' }) as any,
+          sleepFn: async () => {},
+        })
+        await acpManager.ensureAgentStarted('agent-1')
+
+        expect(capturedCommands).toContain('pi-acp')
+        expect(capturedCommands).toContain('my-custom-acp')
+      } finally {
+        if (originalSandbox !== undefined) process.env.EGRESS_SANDBOX = originalSandbox
+        if (originalLauncher !== undefined) process.env.LAUNCHER_ENABLED = originalLauncher
+        vi.restoreAllMocks()
+      }
+    })
   })
 })

@@ -35,9 +35,23 @@ cd backend && npm test
 Expected outcome: Pi agents continue to appear as Pi in the registry, but now run through the ACP
 harness with `pi-acp` instead of the deleted bespoke bridge.
 
+## Verification Result (2026-06-13)
+
+TypeScript build: **pass** — `npx tsc --noEmit` reports no errors (excluding pre-existing `yaml`
+module issue in `catalog/` which is unrelated).
+
+Test suite: all Pi ACP routing tests in `backend/tests/opencode/process-manager.test.ts` pass
+in the unit test runner (`vitest`). DB-backed tests require Docker networking and are validated
+via the standard Docker test compose path.
+
 ## Expected Outcome
 
 - ✅ Pi agents continue to appear as Pi in the registry
-- ✅ Pi tasks start through ACP instead of the deleted bespoke bridge
+- ✅ Pi tasks start through ACP instead of the deleted bespoke bridge  
 - ✅ Existing Pi agent records still work without data migration
+- ✅ `PI_MODEL` and `PI_PROVIDER` env vars are passed to `pi-acp` at startup (FR-010)
+- ✅ Missing `pi-acp` binary surfaces an actionable error (FR-009)
+- ✅ Per-agent subprocess command/args overrides are ignored for Pi agents
+- ✅ Generic ACP agents continue to use their configurable command
 - ✅ There is one supported subprocess protocol path for Pi agent execution
+- ✅ No PiHarness module or import exists anywhere in the runtime codebase
