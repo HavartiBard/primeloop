@@ -643,10 +643,28 @@ export class OpenCodeProcessManager {
 
     console.log(`[process-manager] Selecting AcpHarness for agent ${agent.id} (${agent.name})`)
     const harness = new AcpHarness(agent.id, this.pool, command, args, workspaceRoot, permissionConfig)
-    await harness.start({
-      cwd: worktreePath,
-      model: { providerID: provider?.type ?? 'openai', id: model },
-    })
+    // Pi agents communicate model/provider via PI_MODEL and PI_PROVIDER env vars (FR-010).
+    const piEnv: Record<string, string> | undefined = agent.runtime_family === 'pi'
+      ? {
+          ...(model ? { PI_MODEL: model } : {}),
+          ...(provider?.type ? { PI_PROVIDER: provider.type } : {}),
+        }
+      : undefined
+    try {
+      await harness.start({
+        cwd: worktreePath,
+        model: { providerID: provider?.type ?? 'openai', id: model },
+        env: piEnv,
+      })
+    } catch (err) {
+      if (agent.runtime_family === 'pi' && err instanceof Error && (err as NodeJS.ErrnoException).code === 'ENOENT') {
+        throw new Error(
+          `Pi ACP startup failed: 'pi-acp' executable not found. ` +
+          `Ensure the pi-acp package is installed in the runtime environment. Original: ${err.message}`
+        )
+      }
+      throw err
+    }
     console.log(`[process-manager] AcpHarness spawned for agent ${agent.id} (${agent.name})`)
     this.harnesses.set(agent.id, harness)
   }

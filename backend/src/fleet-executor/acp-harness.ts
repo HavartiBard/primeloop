@@ -31,7 +31,7 @@ export class AcpHarness implements AgentHarness {
     this.isRemoteTransport = !!remoteEndpoint;
   }
 
-  async start(opts: { cwd: string; model: ModelRef }): Promise<void> {
+  async start(opts: { cwd: string; model: ModelRef; env?: Record<string, string> }): Promise<void> {
     this.fsHandler = new FsHandler(this.workspaceRoot);
 
     if (this.isRemoteTransport && this.remoteEndpoint) {
@@ -42,12 +42,13 @@ export class AcpHarness implements AgentHarness {
         port: this.remoteEndpoint.port,
         path: this.remoteEndpoint.path,
       };
-      
+
       this.client = new AcpClient(
         {
           command: this.command,
           args: this.args,
           cwd: opts.cwd,
+          ...(opts.env ? { env: opts.env } : {}),
         },
         {
           onSessionUpdate: (update) => {
@@ -81,6 +82,7 @@ export class AcpHarness implements AgentHarness {
           command: this.command,
           args: this.args,
           cwd: opts.cwd,
+          ...(opts.env ? { env: opts.env } : {}),
         },
         {
           onSessionUpdate: (update) => {
