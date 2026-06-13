@@ -50,9 +50,11 @@ export class CredentialBroker {
     }
 
     for (const gitea of scope.giteaTokens ?? []) {
+      const giteaValue = await this.issueGiteaToken(agentId, gitea.repos ?? [], gitea.capabilities ?? [])
       issued.push(await this.issue(agentId, {
         kind: 'gitea_token',
         envName: gitea.envName,
+        value: giteaValue,
         autoRotatable: true,
         scope: {
           repos: gitea.repos ?? [],
@@ -180,7 +182,66 @@ export class CredentialBroker {
     }
   }
 
+  // Creates a scoped Gitea access token via the Gitea API (FR-011).
+  // Falls back to a random token if Gitea is not configured, so the broker
+  // stays functional in environments without Gitea.
+  private async issueGiteaToken(agentId: string, repos: string[], capabilities: string[]): Promise<string> {
+    const masterToken = process.env.GITEA_TOKEN
+    const baseUrl = (process.env.GITEA_URL ?? 'http://gitea:3000').replace(/\/$/, '')
+
+    if (!masterToken) {
+      console.warn(`[credential-broker] GITEA_TOKEN not set — issuing random placeholder for agent ${agentId}`)
+      return mintToken()
+    }
+
+    const scopes = capabilitiesToGiteaScopes(capabilities)
+    const tokenName = `primeloop-agent-${agentId.slice(0, 8)}-${Date.now()}`
+
+    try {
+      const res = await fetch(`${baseUrl}/api/v1/user/tokens`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `token ${masterToken}`,
+        },
+        body: JSON.stringify({ name: tokenName, scopes }),
+      })
+
+      if (!res.ok) {
+        const text = await res.text().catch(() => '')
+        console.warn(`[credential-broker] Gitea token creation failed (${res.status}): ${text} — falling back to random token`)
+        return mintToken()
+      }
+
+      const data = await res.json() as { sha1?: string }
+      if (!data.sha1) {
+        console.warn('[credential-broker] Gitea response missing sha1 field — falling back to random token')
+        return mintToken()
+      }
+
+      return data.sha1
+    } catch (err) {
+      console.warn('[credential-broker] Gitea API unreachable — falling back to random token:', err)
+      return mintToken()
+    }
+  }
+
   private async emit(event_type: string, payload: Record<string, unknown>): Promise<void> {
     await insertRuntimeEvent(this.pool, { event_type, actor: 'credential-broker', payload })
   }
+}
+
+function capabilitiesToGiteaScopes(capabilities: string[]): string[] {
+  if (capabilities.length === 0) return ['repository']
+  const scopes = new Set<string>()
+  for (const cap of capabilities) {
+    switch (cap) {
+      case 'read': scopes.add('repository'); break
+      case 'write': scopes.add('repository'); scopes.add('write:repository'); break
+      case 'issue': scopes.add('issue'); break
+      case 'admin': scopes.add('repository'); scopes.add('write:repository'); scopes.add('admin:org'); break
+      default: scopes.add(cap)
+    }
+  }
+  return Array.from(scopes)
 }

@@ -176,13 +176,8 @@ export class OpenCodeProcessManager {
   private readonly broker: CredentialBroker
   private readonly leaseManager: RuntimeLeaseManager
 
-  // Read at call time so the flags can be toggled per-process/test.
   private get credentialBrokerEnabled(): boolean {
     return process.env.CREDENTIAL_BROKER === '1'
-  }
-
-  private get lazyProvisioningEnabled(): boolean {
-    return process.env.LAZY_PROVISIONING === '1'
   }
 
   private get egressSandboxEnabled(): boolean {
@@ -253,15 +248,13 @@ export class OpenCodeProcessManager {
       await this.ensureWorktree(preparedAgent)
       await this.writeConfigFiles(preparedAgent)
 
-      const shouldStartImmediately = preparedAgent.tier === 'ephemeral' || !this.lazyProvisioningEnabled
+      const shouldStartImmediately = preparedAgent.tier === 'ephemeral'
       const existing = this.processes.get(preparedAgent.id)
       if (shouldStartImmediately && !existing) {
         await this.startAgent(preparedAgent)
       }
 
-      const readyState = preparedAgent.tier === 'ephemeral'
-        ? 'ready'
-        : (this.lazyProvisioningEnabled ? 'idle' : 'idle')
+      const readyState = preparedAgent.tier === 'ephemeral' ? 'ready' : 'idle'
       const readyReason = shouldStartImmediately
         ? 'managed local runtime ready'
         : 'managed local runtime prepared for lazy provisioning'
@@ -289,7 +282,7 @@ export class OpenCodeProcessManager {
       const agent = await this.refreshAgent(agentId)
       if (!agent || !isManagedLocalAgent(agent)) return
 
-      if (this.lazyProvisioningEnabled && agent.tier === 'durable') {
+      if (agent.tier === 'durable') {
         await this.leaseManager.acquire(agentId)
       }
 
@@ -714,37 +707,10 @@ export class OpenCodeProcessManager {
   }
 
   private async recoverLifecycleState(): Promise<void> {
-    let interruptedAgentIds: string[] = []
-    if (process.env.RESUME_ON_RESTART === '1') {
-      // US1: resume durable / re-dispatch ephemeral in-flight delegations from the
-      // durable log instead of failing them. recoverInflight emits its own events and
-      // leaves resumed agents to re-provision on dispatch (not marked 'error').
-      await recoverInflight(this.pool)
-    } else {
-      const recoveryMessage = 'failed during harness restart recovery'
-      const { rows: interrupted } = await this.pool.query<{ id: string; to_agent_id: string | null }>(
-        `UPDATE delegations
-       SET status = 'failed',
-           result = jsonb_build_object('error', $1::text),
-           completed_at = now(),
-           updated_at = now()
-       WHERE status = 'in_progress'
-       RETURNING id, to_agent_id`,
-        [recoveryMessage],
-      )
-
-      for (const delegation of interrupted) {
-        await this.recordRuntimeEvent('delegation.recovered_failed', {
-          actor: 'process-manager',
-          delegation_id: delegation.id,
-          payload: { error: recoveryMessage },
-        })
-      }
-
-      interruptedAgentIds = interrupted
-        .map((delegation) => delegation.to_agent_id)
-        .filter((agentId): agentId is string => typeof agentId === 'string')
-    }
+    // Resume durable / re-dispatch ephemeral in-flight delegations from the durable log
+    // instead of failing them. recoverInflight emits its own events and leaves resumed
+    // agents to re-provision on dispatch (not marked 'error').
+    await recoverInflight(this.pool)
 
     const { rows: unstableAgents } = await this.pool.query<{ id: string }>(
       `SELECT id
@@ -753,7 +719,7 @@ export class OpenCodeProcessManager {
          AND state IN ('provisioning', 'busy', 'retiring')`,
     )
 
-    const recoverableAgentIds = Array.from(new Set([...interruptedAgentIds, ...unstableAgents.map((agent) => agent.id)]))
+    const recoverableAgentIds = Array.from(new Set(unstableAgents.map((agent) => agent.id)))
     for (const agentId of recoverableAgentIds) {
       await this.setAgentState(agentId, 'error', RECOVERY_ERROR)
     }

@@ -52,14 +52,14 @@
 
 ### Tests for User Story 1
 
-- [ ] T007 [P] [US1] Add Pi ACP routing coverage in `backend/tests/opencode/process-manager.test.ts`
-- [ ] T008 [P] [US1] Add Pi lifecycle and cancellation regression coverage through the ACP path in `backend/tests/opencode/process-manager.test.ts`
+- [X] T007 [P] [US1] Add Pi ACP routing coverage in `backend/tests/opencode/process-manager.test.ts`
+- [X] T008 [P] [US1] Add Pi lifecycle and cancellation regression coverage through the ACP path in `backend/tests/opencode/process-manager.test.ts`
 
 ### Implementation for User Story 1
 
-- [ ] T009 [US1] Implement Pi runtime-family startup through `AcpHarness` in `backend/src/opencode/process-manager.ts`
-- [ ] T010 [US1] Ensure the Pi ACP launch profile uses the built-in `pi-acp` command and correct workspace/worktree inputs in `backend/src/opencode/process-manager.ts`
-- [ ] T011 [US1] Preserve downstream harness registration and cleanup behavior for Pi runs in `backend/src/opencode/process-manager.ts`
+- [X] T009 [US1] Implement Pi runtime-family startup through `AcpHarness` in `backend/src/opencode/process-manager.ts`
+- [X] T010 [US1] Ensure the Pi ACP launch profile uses the built-in `pi-acp` command and correct workspace/worktree inputs in `backend/src/opencode/process-manager.ts`
+- [X] T011 [US1] Preserve downstream harness registration and cleanup behavior for Pi runs in `backend/src/opencode/process-manager.ts`
 
 **Checkpoint**: User Story 1 is fully functional and Pi agents run through ACP instead of the bespoke bridge
 
@@ -93,13 +93,13 @@
 
 ### Tests for User Story 3
 
-- [ ] T016 [P] [US3] Add existing Pi registry row compatibility coverage in `backend/tests/opencode/process-manager.test.ts`
-- [ ] T017 [P] [US3] Add ignored per-agent command/argument override coverage for Pi agents in `backend/tests/opencode/process-manager.test.ts`
+- [X] T016 [P] [US3] Add existing Pi registry row compatibility coverage in `backend/tests/opencode/process-manager.test.ts`
+- [X] T017 [P] [US3] Add ignored per-agent command/argument override coverage for Pi agents in `backend/tests/opencode/process-manager.test.ts`
 
 ### Implementation for User Story 3
 
-- [ ] T018 [US3] Keep `runtime_family = 'pi'` mapped transparently to the built-in Pi ACP launch profile in `backend/src/opencode/process-manager.ts`
-- [ ] T019 [US3] Ignore per-agent subprocess command and argument overrides for Pi agents while preserving generic ACP behavior in `backend/src/opencode/process-manager.ts`
+- [X] T018 [US3] Keep `runtime_family = 'pi'` mapped transparently to the built-in Pi ACP launch profile in `backend/src/opencode/process-manager.ts`
+- [X] T019 [US3] Ignore per-agent subprocess command and argument overrides for Pi agents while preserving generic ACP behavior in `backend/src/opencode/process-manager.ts`
 
 **Checkpoint**: Existing Pi agent records remain valid without migration and Pi startup is deterministic across agents
 
@@ -113,7 +113,7 @@
 
 ### Tests for User Story 4
 
-- [ ] T020 [P] [US4] Remove or replace any remaining direct PiHarness expectations in `backend/tests/opencode/process-manager.test.ts`
+- [X] T020 [P] [US4] Remove or replace any remaining direct PiHarness expectations in `backend/tests/opencode/process-manager.test.ts`
 - [ ] T021 [P] [US4] Add regression coverage proving Pi runtime selection uses ACP while generic ACP agents keep configurable command behavior in `backend/tests/opencode/process-manager.test.ts`
 
 ### Implementation for User Story 4
