@@ -1,0 +1,60 @@
+name: backend-tests
+
+# Runs the backend Vitest suite (including DB-backed integration tests) against a
+# disposable Postgres on the same Docker network — the reliable path on this host,
+# where the published-port path (localhost:55432) is refused. See specs review +
+# backend/Dockerfile.test. Docker-only so it needs no node/git on the runner host.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  backend-tests:
+    runs-on: linux
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Provision disposable test DB + run suite
+        run: |
+          set -euo pipefail
+          NET="primeloop-ci-${{ github.run_id }}"
+          DB="pg-ci-${{ github.run_id }}"
+          IMG="primeloop-backend-test-${{ github.run_id }}"
+          DSN="postgresql://primeloop:primeloop_test@postgres-test:5432/primeloop_test"
+
+          cleanup() {
+            docker rm -f "$DB" >/dev/null 2>&1 || true
+            docker rmi "$IMG" >/dev/null 2>&1 || true
+            docker network rm "$NET" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          docker network create "$NET"
+
+          # No host port publish — CI talks to the DB in-network as `postgres-test`.
+          docker run -d --name "$DB" \
+            --network "$NET" --network-alias postgres-test \
+            -e POSTGRES_DB=primeloop_test \
+            -e POSTGRES_USER=primeloop \
+            -e POSTGRES_PASSWORD=primeloop_test \
+            --tmpfs /var/lib/postgresql/data \
+            pgvector/pgvector:pg16
+
+          echo "Waiting for Postgres to be ready..."
+          for i in $(seq 1 30); do
+            if docker exec "$DB" pg_isready -U primeloop -d primeloop_test >/dev/null 2>&1; then
+              echo "Postgres ready after ${i} attempt(s)."
+              break
+            fi
+            if [ "$i" -eq 30 ]; then echo "Postgres did not become ready" >&2; exit 1; fi
+            sleep 2
+          done
+
+          docker build -t "$IMG" -f backend/Dockerfile.test backend
+
+          docker run --rm --network "$NET" \
+            -e TEST_DATABASE_URL="$DSN" \
+            "$IMG" npm test

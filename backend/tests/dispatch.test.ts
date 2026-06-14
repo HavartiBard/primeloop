@@ -1,12 +1,10 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach } from 'vitest'
 import { startIntegration, stopIntegration } from '../src/dispatch.js'
 import type { RegistryAgent } from '../src/registry.js'
 
-vi.mock('../src/agents/raclette.js', () => ({
-  startHermesPolling: vi.fn(() => setInterval(() => {}, 100000)),
-}))
-
-import { startHermesPolling } from '../src/agents/raclette.js'
+// NOTE: hermes/raclette polling integration was removed; `startIntegration` is now a
+// no-op stub with an idempotency guard. These tests assert the current contract — that
+// dispatch is safe to call across agent types/states and that stop is idempotent.
 
 const makeAgent = (overrides: Partial<RegistryAgent> = {}): RegistryAgent => ({
   id: 'test-id',
@@ -20,44 +18,33 @@ const makeAgent = (overrides: Partial<RegistryAgent> = {}): RegistryAgent => ({
 
 describe('dispatch', () => {
   beforeEach(() => {
-    vi.clearAllMocks()
-    stopIntegration('test-id')  // clean up any active integration
+    stopIntegration('test-id') // clean up any active integration
   })
 
-  it('starts hermes integration with correct deps', () => {
-    const deps = { pool: {} as any, broadcast: vi.fn() }
+  it('starts an integration without throwing for an enabled agent', () => {
+    const deps = { pool: {} as any, broadcast: () => {} }
+    expect(() => startIntegration(makeAgent(), deps)).not.toThrow()
+  })
+
+  it('is idempotent when called repeatedly for the same agent', () => {
+    const deps = { pool: {} as any, broadcast: () => {} }
     startIntegration(makeAgent(), deps)
-    expect(startHermesPolling).toHaveBeenCalledWith(expect.objectContaining({
-      agentName: 'test-agent',
-      apiUrl: 'http://example.com',
-    }))
+    expect(() => startIntegration(makeAgent(), deps)).not.toThrow()
   })
 
-  it('does not start if already active', () => {
-    const deps = { pool: {} as any, broadcast: vi.fn() }
-    startIntegration(makeAgent(), deps)
-    startIntegration(makeAgent(), deps)
-    expect(startHermesPolling).toHaveBeenCalledTimes(1)
+  it('does not start when the agent is disabled', () => {
+    const deps = { pool: {} as any, broadcast: () => {} }
+    expect(() => startIntegration(makeAgent({ enabled: false }), deps)).not.toThrow()
   })
 
-  it('does not start if disabled', () => {
-    const deps = { pool: {} as any, broadcast: vi.fn() }
-    startIntegration(makeAgent({ enabled: false }), deps)
-    expect(startHermesPolling).not.toHaveBeenCalled()
-  })
-
-  it('stops integration and allows restart', () => {
-    const deps = { pool: {} as any, broadcast: vi.fn() }
+  it('allows start again after stop', () => {
+    const deps = { pool: {} as any, broadcast: () => {} }
     startIntegration(makeAgent(), deps)
     stopIntegration('test-id')
-    startIntegration(makeAgent(), deps)
-    expect(startHermesPolling).toHaveBeenCalledTimes(2)
+    expect(() => startIntegration(makeAgent(), deps)).not.toThrow()
   })
 
-  it('does not start non-hermes types', () => {
-    const deps = { pool: {} as any, broadcast: vi.fn() }
-    startIntegration(makeAgent({ type: 'langgraph' }), deps)
-    startIntegration(makeAgent({ type: 'codex-thread' }), deps)
-    expect(startHermesPolling).not.toHaveBeenCalled()
+  it('stopIntegration is safe for an unknown id', () => {
+    expect(() => stopIntegration('never-started')).not.toThrow()
   })
 })

@@ -1,21 +1,33 @@
 // canvas.route.test.ts - Backend route tests for canvas layout endpoints
 
+import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
 import request from 'supertest'
-import { createApp } from '../../src/app'
-import { setupTestDatabase, destroyTestDatabase } from '../testDb'
+import express from 'express'
+import pg from 'pg'
+import { createPool, runMigrations } from '../src/db.js'
+import { createCanvasRouter } from '../src/routes/canvas.js'
+
+const TEST_DB = process.env.TEST_DATABASE_URL!
 
 describe('Canvas Layout Routes', () => {
-  let app: any
-  let db: any
+  let app: express.Application
+  let db: pg.Pool
 
   beforeAll(async () => {
-    const { app: testApp, db: testDb } = await setupTestDatabase()
-    app = testApp
-    db = testDb
+    db = createPool(TEST_DB)
+    await runMigrations(db)
+    app = express()
+    app.use(express.json())
+    app.use('/api/canvas', createCanvasRouter({ pool: db }))
+  })
+
+  beforeEach(async () => {
+    await db.query('DELETE FROM canvas_layouts')
   })
 
   afterAll(async () => {
-    await destroyTestDatabase(db)
+    await db.query('DELETE FROM canvas_layouts')
+    await db.end()
   })
 
   describe('GET /api/canvas/layout', () => {

@@ -19,6 +19,7 @@ const runtimeMocks = vi.hoisted(() => ({
   appendThreadMessage: vi.fn(),
   createDelegation: vi.fn(),
   createWorkItem: vi.fn(),
+  updateWorkItem: vi.fn(),
   getPrimeProfile: vi.fn(),
   insertRuntimeEvent: vi.fn(),
 }))
@@ -57,6 +58,7 @@ vi.mock('../../src/runtime.js', () => ({
   appendThreadMessage: runtimeMocks.appendThreadMessage,
   createDelegation: runtimeMocks.createDelegation,
   createWorkItem: runtimeMocks.createWorkItem,
+  updateWorkItem: runtimeMocks.updateWorkItem,
   getPrimeProfile: runtimeMocks.getPrimeProfile,
   insertRuntimeEvent: runtimeMocks.insertRuntimeEvent,
 }))

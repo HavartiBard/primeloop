@@ -12,7 +12,9 @@ function createAgent(worktreePath: string): RegistryAgent {
     name: 'Secret Safe Agent',
     type: 'codex-thread',
     provider_id: 'provider-1',
-    tier: 'durable',
+    // ephemeral so syncAgent starts the runtime immediately (durable agents are lazily
+    // provisioned post-T057); the no-disk + env-injection assertions need a spawn.
+    tier: 'ephemeral',
     role: 'implementation',
     state: 'ready',
     persona_file: 'AGENTS.md',

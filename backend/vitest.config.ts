@@ -6,7 +6,9 @@ export default defineConfig({
     environment: 'node',
     fileParallelism: false,
     env: {
-      TEST_DATABASE_URL: process.env['TEST_DATABASE_URL'] ?? 'postgresql://langgraph:CHANGEME_password@127.0.0.1:5434/primeloop_test',
+      // Default to the disposable test DB from docker-compose.test.yml (`npm run test:db:up`).
+      // Override with TEST_DATABASE_URL for the in-network/docker path (see Dockerfile.test + CI).
+      TEST_DATABASE_URL: process.env['TEST_DATABASE_URL'] ?? 'postgresql://primeloop:primeloop_test@127.0.0.1:55432/primeloop_test',
     },
   },
 })
