@@ -24,14 +24,23 @@ Expected result:
 - OpenSandbox becomes healthy
 - no managed local agent is yet marked failed because of missing launcher connectivity
 
-## 2. Verify launcher health
+## 2. Verify launcher health and runtime mode
 
-Check the operator-visible health surface for the launcher service.
+Check the launcher health surface and the backend-reported runtime mode:
+
+```sh
+# launcher health (direct)
+curl -s http://localhost:8787/health | jq
+
+# backend-reported runtime mode + rollout readiness (spec 025 US3)
+curl -s http://localhost:3100/api/runtime/mode | jq
+```
 
 Expected result:
-- launcher reports healthy
-- OpenSandbox reachability is healthy
-- backend can reach launcher
+- launcher reports healthy; container runtime reachable
+- `GET /api/runtime/mode` returns `{ "mode": "launcher-managed", "launcherReachable": true, "rolloutReady": true }`
+- backend boot logs `[runtime-mode] active=launcher-managed rolloutReady=true`
+- runtime events include `runtime.mode_active` and `runtime.mode_rollout_validated`
 - no launcher-auth error is present
 
 ## 3. Create or enable a managed local OpenCode agent
@@ -87,9 +96,32 @@ Expected result:
 
 ## 8. Validate rollback path
 
-Follow the documented rollback procedure for returning to the prior backend-managed local runtime mode if launcher-backed isolation fails.
+If launcher-backed isolation fails, return to the prior backend-managed local runtime mode:
+
+```sh
+# 1. record the rollback intent (auditable runtime.mode_rollback event)
+curl -s -X POST http://localhost:3100/api/runtime/mode/rollback \
+  -H 'Content-Type: application/json' \
+  -d '{"reason":"launcher unhealthy during rollout"}'
+
+# 2. disable launcher mode and redeploy the backend
+#    set LAUNCHER_ENABLED=0 (and EGRESS_SANDBOX=0) in the environment, then:
+docker compose up -d backend
+
+# 3. confirm the backend is back on the legacy path
+curl -s http://localhost:3100/api/runtime/mode | jq   # → "mode": "backend-local", "rolloutReady": true
+```
 
 Expected result:
-- operator can restore a safe runtime path
-- durable records and worktrees remain intact
-- rollback outcome is operationally visible
+- `GET /api/runtime/mode` reports `backend-local` and `rolloutReady: true`
+- a `runtime.mode_rollback` event is recorded with the supplied reason
+- durable records and worktrees remain intact (backend owns them, not the launcher)
+- managed local agents fall back to backend-spawned `opencode serve`
+
+## Verification Result (2026-06-13)
+
+- TypeScript build: **pass** (`npx tsc --noEmit`, excluding the unrelated pre-existing `yaml`/`catalog` issue)
+- Compose parse: **pass** for `docker-compose.yml`, `docker-compose.prod.yml`, `docker-compose.dev.yml` (`docker compose config -q`)
+- Unit tests: **pass** — `tests/runtime/mode.test.ts` (8), `tests/launcher/launcher.route.test.ts` (6), `tests/launcher/adapters.test.ts` (3)
+- Launcher service wired into the default + prod compose deployments (was dev-only)
+- Runtime-mode rollout/rollback signaling implemented and surfaced via `GET /api/runtime/mode` + `POST /api/runtime/mode/rollback`

@@ -33,6 +33,12 @@ export const RuntimeEventTypes = {
   RUNTIME_LAUNCHER_RESTART: 'launcher.runtime_restart',
   RUNTIME_LAUNCHER_TEARDOWN: 'launcher.runtime_teardown',
   RUNTIME_LAUNCHER_RECOVERY: 'launcher.runtime_recovery',
+
+  // Runtime-mode rollout/rollback events (spec 025 US3)
+  RUNTIME_MODE_ACTIVE: 'runtime.mode_active',
+  RUNTIME_MODE_ROLLOUT_VALIDATED: 'runtime.mode_rollout_validated',
+  RUNTIME_MODE_ROLLOUT_BLOCKED: 'runtime.mode_rollout_blocked',
+  RUNTIME_MODE_ROLLBACK: 'runtime.mode_rollback',
 } as const
 
 export type RuntimeEventType = typeof RuntimeEventTypes[keyof typeof RuntimeEventTypes]

@@ -142,7 +142,7 @@ describe('AcpClient', () => {
 
   it('rejects pending requests on process close', async () => {
     await client.start();
-    
+
     const initPromise = client.initialize({
       protocolVersion: 1,
       clientCapabilities: { fs: { readTextFile: true } },
@@ -153,5 +153,74 @@ describe('AcpClient', () => {
     mockProcess.closeCb(1, 'SIGTERM');
 
     await expect(initPromise).rejects.toThrow('Process exited with code 1 and signal SIGTERM');
+  });
+
+  // spec 025 T016: remote ACP transport over HTTP
+  describe('remote HTTP transport', () => {
+    const endpoint = { protocol: 'http' as const, host: 'launcher-agent-1', port: 8080, path: '/acp' };
+    let fetchMock: ReturnType<typeof vi.fn>;
+    let remoteClient: AcpClient;
+
+    beforeEach(() => {
+      fetchMock = vi.fn();
+      vi.stubGlobal('fetch', fetchMock);
+      remoteClient = new AcpClient({ command: 'unused', cwd: '/tmp' });
+    });
+
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    it('does not spawn a subprocess for remote transport', async () => {
+      await remoteClient.startRemote(endpoint);
+      const { spawn } = await import('child_process');
+      expect(spawn).not.toHaveBeenCalled();
+    });
+
+    it('sends requests over HTTP to the remote endpoint and resolves the response', async () => {
+      fetchMock.mockResolvedValue({
+        ok: true,
+        json: async () => ({ jsonrpc: '2.0', id: 1, result: { protocolVersion: 1 } }),
+      });
+
+      await remoteClient.startRemote(endpoint);
+      const result = await remoteClient.initialize({
+        protocolVersion: 1,
+        clientCapabilities: { fs: { readTextFile: true } },
+        clientInfo: { name: 'test', version: '1.0' },
+      });
+
+      expect(result.protocolVersion).toBe(1);
+      expect(fetchMock).toHaveBeenCalledWith(
+        'http://launcher-agent-1:8080/acp',
+        expect.objectContaining({ method: 'POST' }),
+      );
+    });
+
+    it('rejects when the remote endpoint returns a non-ok status', async () => {
+      fetchMock.mockResolvedValue({
+        ok: false,
+        status: 502,
+        text: async () => 'Bad Gateway',
+      });
+
+      await remoteClient.startRemote(endpoint);
+      await expect(
+        remoteClient.initialize({
+          protocolVersion: 1,
+          clientCapabilities: {},
+          clientInfo: { name: 'test', version: '1.0' },
+        }),
+      ).rejects.toThrow(/502/);
+    });
+
+    it('rejects sending a request before the remote endpoint is configured', async () => {
+      const bareClient = new AcpClient({ command: 'unused', cwd: '/tmp' });
+      // Force remote mode without configuring an endpoint to assert the guard.
+      ;(bareClient as unknown as { transport: string }).transport = 'http';
+      await expect(
+        bareClient.initialize({ protocolVersion: 1, clientCapabilities: {}, clientInfo: { name: 't', version: '1' } }),
+      ).rejects.toThrow(/Remote endpoint not configured/);
+    });
   });
 });
