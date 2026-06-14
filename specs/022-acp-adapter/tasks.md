@@ -19,9 +19,9 @@
 
 **Purpose**: Install the ACP library and scaffold the new module structure. No logic yet.
 
-- [ ] T001 Install `@zed-industries/agent-client-protocol` in `backend/package.json` and verify types resolve
-- [ ] T002 [P] Create `backend/src/acp/` directory with empty index barrel: `backend/src/acp/types.ts`
-- [ ] T003 [P] Create `backend/tests/acp/` directory with a placeholder test file to confirm Vitest picks it up
+- [X] T001 Install `@zed-industries/agent-client-protocol` in `backend/package.json` and verify types resolve
+- [X] T002 [P] Create `backend/src/acp/` directory with empty index barrel: `backend/src/acp/types.ts`
+- [X] T003 [P] Create `backend/tests/acp/` directory with a placeholder test file to confirm Vitest picks it up
 
 **Checkpoint**: `npm install` clean, `backend/src/acp/` exists, test runner finds `tests/acp/`.
 
@@ -33,13 +33,13 @@
 
 **⚠️ CRITICAL**: No user story phase can begin until this phase is complete.
 
-- [ ] T004 Define local ACP type re-exports and any project-specific narrow types (e.g. `AcpSessionState`) in `backend/src/acp/types.ts`
-- [ ] T005 [P] Implement `AcpClient` class (stdio JSON-RPC over `child_process`) — `initialize`, `session/new`, `session/prompt`, `session/cancel` — in `backend/src/acp/client.ts`. Client handles incoming `session/update` notifications and dispatches inbound `session/request_permission` / `fs/*` callbacks to registered handlers.
-- [ ] T006 [P] Implement `updateMapper` — pure function mapping `SessionUpdate` variants to `HarnessEvent` — in `backend/src/acp/update-mapper.ts` (table: research D3 / harness-contract.md)
-- [ ] T007 [P] Unit tests for `AcpClient` message framing, `initialize` handshake, and `session/prompt` lifecycle against a mock subprocess in `backend/tests/acp/client.test.ts`
-- [ ] T008 [P] Unit tests for `updateMapper` covering all `SessionUpdate` variants → `HarnessEvent` in `backend/tests/acp/update-mapper.test.ts`
-- [ ] T009 Implement sandboxed `fs` handler — `fs/read_text_file` and `fs/write_text_file` with symlink-aware path confinement to sandbox root — in `backend/src/acp/fs-handler.ts`
-- [ ] T010 [P] Unit tests for `fs-handler` covering in-sandbox reads/writes, out-of-sandbox rejection, symlink escapes, and non-absolute paths in `backend/tests/acp/fs-handler.test.ts`
+- [X] T004 Define local ACP type re-exports and any project-specific narrow types (e.g. `AcpSessionState`) in `backend/src/acp/types.ts`
+- [X] T005 [P] Implement `AcpClient` class (stdio JSON-RPC over `child_process`) — `initialize`, `session/new`, `session/prompt`, `session/cancel` — in `backend/src/acp/client.ts`. Client handles incoming `session/update` notifications and dispatches inbound `session/request_permission` / `fs/*` callbacks to registered handlers.
+- [X] T006 [P] Implement `updateMapper` — pure function mapping `SessionUpdate` variants to `HarnessEvent` — in `backend/src/acp/update-mapper.ts` (table: research D3 / harness-contract.md)
+- [X] T007 [P] Unit tests for `AcpClient` message framing, `initialize` handshake, and `session/prompt` lifecycle against a mock subprocess in `backend/tests/acp/client.test.ts`
+- [X] T008 [P] Unit tests for `updateMapper` covering all `SessionUpdate` variants → `HarnessEvent` in `backend/tests/acp/update-mapper.test.ts`
+- [X] T009 Implement sandboxed `fs` handler — `fs/read_text_file` and `fs/write_text_file` with symlink-aware path confinement to sandbox root — in `backend/src/acp/fs-handler.ts`
+- [X] T010 [P] Unit tests for `fs-handler` covering in-sandbox reads/writes, out-of-sandbox rejection, symlink escapes, and non-absolute paths in `backend/tests/acp/fs-handler.test.ts`
 
 **Checkpoint**: `AcpClient`, `updateMapper`, and `fs-handler` pass their unit tests. No harness or permission logic yet.
 
@@ -53,12 +53,12 @@
 
 ### Implementation
 
-- [ ] T011 [US1] Implement `AcpHarness implements AgentHarness` — `start()` (spawn + `initialize` + capability reconciliation), `dispatch()` (`session/new` + `session/prompt` + stream), `abort()` (`session/cancel`), `close()` (terminate + reap) — in `backend/src/fleet-executor/acp-harness.ts`. Wire `updateMapper` and `AcpClient`. On crash/malformed message: settle `task_end` as failed, reap subprocess.
-- [ ] T012 [US1] Modify `backend/src/opencode/process-manager.ts` to select `AcpHarness` for agents with `runtime_family = 'acp'`, `PiHarness` otherwise. Harness stored in the existing `piHarnesses` map (or a unified map).
-- [ ] T013 [US1] Implement capability reconciliation in `AcpHarness.start()` — after `initialize`, call `updateAgent(pool, agentId, { capabilities: negotiatedCapabilities })` so registry `capabilities[]` reflects the handshake. Refuse dispatch to an unadvertised capability (FR-013).
-- [ ] T014 [US1] Emit `runtime_event` entries for session lifecycle: `acp.session.started`, `acp.session.completed`, `acp.session.failed`, `acp.session.cancelled` — in `AcpHarness` using the existing `runtime_events` insert pattern.
-- [ ] T015 [P] [US1] Integration test: dispatch a task to a stub ACP agent (subprocess that speaks ACP over stdio) through `FleetDispatcher` → `AcpHarness`, assert `HarnessEvent` stream and terminal `TaskResult` in `backend/tests/fleet-executor/acp-harness.test.ts`
-- [ ] T016 [US1] Register a test ACP agent entry in the dev database seed / docs — add an example `agents` row with `runtime_family = 'acp'`, launch command, and `workspace_root` to `backend/src/migrations/` (or seed script) so the quickstart works without manual SQL
+- [X] T011 [US1] Implement `AcpHarness implements AgentHarness` — `start()` (spawn + `initialize` + capability reconciliation), `dispatch()` (`session/new` + `session/prompt` + stream), `abort()` (`session/cancel`), `close()` (terminate + reap) — in `backend/src/fleet-executor/acp-harness.ts`. Wire `updateMapper` and `AcpClient`. On crash/malformed message: settle `task_end` as failed, reap subprocess.
+- [X] T012 [US1] Modify `backend/src/opencode/process-manager.ts` to select `AcpHarness` for agents with `runtime_family = 'acp'`, `PiHarness` otherwise. Harness stored in the existing `piHarnesses` map (or a unified map).
+- [X] T013 [US1] Implement capability reconciliation in `AcpHarness.start()` — after `initialize`, call `updateAgent(pool, agentId, { capabilities: negotiatedCapabilities })` so registry `capabilities[]` reflects the handshake. Refuse dispatch to an unadvertised capability (FR-013).
+- [X] T014 [US1] Emit `runtime_event` entries for session lifecycle: `acp.session.started`, `acp.session.completed`, `acp.session.failed`, `acp.session.cancelled` — in `AcpHarness` using the existing `runtime_events` insert pattern.
+- [X] T015 [P] [US1] Integration test: dispatch a task to a stub ACP agent (subprocess that speaks ACP over stdio) through `FleetDispatcher` → `AcpHarness`, assert `HarnessEvent` stream and terminal `TaskResult` in `backend/tests/fleet-executor/acp-harness.test.ts`
+- [X] T016 [US1] Register a test ACP agent entry in the dev database seed / docs — add an example `agents` row with `runtime_family = 'acp'`, launch command, and `workspace_root` to `backend/src/migrations/` (or seed script) so the quickstart works without manual SQL
 
 **Checkpoint**: US1 independently verifiable — Gemini CLI (or stub) completes a dispatched task end-to-end. Canvas shows streamed events. SC-001/SC-002/SC-004 satisfied.
 
@@ -72,11 +72,11 @@
 
 ### Implementation
 
-- [ ] T017 [US2] Implement `PermissionPolicy` classifier and `resolvePermission()` bridge in `backend/src/acp/permission.ts` — reads per-agent config (`agents.config.permission`), classifies `toolCall`, auto-responds for low-risk, creates approval-queue item for sensitive (reuse existing approval insert pattern from `routes/approvals.ts`), wires deny-timeout via `setTimeout` with fail-safe `reject_once` response (FR-005, FR-006a).
-- [ ] T018 [US2] Wire `resolvePermission()` into `AcpClient` as the `session/request_permission` callback handler in `backend/src/acp/client.ts`. Cancellation path: on `abort()`, cancel pending permission promises with `{ outcome: 'cancelled' }`.
-- [ ] T019 [US2] Emit `runtime_event` for each permission decision: `acp.permission.auto_resolved`, `acp.permission.gated`, `acp.permission.approved`, `acp.permission.denied`, `acp.permission.timeout` — in `permission.ts` for observability (SC-007).
-- [ ] T020 [P] [US2] Unit tests for `permission.ts` — low-risk auto-resolve, sensitive gate, timeout deny, cancelled on task abort, approval-queue integration (mock) — in `backend/tests/acp/permission.test.ts`
-- [ ] T021 [US2] Add default `permission` config shape to the example agent seed/migration from T016 and document the config fields in `quickstart.md`
+- [X] T017 [US2] Implement `PermissionPolicy` classifier and `resolvePermission()` bridge in `backend/src/acp/permission.ts` — reads per-agent config (`agents.config.permission`), classifies `toolCall`, auto-responds for low-risk, creates approval-queue item for sensitive (reuse existing approval insert pattern from `routes/approvals.ts`), wires deny-timeout via `setTimeout` with fail-safe `reject_once` response (FR-005, FR-006a).
+- [X] T018 [US2] Wire `resolvePermission()` into `AcpClient` as the `session/request_permission` callback handler in `backend/src/acp/client.ts`. Cancellation path: on `abort()`, cancel pending permission promises with `{ outcome: 'cancelled' }`.
+- [X] T019 [US2] Emit `runtime_event` for each permission decision: `acp.permission.auto_resolved`, `acp.permission.gated`, `acp.permission.approved`, `acp.permission.denied`, `acp.permission.timeout` — in `permission.ts` for observability (SC-007).
+- [X] T020 [P] [US2] Unit tests for `permission.ts` — low-risk auto-resolve, sensitive gate, timeout deny, cancelled on task abort, approval-queue integration (mock) — in `backend/tests/acp/permission.test.ts`
+- [X] T021 [US2] Add default `permission` config shape to the example agent seed/migration from T016 and document the config fields in `quickstart.md`
 
 **Checkpoint**: US2 independently verifiable — sensitive permission gates, low-risk resolves, timeout denies. SC-003/SC-007 satisfied.
 
@@ -90,8 +90,8 @@
 
 ### Implementation
 
-- [ ] T022 [US3] Verify `AcpHarness.abort()` sends `session/cancel` correctly and that `close()` reaps the subprocess unconditionally (SIGTERM then SIGKILL after grace period) — add edge-case handling for crash-before-cancel and cancel-while-blocked-on-permission to `backend/src/fleet-executor/acp-harness.ts`
-- [ ] T023 [P] [US3] Unit/integration tests for cancellation: cancel-during-prompt, cancel-during-permission-wait, crash-before-cancel, all settle as terminal with no orphan — extend `backend/tests/fleet-executor/acp-harness.test.ts`
+- [X] T022 [US3] Verify `AcpHarness.abort()` sends `session/cancel` correctly and that `close()` reaps the subprocess unconditionally (SIGTERM then SIGKILL after grace period) — add edge-case handling for crash-before-cancel and cancel-while-blocked-on-permission to `backend/src/fleet-executor/acp-harness.ts`
+- [X] T023 [P] [US3] Unit/integration tests for cancellation: cancel-during-prompt, cancel-during-permission-wait, crash-before-cancel, all settle as terminal with no orphan — extend `backend/tests/fleet-executor/acp-harness.test.ts`
 
 **Checkpoint**: US3 independently verifiable — cancel settles cleanly, no orphan. SC-005 satisfied.
 
@@ -105,9 +105,9 @@
 
 ### Implementation
 
-- [ ] T024 [US4] Annotate `backend/src/adapters/opencode.ts` and `backend/src/adapters/generic-http.ts` with `@deprecated` JSDoc comments noting the removal condition ("remove when no agent depends on this path") and link to this spec
-- [ ] T025 [US4] Update `backend/src/adapters/index.ts` to add `acp` to the `runtime_family` switch (routing it away from HTTP shims) and add a `@deprecated` comment on the legacy cases
-- [ ] T026 [P] [US4] Verify existing adapter unit/integration tests still pass unchanged — run `npm run test` targeting `tests/adapters/` and confirm green
+- [X] T024 [US4] Annotate `backend/src/adapters/opencode.ts` and `backend/src/adapters/generic-http.ts` with `@deprecated` JSDoc comments noting the removal condition ("remove when no agent depends on this path") and link to this spec
+- [X] T025 [US4] Update `backend/src/adapters/index.ts` to add `acp` to the `runtime_family` switch (routing it away from HTTP shims) and add a `@deprecated` comment on the legacy cases
+- [X] T026 [P] [US4] Verify existing adapter unit/integration tests still pass unchanged — run `npm run test` targeting `tests/adapters/` and confirm green
 
 **Checkpoint**: US4 independently verifiable — legacy agents work via shims; ACP family routes to `AcpHarness`. SC-006 satisfied.
 
@@ -117,11 +117,11 @@
 
 **Purpose**: Observability completeness, cleanup, and quickstart validation.
 
-- [ ] T027 [P] Review all new `runtime_event` inserts for consistent `event_type` naming (`acp.*`) and ensure payloads include `agent_id`, `session_id`, `delegation_id` for correlation — `backend/src/acp/` and `fleet-executor/acp-harness.ts`
-- [ ] T028 [P] Add process-manager logging for ACP harness selection, spawn, and reap at appropriate log levels in `backend/src/opencode/process-manager.ts`
-- [ ] T029 Update `AGENTS.md` (or equivalent) with the ACP agent registration format (`runtime_family: acp`, `config.acp`, `config.permission`) so operators can register agents without reading source
-- [ ] T030 Run the full `quickstart.md` validation — spawn Gemini CLI (or best available ACP-capable agent), complete all 5 verification steps, confirm SC-001 through SC-007
-- [ ] T031 [P] Run full backend test suite (`npm run test` + `npm run test:db`) and confirm zero regressions on existing adapter, harness, and dispatch tests
+- [X] T027 [P] Review all new `runtime_event` inserts for consistent `event_type` naming (`acp.*`) and ensure payloads include `agent_id`, `session_id`, `delegation_id` for correlation — `backend/src/acp/` and `fleet-executor/acp-harness.ts`
+- [X] T028 [P] Add process-manager logging for ACP harness selection, spawn, and reap at appropriate log levels in `backend/src/opencode/process-manager.ts`
+- [X] T029 Update `AGENTS.md` (or equivalent) with the ACP agent registration format (`runtime_family: acp`, `config.acp`, `config.permission`) so operators can register agents without reading source
+- [X] T030 Run the full `quickstart.md` validation — spawn Gemini CLI (or best available ACP-capable agent), complete all 5 verification steps, confirm SC-001 through SC-007
+- [X] T031 [P] Run full backend test suite (`npm run test` + `npm run test:db`) and confirm zero regressions on existing adapter, harness, and dispatch tests
 
 ---
 

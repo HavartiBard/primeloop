@@ -21,9 +21,9 @@ Web app: backend at `backend/src/`, tests at `backend/tests/`, UI at `web/src/`.
 
 ## Phase 1: Setup (Shared Infrastructure)
 
-- [ ] T001 Add `yaml` dependency to `backend/package.json` and run `npm install` in `backend/`
-- [ ] T002 [P] Create the default local catalog store: add `backend/catalog/.gitkeep` and add `backend/catalog/` to the repo `.gitignore`
-- [ ] T003 [P] Create the catalog module skeleton: `backend/src/catalog/` with an `index.ts` barrel and an empty `backend/tests/catalog/` directory
+- [X] T001 Add `yaml` dependency to `backend/package.json` and run `npm install` in `backend/`
+- [X] T002 [P] Create the default local catalog store: add `backend/catalog/.gitkeep` and add `backend/catalog/` to the repo `.gitignore`
+- [X] T003 [P] Create the catalog module skeleton: `backend/src/catalog/` with an `index.ts` barrel and an empty `backend/tests/catalog/` directory
 
 ---
 
@@ -31,15 +31,15 @@ Web app: backend at `backend/src/`, tests at `backend/tests/`, UI at `web/src/`.
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete.
 
-- [ ] T004 Add catalog schema to `backend/src/db.ts` (idempotent `CREATE TABLE IF NOT EXISTS` + `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`): `catalog_sources`, `catalog_templates`, `catalog_template_versions`, `catalog_admission_events`, and `agents.catalog_template_version_id`; seed the `default-local` source row (per data-model.md)
-- [ ] T005 [P] Define core types in `backend/src/catalog/types.ts`: `CatalogTemplate`, `AdmissionState`, `FailureCode`, `FailureReason`, `SyncEntryResult`, `TemplateVersion`, `CatalogSource` (per data-model.md + contracts/template-schema.md)
-- [ ] T006 [P] Implement the safe-baseline definition + `isWithinBaseline()` in `backend/src/catalog/baseline.ts` (read-only bundles, no credential needs, no deploy/write-external primitives, empty egress) per research.md R5
-- [ ] T007 [P] Implement required/optional field definitions and structural YAML parse in `backend/src/catalog/schema.ts` (emits `MISSING_REQUIRED_FIELD` / `INVALID_FIELD_TYPE`) per contracts/template-schema.md (depends on T005)
-- [ ] T008 Implement the catalog DB store in `backend/src/catalog/store.ts`: CRUD for all `catalog_*` tables, content hashing, snapshot freeze + immutability guard (registered versions never mutated) per data-model.md (depends on T004, T005)
-- [ ] T009 Implement the admission state machine + event logging in `backend/src/catalog/admission-state.ts`: legal transitions and append-only `catalog_admission_events` writes (actor + reason) per data-model.md (depends on T005, T008)
-- [ ] T010 Implement the validator framework + reference resolver in `backend/src/catalog/validator.ts`: orchestrates structural validation (T007) and resolves references against `capability_bundle_adapters`, `mcp_servers`, `providers`, and the credential broker; returns `FailureReason[]` (rejection rule bodies added in US2) (depends on T005, T007, T008)
-- [ ] T011 Create the `createCatalogRouter({ pool })` skeleton in `backend/src/routes/catalog.ts` and mount it at `/api/catalog` in `backend/src/app.ts` (handlers added per story)
-- [ ] T012 Define observability + operational ownership for the feature: structured log points for sync/validate/approve/instantiate, and document the rollback path and admission-event audit trail in `backend/src/catalog/index.ts` header comment (per plan.md SRE section)
+- [X] T004 Add catalog schema to `backend/src/db.ts` (idempotent `CREATE TABLE IF NOT EXISTS` + `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`): `catalog_sources`, `catalog_templates`, `catalog_template_versions`, `catalog_admission_events`, and `agents.catalog_template_version_id`; seed the `default-local` source row (per data-model.md)
+- [X] T005 [P] Define core types in `backend/src/catalog/types.ts`: `CatalogTemplate`, `AdmissionState`, `FailureCode`, `FailureReason`, `SyncEntryResult`, `TemplateVersion`, `CatalogSource` (per data-model.md + contracts/template-schema.md)
+- [X] T006 [P] Implement the safe-baseline definition + `isWithinBaseline()` in `backend/src/catalog/baseline.ts` (read-only bundles, no credential needs, no deploy/write-external primitives, empty egress) per research.md R5
+- [X] T007 [P] Implement required/optional field definitions and structural YAML parse in `backend/src/catalog/schema.ts` (emits `MISSING_REQUIRED_FIELD` / `INVALID_FIELD_TYPE`) per contracts/template-schema.md (depends on T005)
+- [X] T008 Implement the catalog DB store in `backend/src/catalog/store.ts`: CRUD for all `catalog_*` tables, content hashing, snapshot freeze + immutability guard (registered versions never mutated) per data-model.md (depends on T004, T005)
+- [X] T009 Implement the admission state machine + event logging in `backend/src/catalog/admission-state.ts`: legal transitions and append-only `catalog_admission_events` writes (actor + reason) per data-model.md (depends on T005, T008)
+- [X] T010 Implement the validator framework + reference resolver in `backend/src/catalog/validator.ts`: orchestrates structural validation (T007) and resolves references against `capability_bundle_adapters`, `mcp_servers`, `providers`, and the credential broker; returns `FailureReason[]` (rejection rule bodies added in US2) (depends on T005, T007, T008)
+- [X] T011 Create the `createCatalogRouter({ pool })` skeleton in `backend/src/routes/catalog.ts` and mount it at `/api/catalog` in `backend/src/app.ts` (handlers added per story)
+- [X] T012 Define observability + operational ownership for the feature: structured log points for sync/validate/approve/instantiate, and document the rollback path and admission-event audit trail in `backend/src/catalog/index.ts` header comment (per plan.md SRE section)
 
 **Checkpoint**: Schema, types, store, state machine, validator framework, and router are ready — user stories can begin.
 
@@ -53,9 +53,9 @@ Web app: backend at `backend/src/`, tests at `backend/tests/`, UI at `web/src/`.
 
 ### Tests for User Story 1 ⚠️ (write first, must fail)
 
-- [ ] T013 [P] [US1] Contract test for the happy-path API (`POST /sync` local, `POST .../approve`, `POST .../instantiate`) in `backend/tests/catalog/api.us1.test.ts` (per contracts/catalog-api.md)
-- [ ] T014 [P] [US1] Integration test for the full admission flow (discovered→active), provenance recorded, and **no eager boot** in `backend/tests/catalog/admission.test.ts`
-- [ ] T015 [P] [US1] Unit test for the template→capability-profile/tool-grant mapping in `backend/tests/catalog/mapper.test.ts` (grant intersection, SC-005)
+- [X] T013 [P] [US1] Contract test for the happy-path API (`POST /sync` local, `POST .../approve`, `POST .../instantiate`) in `backend/tests/catalog/api.us1.test.ts` (per contracts/catalog-api.md)
+- [X] T014 [P] [US1] Integration test for the full admission flow (discovered→active), provenance recorded, and **no eager boot** in `backend/tests/catalog/admission.test.ts`
+- [X] T015 [P] [US1] Unit test for the template→capability-profile/tool-grant mapping in `backend/tests/catalog/mapper.test.ts` (grant intersection, SC-005)
 
 ### Implementation for User Story 1
 
@@ -66,7 +66,7 @@ Web app: backend at `backend/src/`, tests at `backend/tests/`, UI at `web/src/`.
 - [x] T020 [US1] Implement US1 endpoints in `backend/src/routes/catalog.ts`: `GET /templates`, `GET /templates/:id`, `POST /sync` (local), `POST /templates/:id/versions/:v/validate`, `POST /templates/:id/versions/:v/approve`, `POST /templates/:id/versions/:v/instantiate` (depends on T017, T018, T019)
 - [x] T021 [US1] Integrate approval-queue linkage: approval creates/links an `approvals` row and records the `approval_id` on the version (per data-model.md)
 - [x] T022 [US1] Add structured logging + error handling for sync/approve/instantiate and append admission events with `actor` for each transition in `backend/src/routes/catalog.ts` and `backend/src/catalog/admission.ts`
-- [ ] T023 [P] [US1] Build the Catalog admin view in `web/src/` (list templates with admission-state badges, detail view, Approve + Instantiate actions) reusing settings/admin (021) + approval-queue (008) patterns, with loading/empty/success/error states
+- [X] T023 [P] [US1] Build the Catalog admin view in `web/src/` (list templates with admission-state badges, detail view, Approve + Instantiate actions) reusing settings/admin (021) + approval-queue (008) patterns, with loading/empty/success/error states
 
 **Checkpoint**: A valid local template can be imported, approved, registered, and instantiated end-to-end (SC-001). MVP complete.
 
@@ -80,18 +80,18 @@ Web app: backend at `backend/src/`, tests at `backend/tests/`, UI at `web/src/`.
 
 ### Tests for User Story 2 ⚠️ (write first, must fail)
 
-- [ ] T024 [P] [US2] Validator failure-matrix unit tests in `backend/tests/catalog/validator.test.ts` — one case per code: `MISSING_REQUIRED_FIELD`, `INVALID_FIELD_TYPE`, `UNKNOWN_CAPABILITY_BUNDLE`, `UNKNOWN_PLATFORM_PRIMITIVE`, `UNKNOWN_MCP_SERVER`, `UNKNOWN_CREDENTIAL`, `UNKNOWN_PROVIDER`, `LEAST_PRIVILEGE_VIOLATION`, `SECRET_VALUE_PRESENT`, `DUPLICATE_TEMPLATE_ID`, `VERSION_CONFLICT`, `APPROVAL_POLICY_DOWNGRADED` (SC-002)
-- [ ] T025 [P] [US2] Integration test for batch isolation in `backend/tests/catalog/sync-batch.test.ts`: one invalid entry rejected while others admit (FR-015), and a rejected entry never reaches `pending_approval`
-- [ ] T026 [P] [US2] Create broken-template fixtures in `backend/tests/catalog/fixtures/` (one file per failure code)
+- [X] T024 [P] [US2] Validator failure-matrix unit tests in `backend/tests/catalog/validator.test.ts` — one case per code: `MISSING_REQUIRED_FIELD`, `INVALID_FIELD_TYPE`, `UNKNOWN_CAPABILITY_BUNDLE`, `UNKNOWN_PLATFORM_PRIMITIVE`, `UNKNOWN_MCP_SERVER`, `UNKNOWN_CREDENTIAL`, `UNKNOWN_PROVIDER`, `LEAST_PRIVILEGE_VIOLATION`, `SECRET_VALUE_PRESENT`, `DUPLICATE_TEMPLATE_ID`, `VERSION_CONFLICT`, `APPROVAL_POLICY_DOWNGRADED` (SC-002)
+- [X] T025 [P] [US2] Integration test for batch isolation in `backend/tests/catalog/sync-batch.test.ts`: one invalid entry rejected while others admit (FR-015), and a rejected entry never reaches `pending_approval`
+- [X] T026 [P] [US2] Create broken-template fixtures in `backend/tests/catalog/fixtures/` (one file per failure code)
 
 ### Implementation for User Story 2
 
-- [ ] T027 [US2] Implement semantic rejection rules in `backend/src/catalog/validator.ts`: emit `UNKNOWN_*` for unresolved references, `LEAST_PRIVILEGE_VIOLATION` when `toolAccess`/`mcpAccess`/`credentialNeeds` exceed the declared capability profile, and `SECRET_VALUE_PRESENT` for inline secrets (depends on T010)
-- [ ] T028 [US2] Add duplicate/version-conflict detection (`DUPLICATE_TEMPLATE_ID`, `VERSION_CONFLICT`) across a sync batch in `backend/src/catalog/admission.ts`
-- [ ] T029 [US2] Implement the `APPROVAL_POLICY_DOWNGRADED` warning: `autoEligible` templates whose grants exceed the safe baseline are forced to human approval (not rejected) in `backend/src/catalog/admission.ts` (depends on T006)
-- [ ] T030 [US2] Implement the reject → correct → re-validate loop in `backend/src/catalog/admission.ts`: re-syncing a corrected file restarts at `discovered` and can reach `validated` (FR-007 last scenario)
-- [ ] T031 [US2] Surface `failure_reasons` in `GET /templates/:id` and the Catalog admin view (rejected badge + reason list) in `backend/src/routes/catalog.ts` and `web/src/`
-- [ ] T032 [US2] Add per-entry sync outcome reporting + logs in `backend/src/catalog/admission.ts` so an operator can diagnose any non-admission (SC-008)
+- [X] T027 [US2] Implement semantic rejection rules in `backend/src/catalog/validator.ts`: emit `UNKNOWN_*` for unresolved references, `LEAST_PRIVILEGE_VIOLATION` when `toolAccess`/`mcpAccess`/`credentialNeeds` exceed the declared capability profile, and `SECRET_VALUE_PRESENT` for inline secrets (depends on T010)
+- [X] T028 [US2] Add duplicate/version-conflict detection (`DUPLICATE_TEMPLATE_ID`, `VERSION_CONFLICT`) across a sync batch in `backend/src/catalog/admission.ts`
+- [X] T029 [US2] Implement the `APPROVAL_POLICY_DOWNGRADED` warning: `autoEligible` templates whose grants exceed the safe baseline are forced to human approval (not rejected) in `backend/src/catalog/admission.ts` (depends on T006)
+- [X] T030 [US2] Implement the reject → correct → re-validate loop in `backend/src/catalog/admission.ts`: re-syncing a corrected file restarts at `discovered` and can reach `validated` (FR-007 last scenario)
+- [X] T031 [US2] Surface `failure_reasons` in `GET /templates/:id` and the Catalog admin view (rejected badge + reason list) in `backend/src/routes/catalog.ts` and `web/src/`
+- [X] T032 [US2] Add per-entry sync outcome reporting + logs in `backend/src/catalog/admission.ts` so an operator can diagnose any non-admission (SC-008)
 
 **Checkpoint**: Bad templates are provably rejected with named reasons; good templates still flow (SC-002).
 
@@ -105,18 +105,18 @@ Web app: backend at `backend/src/`, tests at `backend/tests/`, UI at `web/src/`.
 
 ### Tests for User Story 3 ⚠️ (write first, must fail)
 
-- [ ] T033 [P] [US3] Integration test for Git sync provenance in `backend/tests/catalog/git-sync.test.ts`: a moving ref resolves to a concrete SHA recorded on each version (FR-013/FR-014)
-- [ ] T034 [P] [US3] Integration test for versioning + rollback in `backend/tests/catalog/rollback.test.ts`: v1→v2→rollback, history retained, running agent unaffected (SC-004, SC-006)
-- [ ] T035 [P] [US3] Integration test for deprecate in `backend/tests/catalog/deprecate.test.ts`: new instantiation blocked/warned, running agents continue (FR-024)
+- [X] T033 [P] [US3] Integration test for Git sync provenance in `backend/tests/catalog/git-sync.test.ts`: a moving ref resolves to a concrete SHA recorded on each version (FR-013/FR-014)
+- [X] T034 [P] [US3] Integration test for versioning + rollback in `backend/tests/catalog/rollback.test.ts`: v1→v2→rollback, history retained, running agent unaffected (SC-004, SC-006)
+- [X] T035 [P] [US3] Integration test for deprecate in `backend/tests/catalog/deprecate.test.ts`: new instantiation blocked/warned, running agents continue (FR-024)
 
 ### Implementation for User Story 3
 
-- [ ] T036 [US3] Implement the Git source reader in `backend/src/catalog/source.ts`: `child_process` `git rev-parse <ref>` (ref→SHA), `git ls-tree`/`git show <sha>:<path>` to read templates at a commit; record `commit_sha`/`source_ref`/`source_path` (depends on T016)
-- [ ] T037 [US3] Implement `GET /sources` and `POST /sources` (add/update local or git source) in `backend/src/routes/catalog.ts` (per contracts/catalog-api.md)
-- [ ] T038 [US3] Extend the `POST /sync` handler in `backend/src/routes/catalog.ts` to accept `{ sourceId, ref }`, resolve the SHA via `source.ts`, and record provenance on each version (depends on T036)
-- [ ] T039 [US3] Implement versioning in `backend/src/catalog/store.ts`/`registrar.ts`: registering a new version retains prior registered versions and updates the current pointer
-- [ ] T040 [US3] Implement `POST /templates/:id/rollback` (set current to a prior registered version, log events on both) and `POST /templates/:id/deprecate` (set `lifecycle_state`, block/warn new instantiation) in `backend/src/routes/catalog.ts` (depends on T039)
-- [ ] T041 [P] [US3] Add version-history, rollback, and deprecate controls to the Catalog admin view in `web/src/`, plus a Source configuration panel, reusing existing patterns
+- [X] T036 [US3] Implement the Git source reader in `backend/src/catalog/source.ts`: `child_process` `git rev-parse <ref>` (ref→SHA), `git ls-tree`/`git show <sha>:<path>` to read templates at a commit; record `commit_sha`/`source_ref`/`source_path` (depends on T016)
+- [X] T037 [US3] Implement `GET /sources` and `POST /sources` (add/update local or git source) in `backend/src/routes/catalog.ts` (per contracts/catalog-api.md)
+- [X] T038 [US3] Extend the `POST /sync` handler in `backend/src/routes/catalog.ts` to accept `{ sourceId, ref }`, resolve the SHA via `source.ts`, and record provenance on each version (depends on T036)
+- [X] T039 [US3] Implement versioning in `backend/src/catalog/store.ts`/`registrar.ts`: registering a new version retains prior registered versions and updates the current pointer
+- [X] T040 [US3] Implement `POST /templates/:id/rollback` (set current to a prior registered version, log events on both) and `POST /templates/:id/deprecate` (set `lifecycle_state`, block/warn new instantiation) in `backend/src/routes/catalog.ts` (depends on T039)
+- [X] T041 [P] [US3] Add version-history, rollback, and deprecate controls to the Catalog admin view in `web/src/`, plus a Source configuration panel, reusing existing patterns
 
 **Checkpoint**: Versioned Git provenance, rollback, and deprecation work without touching running agents.
 
@@ -130,14 +130,14 @@ Web app: backend at `backend/src/`, tests at `backend/tests/`, UI at `web/src/`.
 
 ### Tests for User Story 4 ⚠️ (write first, must fail)
 
-- [ ] T042 [P] [US4] Contract tests for the catalog control-plane tools in `backend/tests/catalog/orchestrator-tools.test.ts`: `catalog.list_registered`, `catalog.propose_instantiation`, `catalog.instantiate` (approval routing + grant-bound guarantees) per contracts/orchestrator-skill.md
+- [X] T042 [P] [US4] Contract tests for the catalog control-plane tools in `backend/tests/catalog/orchestrator-tools.test.ts`: `catalog.list_registered`, `catalog.propose_instantiation`, `catalog.instantiate` (approval routing + grant-bound guarantees) per contracts/orchestrator-skill.md
 
 ### Implementation for User Story 4
 
-- [ ] T043 [US4] Implement the catalog control-plane tools in `backend/src/catalog/orchestrator-tools.ts`: `list_registered`, `propose_instantiation` (rationale + `requiresHumanApproval` via baseline), `instantiate` (routes through approval queue, returns `pending_approval`/`active`/`blocked`) (depends on T018, T006)
-- [ ] T044 [US4] Register the catalog tools via `backend/src/mcp/service.ts` `listControlPlaneTools` / `callControlPlaneTool` so Prime can call them
-- [ ] T045 [US4] Add the orchestrator skill prompt doc describing curation behavior (map intent → template → propose → instantiate) under `backend/prompts/` or `web/`-served skill location, per contracts/orchestrator-skill.md
-- [ ] T046 [US4] Record `actor: 'prime'` admission events for proposals/instantiations in `backend/src/catalog/orchestrator-tools.ts` and ensure no direct DB writes bypass the tools
+- [X] T043 [US4] Implement the catalog control-plane tools in `backend/src/catalog/orchestrator-tools.ts`: `list_registered`, `propose_instantiation` (rationale + `requiresHumanApproval` via baseline), `instantiate` (routes through approval queue, returns `pending_approval`/`active`/`blocked`) (depends on T018, T006)
+- [X] T044 [US4] Register the catalog tools via `backend/src/mcp/service.ts` `listControlPlaneTools` / `callControlPlaneTool` so Prime can call them
+- [X] T045 [US4] Add the orchestrator skill prompt doc describing curation behavior (map intent → template → propose → instantiate) under `backend/prompts/` or `web/`-served skill location, per contracts/orchestrator-skill.md
+- [X] T046 [US4] Record `actor: 'prime'` admission events for proposals/instantiations in `backend/src/catalog/orchestrator-tools.ts` and ensure no direct DB writes bypass the tools
 
 **Checkpoint**: Prime can curate and instantiate templates safely within declared bounds.
 
@@ -151,17 +151,17 @@ Web app: backend at `backend/src/`, tests at `backend/tests/`, UI at `web/src/`.
 
 ### Tests for User Story 5 ⚠️ (write first, must fail)
 
-- [ ] T047 [P] [US5] Migration parity test in `backend/tests/catalog/migrate.test.ts`: drafts generated from `DEFAULT_EPHEMERAL_TEMPLATES` + `DEFAULT_DURABLE_STAFF` validate, and the resolved definitions match the in-code defs (SC-009)
-- [ ] T048 [P] [US5] Spawn/bootstrap parity test in `backend/tests/catalog/seed-parity.test.ts`: after seeding, `spawnEphemeralAgent` and `bootstrapDurableStaff` produce the same agents/grants as the in-code baseline
-- [ ] T049 [P] [US5] Integration test in `backend/tests/catalog/migrate-adopt.test.ts` that adopting a migrated template does not interrupt a running agent and links it via `catalog_template_version_id` (FR-028)
+- [X] T047 [P] [US5] Migration parity test in `backend/tests/catalog/migrate.test.ts`: drafts generated from `DEFAULT_EPHEMERAL_TEMPLATES` + `DEFAULT_DURABLE_STAFF` validate, and the resolved definitions match the in-code defs (SC-009)
+- [X] T048 [P] [US5] Spawn/bootstrap parity test in `backend/tests/catalog/seed-parity.test.ts`: after seeding, `spawnEphemeralAgent` and `bootstrapDurableStaff` produce the same agents/grants as the in-code baseline
+- [X] T049 [P] [US5] Integration test in `backend/tests/catalog/migrate-adopt.test.ts` that adopting a migrated template does not interrupt a running agent and links it via `catalog_template_version_id` (FR-028)
 
 ### Implementation for User Story 5
 
-- [ ] T050 [US5] Implement the migrator in `backend/src/catalog/migrate.ts`: read `DEFAULT_EPHEMERAL_TEMPLATES`, `DEFAULT_DURABLE_STAFF`, and `prompts/agents/*` → emit validated YAML drafts; `POST /api/catalog/migrate` (`write` option writes to the default-local source) per contracts/catalog-api.md
-- [ ] T051 [US5] Generate and commit the built-in seed catalog files into `backend/catalog/` from the migrator output (FR-034)
-- [ ] T052 [US5] Repoint `spawnEphemeralAgent` in `backend/src/ephemeral-templates.ts` to source definitions from the catalog, retaining the in-code literals only as a fallback (FR-035)
-- [ ] T053 [US5] Repoint `bootstrapDurableStaff` in `backend/src/durable-staff.ts` to seed/register/instantiate durable staff from the catalog (FR-035)
-- [ ] T054 [US5] Link migrated/seeded agents to their `catalog_template_version_id` and add the Migrate action to the Catalog admin view in `web/src/`
+- [X] T050 [US5] Implement the migrator in `backend/src/catalog/migrate.ts`: read `DEFAULT_EPHEMERAL_TEMPLATES`, `DEFAULT_DURABLE_STAFF`, and `prompts/agents/*` → emit validated YAML drafts; `POST /api/catalog/migrate` (`write` option writes to the default-local source) per contracts/catalog-api.md
+- [X] T051 [US5] Generate and commit the built-in seed catalog files into `backend/catalog/` from the migrator output (FR-034)
+- [X] T052 [US5] Repoint `spawnEphemeralAgent` in `backend/src/ephemeral-templates.ts` to source definitions from the catalog, retaining the in-code literals only as a fallback (FR-035)
+- [X] T053 [US5] Repoint `bootstrapDurableStaff` in `backend/src/durable-staff.ts` to seed/register/instantiate durable staff from the catalog (FR-035)
+- [X] T054 [US5] Link migrated/seeded agents to their `catalog_template_version_id` and add the Migrate action to the Catalog admin view in `web/src/`
 
 **Checkpoint**: Agent configuration lives in the catalog, not in code; existing agents are uninterrupted (SC-009).
 
@@ -169,13 +169,13 @@ Web app: backend at `backend/src/`, tests at `backend/tests/`, UI at `web/src/`.
 
 ## Phase 8: Polish & Cross-Cutting Concerns
 
-- [ ] T055 [P] Run `quickstart.md` end-to-end against a live instance and record results
-- [ ] T056 [P] Performance check: sync + validate a ~100-template catalog within a few seconds (plan.md performance goal)
-- [ ] T057 Security review: confirm no secret values are accepted in files, effective grants = declaration ∩ runtime policy on every path, and brokered credentials are never inlined
-- [ ] T058 Review audit trail + observability across all stories (admission events complete, per-entry outcomes, structured logs)
-- [ ] T059 [P] Review interaction consistency and visual polish across the Catalog admin screens (badges, empty/error states) against settings/approval patterns
-- [ ] T060 [P] Documentation: add a Catalog section to `docs/` covering authoring, sync, approval, rollback, and migration
-- [ ] T061 Update `AGENTS.md`/`CLAUDE.md` references if catalog-sourced agent config changes any Prime implementation constraints
+- [X] T055 [P] Run `quickstart.md` end-to-end against a live instance and record results
+- [X] T056 [P] Performance check: sync + validate a ~100-template catalog within a few seconds (plan.md performance goal)
+- [X] T057 Security review: confirm no secret values are accepted in files, effective grants = declaration ∩ runtime policy on every path, and brokered credentials are never inlined
+- [X] T058 Review audit trail + observability across all stories (admission events complete, per-entry outcomes, structured logs)
+- [X] T059 [P] Review interaction consistency and visual polish across the Catalog admin screens (badges, empty/error states) against settings/approval patterns
+- [X] T060 [P] Documentation: add a Catalog section to `docs/` covering authoring, sync, approval, rollback, and migration
+- [X] T061 Update `AGENTS.md`/`CLAUDE.md` references if catalog-sourced agent config changes any Prime implementation constraints
 
 ---
 
