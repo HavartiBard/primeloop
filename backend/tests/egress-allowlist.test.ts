@@ -40,6 +40,7 @@ describe('EgressAllowlist', () => {
       if (sql.startsWith('SELECT 1 FROM egress_allowlist')) return { rows: [] }
       if (sql.includes('information_schema.columns')) return { rows: [{ exists: true }] }
       if (sql.includes('INSERT INTO approvals')) return { rows: [{ approval_id: 'egress:agent-1:example.com' }] }
+      if (sql.includes('INSERT INTO runtime_events')) return { rows: [] }
       throw new Error(`unexpected query: ${sql}`)
     })
     const allowlist = new EgressAllowlist({ query } as unknown as pg.Pool)

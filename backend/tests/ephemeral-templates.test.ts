@@ -14,6 +14,7 @@ import {
   listToolGrants,
   getAgentRuntimeConfig,
 } from '../src/registry.js'
+import { createWorkItem } from '../src/runtime.js'
 
 const TEST_DB = process.env.TEST_DATABASE_URL ?? 'postgresql://primeloop:primeloop_dev@127.0.0.1:5434/primeloop_test'
 
@@ -78,10 +79,11 @@ describe('ephemeral templates', () => {
 
     it('creates tool grant for spawned agent', async () => {
       const delegationId = randomUUID()
-      const workItemId = randomUUID()
+      // work_item_id is FK-constrained to work_items, so create a real row.
+      const workItem = await createWorkItem(pool, { title: 'ephemeral grant test' })
       const result = await spawnEphemeralAgent(pool, 'implementer', {
         delegationId,
-        workItemId,
+        workItemId: workItem.id,
       })
 
       expect(result.grant.agent_id).toBe(result.agent.id)

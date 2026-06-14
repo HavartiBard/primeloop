@@ -182,14 +182,8 @@ describe('seedRegistry', () => {
 
 
 
-  it('inserts a langgraph agent when LANGGRAPH_API_URL is set', async () => {
-    await pool.query('DELETE FROM agents')
-    await seedRegistry(pool, { LANGGRAPH_API_URL: 'http://langgraph.example.com' })
-    const res = await pool.query(`SELECT name, type, config FROM agents WHERE name = 'langgraph'`)
-    expect(res.rows).toHaveLength(1)
-    expect(res.rows[0].type).toBe('langgraph')
-    expect(res.rows[0].config).toEqual({ api_url: 'http://langgraph.example.com' })
-  })
+  // NOTE: auto-seeding a langgraph agent from LANGGRAPH_API_URL was removed; seedRegistry
+  // now seeds no agents by default. The empty-seed contract is asserted below.
 
   it('inserts nothing when no env vars are set', async () => {
     await pool.query('DELETE FROM agents')
