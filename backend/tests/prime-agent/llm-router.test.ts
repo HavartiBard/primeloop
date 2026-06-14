@@ -289,6 +289,21 @@ describe('buildPrimeSystemPrompt', () => {
     expect(prompt).toContain('## Default Behaviors')
     expect(prompt.indexOf('## Identity')).toBeLessThan(prompt.indexOf('## Default Behaviors'))
   })
+
+  // spec 001 (US1/US3): empty fleet renders an explicit, actionable instruction, not "- none"
+  it('renders an explicit empty-fleet instruction when no agents are available', async () => {
+    const emptyFleetContext: PrimeContext = {
+      ...minimalContext,
+      fleet: { agents: [], workItems: [], delegations: [] },
+    }
+    const prompt = await buildPrimeSystemPrompt(emptyFleetContext, mockPool)
+    expect(prompt).toContain('NO AGENTS AVAILABLE')
+    // It must steer the LLM away from emitting a delegate it cannot route.
+    expect(prompt).toMatch(/Do NOT emit a delegate/i)
+    expect(prompt).toMatch(/respond directly/i)
+    // And it must not fall back to the generic empty-list placeholder for agents.
+    expect(prompt).not.toContain('- none')
+  })
 })
 
 describe('buildPrimeTriggerMessage', () => {

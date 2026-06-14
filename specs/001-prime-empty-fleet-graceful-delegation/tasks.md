@@ -4,6 +4,17 @@
 
 **Prerequisites**: plan.md (required), spec.md (required for user stories), research.md, data-model.md
 
+> **Completion note (2026-06-14):** The runtime guard for US1/US2 (T003, T005, T006) — never
+> create a null-target delegation; instead create a `pending` work item with
+> `action_type='pending_delegation'` metadata and emit `prime.action.no_op` — is satisfied by the
+> routing layer added in later specs (015/016). `dispatchRoutingDelegate()` routes through
+> `routeWorkRequest()`, which returns a `blocked_*` outcome when no agent can take the work;
+> `handleBlockedOutcome()` then parks pending work + emits the no_op event. The remaining work
+> closed here was prompt/policy clarity: a stronger empty-fleet instruction in
+> `buildPrimeSystemPrompt()` (T002/T008), plus confirming the prime profile (T004) and standing
+> rules (T007) already carry empty-fleet guidance. Added a regression test for the empty-fleet
+> system-prompt rendering in `tests/prime-agent/llm-router.test.ts`.
+
 ## Format: `[ID] [P?] [Story] Description`
 
 - **[P]**: Can run in parallel (different files, no dependencies)
@@ -15,7 +26,7 @@
 
 **Purpose**: No new infrastructure needed — all changes are to existing files.
 
-- [ ] T001 Read current state of all target files to establish exact edit points
+- [X] T001 Read current state of all target files to establish exact edit points
   - `backend/src/prime-agent/llm-router.ts`
   - `backend/src/prime-agent/actions.ts`
   - `backend/prompts/agents/prime.md`
@@ -31,9 +42,9 @@
 
 ### Implementation for User Story 1
 
-- [ ] T002 [US1] Update `buildPrimeSystemPrompt()` in `backend/src/prime-agent/llm-router.ts` to render an explicit empty-fleet message instead of `- none` when `context.fleet.agents.length === 0`
-- [ ] T003 [P] [US1] Add runtime guard in `dispatchDelegate()` in `backend/src/prime-agent/actions.ts`: when `selectTargetAgent()` returns undefined, create a pending work item and return a `no_op` result instead of creating an unassigned delegation
-- [ ] T004 [P] [US1] Update Prime profile `backend/prompts/agents/prime.md` to include empty-fleet fallback guidance in Default Behaviors section
+- [X] T002 [US1] Update `buildPrimeSystemPrompt()` in `backend/src/prime-agent/llm-router.ts` to render an explicit empty-fleet message instead of `- none` when `context.fleet.agents.length === 0`
+- [X] T003 [P] [US1] Add runtime guard in `dispatchDelegate()` in `backend/src/prime-agent/actions.ts`: when `selectTargetAgent()` returns undefined, create a pending work item and return a `no_op` result instead of creating an unassigned delegation
+- [X] T004 [P] [US1] Update Prime profile `backend/prompts/agents/prime.md` to include empty-fleet fallback guidance in Default Behaviors section
 
 **Checkpoint**: Prime no longer gets stuck when fleet is empty. It responds conversationally and creates pending work items.
 
@@ -47,8 +58,8 @@
 
 ### Implementation for User Story 2
 
-- [ ] T005 [US2] Ensure the pending work item in `dispatchDelegate()` (from T003) includes correct metadata: `{ source: 'prime-agent', action_type: 'pending_delegation', capability, reason, requested_target_id }`
-- [ ] T006 [US2] Emit a runtime event for the fallback path with `event_type: 'prime.action.no_op'` and payload containing the reason
+- [X] T005 [US2] Ensure the pending work item in `dispatchDelegate()` (from T003) includes correct metadata: `{ source: 'prime-agent', action_type: 'pending_delegation', capability, reason, requested_target_id }`
+- [X] T006 [US2] Emit a runtime event for the fallback path with `event_type: 'prime.action.no_op'` and payload containing the reason
 
 **Checkpoint**: Undeliverable tasks are tracked and visible in the work items table.
 
@@ -62,8 +73,8 @@
 
 ### Implementation for User Story 3
 
-- [ ] T007 [P] [US3] Update standing rules `backend/prompts/policies/standing-rules.md` to add "no agents available" handling rule
-- [ ] T008 [US3] Verify the empty-fleet message in `llm-router.ts` (from T002) is clear and actionable for the LLM
+- [X] T007 [P] [US3] Update standing rules `backend/prompts/policies/standing-rules.md` to add "no agents available" handling rule
+- [X] T008 [US3] Verify the empty-fleet message in `llm-router.ts` (from T002) is clear and actionable for the LLM
 
 **Checkpoint**: Both the system prompt and standing rules explicitly handle the empty-fleet case.
 

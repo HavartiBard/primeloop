@@ -415,7 +415,7 @@ export async function buildPrimeSystemPrompt(context: PrimeContext, pool: pg.Poo
           return `- ${a.name} [${(a.capabilities as string[]).join(', ')}]${a.enabled ? '' : ' (disabled)'}${statusLabel}`
         },
       ))
-      : '(no agents available — respond directly to the user)',
+      : 'NO AGENTS AVAILABLE. The fleet is empty — there is no one to delegate to. Do NOT emit a delegate action (it cannot be routed and will be parked as pending work). Instead, respond directly and conversationally to the user: acknowledge the request, explain that no agents are currently available to carry it out, and either ask what they would like to do (e.g. onboard/enable an agent) or note that the task has been recorded for when capacity exists.',
     runtime_truth: context.runtimeTruth ? buildRuntimeTruthSummary(context.runtimeTruth) : '(runtime truth not available)',
     work_items: formatLines(context.fleet.workItems.map(
       (w) => `- id=${w.id} ${w.title} (${w.status}/${w.lane})`,
