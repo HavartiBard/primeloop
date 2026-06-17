@@ -66,6 +66,31 @@ CATALOG_GIT_REF=main
 - Container reads from Git working tree, no local writes
 - Changes require Git push + catalog sync + approval
 
+##### Required Git Permissions (PAT)
+
+For the installer and runtime to work with the catalog repo:
+
+| Operation | Permission | Scope |
+|-----------|------------|-------|
+| Clone / Pull catalog on startup | `repo` (full) or `contents:read` | Repository |
+| Sync catalog changes (POST `/api/catalog/sync`) | `contents:read` | Repository |
+| Tag versions for rollback | `contents:write` | Repository |
+| Create release notes | `contents:write` | Repository |
+
+**Minimal PAT scope**:
+- Private repos: `repo` (full control) — simplest single-scope option
+- Public repos: `public_repo` + `contents:write`
+
+**CATALOG_GIT_TOKEN**: Required for Git mode. Container injects token into HTTPS URL
+for authentication. Do NOT use SSH URLs — only HTTPS with PAT is supported.
+
+**Installer flow**:
+1. User provides catalog repo URL and PAT
+2. Installer validates access by attempting clone
+3. Container starts with PAT mounted as env var
+4. On startup, container clones catalog repo to `/app/backend/catalog`
+5. Operator edits YAML in cloned repo → commits → pushes → sync via API
+
 ### Startup Validation
 
 On startup, PrimeLoop validates catalog configuration:
@@ -112,15 +137,116 @@ On startup, PrimeLoop validates catalog configuration:
    - Stored in database (durable)
    - Takes effect on next event loop run
 
+## Installation Flows
+
+### Flow A: Git Catalog Repo (Recommended)
+
+**Prerequisites**:
+- Empty Git repo for your catalog (e.g., `yourorg/primeloop-catalog`)
+- PAT with `repo` scope (private) or `public_repo` + `contents:write` (public)
+- Docker and Docker Compose
+
+**Steps**:
+
+1. **Create catalog repo**
+   ```bash
+   # Clone PrimeLoop repo for setup files
+   git clone <primeloop-repo-url> primeloop
+   cd primeloop
+   
+   # Create empty catalog repo (or fork existing template)
+   # Copy starter catalog files
+   cp -r backend/catalog /path/to/your/catalog-repo/
+   git -C /path/to/your/catalog-repo add .
+   git -C /path/to/your/catalog-repo commit -m "Initial catalog"
+   git -C /path/to/your/catalog-repo push origin main
+   ```
+
+2. **Configure environment**
+   ```bash
+   cp .env.example .env
+   
+   # Edit .env:
+   POSTGRES_PASSWORD=<strong-password>
+   SECRET_ENCRYPTION_KEY=$(openssl rand -hex 32)
+   CATALOG_SOURCE_TYPE=git
+   CATALOG_GIT_URL=https://github.com/yourorg/primeloop-catalog.git
+   CATALOG_GIT_REF=main
+   CATALOG_GIT_TOKEN=<your-pat-with-repo-scope>  # for Git clone/pull
+   GITEA_TOKEN=<your-gitea-token>  # if using Gitea integration
+   ```
+
+3. **Mount catalog repo in docker-compose.prod.yml**
+   ```yaml
+   services:
+     backend:
+       volumes:
+         - /mnt/user/appdata/primeloop/catalog:/app/backend/catalog:rw
+       environment:
+         CATALOG_GIT_TOKEN: ${CATALOG_GIT_TOKEN}
+   ```
+
+4. **Start container**
+   ```bash
+   docker compose -f docker-compose.prod.yml up -d
+   ```
+
+5. **Verify catalog sync**
+   ```bash
+   # Check startup logs for catalog clone success
+   docker compose logs backend | grep catalog
+   
+   # POST /api/catalog/sync to register templates
+   curl -X POST http://localhost:3100/api/catalog/sync \
+     -H "Content-Type: application/json" \
+     -d '{"sourceId": "default-local"}'
+   ```
+
+### Flow B: Local Volume Mount (Single-Host)
+
+**Prerequisites**:
+- Host directory for catalog storage
+- Manual catalog file management
+
+**Steps**:
+
+1. **Create catalog directory**
+   ```bash
+   mkdir -p /mnt/user/appdata/primeloop/catalog
+   cp backend/catalog/*.yaml /mnt/user/appdata/primeloop/catalog/
+   ```
+
+2. **Mount in docker-compose.prod.yml** (already configured)
+   ```yaml
+   volumes:
+     - /mnt/user/appdata/primeloop/catalog:/app/backend/catalog:ro
+   ```
+
+3. **Edit catalog files on host**
+   ```bash
+   vi /mnt/user/appdata/primeloop/catalog/architect.yaml
+   ```
+
+4. **Sync changes**
+   ```bash
+   # Restart container to re-read files
+   docker compose -f docker-compose.prod.yml restart backend
+   
+   # OR POST /api/catalog/sync if local source is configured
+   curl -X POST http://localhost:3100/api/catalog/sync -d '{"sourceId": "default-local"}'
+   ```
+
 ## Verification Checklist
 
 Before production deployment, verify:
 
 - [ ] PostgreSQL data volume is mounted and persistent
-- [ ] Catalog directory is volume-mounted (local mode) OR Git URL is configured
+- [ ] CATALOG_GIT_TOKEN set (Git mode) or catalog dir exists (local mode)
+- [ ] Git PAT has `repo` scope (private repos) or `public_repo`+`contents:write` (public)
 - [ ] Workspace path is writable and outside container
 - [ ] No hardcoded paths in `docker-compose.prod.yml` that point to container-only locations
 - [ ] Environment variables for catalog source are set correctly
+- [ ] Startup logs show "catalog startup validation: status: OK" (no ephemeral warnings)
 
 ## Troubleshooting
 

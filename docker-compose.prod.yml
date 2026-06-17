@@ -18,9 +18,9 @@ services:
     volumes:
       - /mnt/user/appdata/primeloop/codex:/root/.codex
       - /mnt/user/appdata/primeloop/workspace:/workspace
-      # Catalog YAML is durable storage — mounted read-only from host
-      # Agent template changes require Git sync + catalog approval, not container writes
-      - /mnt/user/appdata/primeloop/catalog:/app/backend/catalog:ro
+      # Catalog YAML is durable storage — mounted read-write for Git clone/pull
+      # Container clones catalog repo on startup, operator edits via Git push + API sync
+      - /mnt/user/appdata/primeloop/catalog:/app/backend/catalog
     environment:
       DATABASE_URL: postgresql://primeloop:${POSTGRES_PASSWORD}@postgres:5432/primeloop
       SECRET_ENCRYPTION_KEY: ${SECRET_ENCRYPTION_KEY:?required}
@@ -42,6 +42,7 @@ services:
       AGENT_REPO_ROOT: ${AGENT_REPO_ROOT:-/workspace/repo}
       AGENT_WORKTREE_ROOT: ${AGENT_WORKTREE_ROOT:-/workspace/agents}
       GITEA_TOKEN: ${GITEA_TOKEN:-}
+      CATALOG_GIT_TOKEN: ${CATALOG_GIT_TOKEN:-}
     ports:
       - "3100:3100"
     depends_on:
