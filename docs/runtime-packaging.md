@@ -142,13 +142,84 @@ On startup, PrimeLoop validates catalog configuration:
    - Stored in database (durable)
    - Takes effect on next event loop run
 
+## Dual-Repo Model: Catalog vs. Framework
+
+PrimeLoop uses two separate Git repositories with different agent control levels:
+
+| Aspect | Catalog Repo | PrimeLoop Framework Repo |
+|--------|--------------|-------------------------|
+| **Purpose** | Your agent fleet definition | PrimeLoop framework code |
+| **Location** | `yourorg/primeloop-catalog` | `HavartiBard/primeloop` |
+| **Agent Control** | ✅ Full (direct commit/push) | ⚠️ Limited (PR-based) |
+| **Review Required** | No | Yes (human approval) |
+| **Contents** | Agent templates, skills, prompts, policies | Framework code, specs, docs |
+| **Recovery** | `git clone` restores everything | Reinstall + re-apply catalog |
+
+### Catalog Repo (Agent-Managed)
+
+Your personalized environment configuration. Agents have full read/write control:
+
+```bash
+yourorg/primeloop-catalog/
+├── architect.yaml              # Agent template definitions
+├── sre.yaml
+├── workspace/
+│   ├── skills/                 # Custom skills (agent-written)
+│   │   ├── code-review.md
+│   │   └── deployment.md
+│   ├── prompts/                # Context templates
+│   │   └── agents/architect.md
+│   └── policies/               # Governance rules
+│       ├── standing-rules.md
+│       └── delegation.md
+└── .gitkeep
+```
+
+**Agent capabilities**:
+- ✅ Direct commit + push (no approval needed)
+- ✅ Write skills, prompts, policies autonomously
+- ✅ Update agent templates (new versions → approval workflow)
+- ✅ Full environment history in Git
+
+### PrimeLoop Framework Repo (Agent-Contribute-Via-PR)
+
+The PrimeLoop framework itself. Agents contribute through PR workflow:
+
+```bash
+HavartiBard/primeloop/
+├── backend/src/               # Framework code
+├── web/                       # Dashboard code
+├── specs/                     # Design specs
+└── docs/                      # Documentation
+```
+
+**Agent capabilities**:
+- ✅ Propose framework improvements (create PR)
+- ⚠️ Cannot merge (human approval required)
+- ✅ Can write specs, docs, examples
+- ⚠️ Code changes need review before merge
+
+### When to Use Each
+
+| Agent Wants To... | Repo | Action |
+|-------------------|------|--------|
+| Add a new skill | Catalog | Direct commit + push |
+| Update agent persona | Catalog | Direct commit + push |
+| Fix framework bug | PrimeLoop | Create PR, wait for review |
+| Add new capability primitive | PrimeLoop | Create PR, wait for review |
+| Write documentation | Either | Catalog: direct / Framework: PR |
+| Propose new agent type | Catalog | Direct commit (new YAML) |
+
+---
+
 ## Installation Flows
 
 ### Flow A: Git Catalog Repo (Recommended)
 
 **Prerequisites**:
 - Empty Git repo for your catalog (e.g., `yourorg/primeloop-catalog`)
-- PAT with `repo` scope (private) or `public_repo` + `contents:write` (public)
+- PAT with `repo` scope for catalog (full control)
+- Optional: PAT with `public_repo` + `pull_requests:write` for framework contributions
 - Docker and Docker Compose
 
 **Steps**:
@@ -181,10 +252,17 @@ On startup, PrimeLoop validates catalog configuration:
    # Edit .env:
    POSTGRES_PASSWORD=<strong-password>
    SECRET_ENCRYPTION_KEY=$(openssl rand -hex 32)
+   
+   # ─── Catalog Repo (agent-managed, direct control) ────────────────────────
    CATALOG_SOURCE_TYPE=git
    CATALOG_GIT_URL=https://github.com/yourorg/primeloop-catalog.git
    CATALOG_GIT_REF=main
-   CATALOG_GIT_TOKEN=<your-pat-with-repo-scope>  # for Git clone/pull
+   CATALOG_GIT_TOKEN=<pat-with-repo-scope>  # Full control for catalog
+   
+   # ─── PrimeLoop Framework Repo (agent contributes via PR) ────────────────
+   PRIMELOOP_REPO_URL=https://github.com/HavartiBard/primeloop.git
+   PRIMELOOP_REPO_TOKEN=<pat-with-pr-scope>  # Optional: for PR creation
+   
    GITEA_TOKEN=<your-gitea-token>  # if using Gitea integration
    ```
 
@@ -213,6 +291,42 @@ On startup, PrimeLoop validates catalog configuration:
      -H "Content-Type: application/json" \
      -d '{"sourceId": "default-local"}'
    ```
+
+### Agent Decision Logic: Which Repo?
+
+Agents should use this decision tree:
+
+```typescript
+if (change.target === 'catalog') {
+  // Skills, prompts, policies, agent templates
+  gitAdd(change.path);
+  gitCommit(`agent: ${change.reason}`);
+  gitPush('catalog-origin');  // Direct push - no approval needed
+}
+
+else if (change.target === 'framework') {
+  // Framework code, specs, docs
+  gitCheckoutBranch(`agent-pr/${change.feature}`);
+  gitAdd(change.path);
+  gitCommit(`feat: ${change.description}`);
+  createPR({
+    title: change.title,
+    body: change.explanation,
+    base: 'main',
+    head: `agent-pr/${change.feature}`,
+  });  // Wait for human review
+}
+```
+
+**Examples**:
+
+| Agent Action | Repo | Command |
+|--------------|------|---------|
+| Write new skill `code-review.md` | Catalog | `git commit && git push` |
+| Fix framework bug in `backend/src/catalog/startup.ts` | Framework | `gh pr create ...` |
+| Add new agent type `researcher.yaml` | Catalog | `git commit && git push` |
+| Propose new capability primitive | Framework | `gh pr create ...` |
+| Update standing rules policy | Catalog | `git commit && git push` |
 
 ### Flow B: Local Volume Mount (Single-Host)
 
@@ -256,6 +370,7 @@ Before production deployment, verify:
 - [ ] CATALOG_GIT_TOKEN set (Git mode) or catalog dir exists (local mode)
 - [ ] Git PAT has `repo` scope + `contents:write` for workspace auto-backup
 - [ ] WORKSPACE_SYNC_INTERVAL configured (0 to disable auto-sync)
+- [ ] (Optional) PRIMELOOP_REPO_TOKEN set for framework PR contributions
 - [ ] Workspace path is writable and outside container
 - [ ] No hardcoded paths in `docker-compose.prod.yml` that point to container-only locations
 - [ ] Environment variables for catalog source are set correctly
