@@ -221,21 +221,32 @@ The runtime event taxonomy now includes:
 
 ## Launcher Path Deployment (Spec 025)
 
-Spec 025 makes **launcher-managed isolated runtimes the default execution path** for managed
-local OpenCode agents. Instead of the backend spawning `opencode serve` as a local child
-process, a dedicated `launcher` service provisions one persistent isolated runtime container
-per agent (via Docker or OpenSandbox) and the backend connects out over remote ACP. The backend
-remains the sole owner of agent records and worktree creation/mutation; the launcher only mounts
-the assigned worktree.
+Spec 025 adds **optional** launcher-managed isolated runtimes for managed local OpenCode agents.
+By default agents run in-process (the proven legacy path). When enabled, instead of the backend
+spawning `opencode serve` as a local child process, a dedicated `launcher` service provisions one
+persistent isolated runtime container per agent (via Docker or OpenSandbox) and the backend
+connects out over remote ACP. The backend remains the sole owner of agent records and worktree
+creation/mutation; the launcher only mounts the assigned worktree.
 
-### Deployment
+> **Off by default.** A fresh install needs only `POSTGRES_PASSWORD` + `SECRET_ENCRYPTION_KEY`
+> and runs agents in-process. The launcher is opt-in because it requires a runtime image you
+> build yourself (`runtime-image/Dockerfile`) — there is no published default image.
 
-`docker-compose.yml` and `docker-compose.prod.yml` now ship a `launcher` service alongside the
-backend. The backend depends on it and is configured with:
+### Enabling the launcher (opt-in)
 
-- `LAUNCHER_ENABLED` — `1` by default in compose; selects launcher-managed runtime mode
+1. Build a runtime image from `runtime-image/Dockerfile` and point `OPENSANDBOX_IMAGE_OPENCODE` at it.
+2. Set `LAUNCHER_ENABLED=1` and a `LAUNCHER_AUTH_SECRET` in your `.env`.
+3. Start with the `launcher` profile so the launcher service comes up alongside the backend:
+
+   ```sh
+   docker compose --profile launcher up -d --build
+   ```
+
+Configuration:
+
+- `LAUNCHER_ENABLED` — `0` by default; set `1` to route managed local agents through the launcher
+- `LAUNCHER_AUTH_SECRET` — bearer secret the backend uses to authenticate to the launcher (required when enabled)
 - `LAUNCHER_URL` — backend → launcher base URL (default `http://launcher:8787`)
-- `LAUNCHER_AUTH_SECRET` — **required**; bearer secret the backend uses to authenticate to the launcher
 - `LAUNCHER_ADAPTER` — `docker` (default) or `opensandbox`
 - `OPENSANDBOX_URL` / `OPENSANDBOX_API_KEY` / `OPENSANDBOX_IMAGE_OPENCODE` — used when the adapter is `opensandbox`
 
