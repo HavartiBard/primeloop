@@ -4,6 +4,7 @@ import { createPool, runMigrations, seedRegistry } from './db.js'
 import { listAgents, upsertLocalCodexProvider } from './registry.js'
 import { createBroadcaster } from './ws/broadcast.js'
 import { createApp } from './app.js'
+import { validateCatalogStartup, logCatalogStartup } from './catalog/startup.js'
 import { setDelegationRuntimeStarter } from './delegation-runner.js'
 import { createSlackBot, notifyApprovalNeeded } from './slack/bot.js'
 import { insertEvent } from './events/store.js'
@@ -67,6 +68,14 @@ traceStep('migrations complete')
 traceStep('seeding registry')
 await seedRegistry(pool, process.env)
 traceStep('registry seeded')
+
+// Validate catalog source durability before continuing startup
+const catalogValidation = await validateCatalogStartup()
+logCatalogStartup(catalogValidation)
+if (catalogValidation.warnings.some(w => w.includes('ephemeral'))) {
+  console.warn('[startup] Catalog is using ephemeral storage — data will be lost on container restart')
+}
+
 traceStep('upserting local codex provider')
 await upsertLocalCodexProvider(pool)
 traceStep('local codex provider ready')
