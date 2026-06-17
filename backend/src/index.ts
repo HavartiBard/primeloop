@@ -5,6 +5,7 @@ import { listAgents, upsertLocalCodexProvider } from './registry.js'
 import { createBroadcaster } from './ws/broadcast.js'
 import { createApp } from './app.js'
 import { validateCatalogStartup, logCatalogStartup } from './catalog/startup.js'
+import { startWorkspaceSyncScheduler } from './workspace/sync.js'
 import { setDelegationRuntimeStarter } from './delegation-runner.js'
 import { createSlackBot, notifyApprovalNeeded } from './slack/bot.js'
 import { insertEvent } from './events/store.js'
@@ -33,6 +34,8 @@ const {
   CREDENTIAL_BROKER = '0',
   EGRESS_SANDBOX = '0',
   LAUNCHER_URL = 'http://launcher:8787',
+  // Workspace Git sync interval (seconds, 0 to disable)
+  WORKSPACE_SYNC_INTERVAL = '3600',
 } = process.env
 
 if (!DATABASE_URL) throw new Error('DATABASE_URL is required')
@@ -75,6 +78,10 @@ logCatalogStartup(catalogValidation)
 if (catalogValidation.warnings.some(w => w.includes('ephemeral'))) {
   console.warn('[startup] Catalog is using ephemeral storage — data will be lost on container restart')
 }
+
+// Start workspace Git sync scheduler (if enabled)
+const syncInterval = parseInt(WORKSPACE_SYNC_INTERVAL, 10) || 3600;
+startWorkspaceSyncScheduler(syncInterval);
 
 traceStep('upserting local codex provider')
 await upsertLocalCodexProvider(pool)

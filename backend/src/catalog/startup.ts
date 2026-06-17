@@ -23,6 +23,7 @@ const DEFAULT_CATALOG_PATH = path.join(APP_ROOT, 'catalog');
  * 
  * Checks:
  * 1. If CATALOG_SOURCE_TYPE=git, verify CATALOG_GIT_URL is set and clone repo
+ *    - Also syncs workspace/ content from catalog repo to /workspace
  * 2. If CATALOG_SOURCE_TYPE=local (default), verify the path exists and is writable
  *    - Warn if path is inside APP_ROOT (ephemeral in containerized deployment)
  *    - Suggest volume mount or Git source for production
@@ -54,6 +55,14 @@ export async function validateCatalogStartup(): Promise<{
     try {
       await cloneOrPullGitCatalog(gitUrl, gitRef, gitToken);
       warnings.push(`Successfully cloned catalog from ${gitUrl}@${gitRef}`);
+      
+      // Sync workspace/ from catalog repo to /workspace
+      const workspaceSyncResult = await syncWorkspaceFromCatalog();
+      if (workspaceSyncResult.synced) {
+        warnings.push(`Workspace synced from catalog repo (${workspaceSyncResult.filesCount} files)`);
+      } else if (workspaceSyncResult.warning) {
+        warnings.push(workspaceSyncResult.warning);
+      }
     } catch (err) {
       throw new Error(
         `Failed to clone catalog repo: ${(err as Error).message}. ` +
@@ -105,6 +114,89 @@ export async function validateCatalogStartup(): Promise<{
     warnings,
     mode: 'local',
   };
+}
+
+/**
+ * Sync workspace/ content from catalog repo to /workspace.
+ * Copies files from DEFAULT_CATALOG_PATH/workspace/ to WORKSPACE_ROOT.
+ */
+async function syncWorkspaceFromCatalog(): Promise<{
+  synced: boolean;
+  filesCount?: number;
+  warning?: string;
+}> {
+  const catalogWorkspace = path.join(DEFAULT_CATALOG_PATH, 'workspace');
+  const workspaceRoot = process.env.WORKSPACE_ROOT ?? '/workspace';
+  
+  try {
+    await fs.access(catalogWorkspace);
+  } catch (err) {
+    // No workspace/ in catalog repo — that's OK, use default workspace
+    console.log('[catalog] No workspace/ directory in catalog repo, using default');
+    return { synced: false, warning: 'No workspace/ in catalog repo' };
+  }
+  
+  try {
+    // Ensure workspace root exists
+    await fs.mkdir(workspaceRoot, { recursive: true });
+    
+    // Copy files from catalog/workspace to /workspace
+    const files = await listFilesRecursive(catalogWorkspace);
+    let copied = 0;
+    
+    for (const file of files) {
+      const srcPath = path.join(catalogWorkspace, file);
+      const destPath = path.join(workspaceRoot, file);
+      
+      try {
+        // Check if destination exists and is newer
+        const [srcStat, destStat] = await Promise.all([
+          fs.stat(srcPath),
+          fs.stat(destPath).catch(() => null as any)
+        ]);
+        
+        // Copy if dest doesn't exist or src is newer
+        if (!destStat || srcStat.mtime > destStat.mtime) {
+          await fs.mkdir(path.dirname(destPath), { recursive: true });
+          await fs.copyFile(srcPath, destPath);
+          copied++;
+        }
+      } catch (err) {
+        console.warn('[catalog] Failed to copy', file, ':', (err as Error).message);
+      }
+    }
+    
+    console.log(`[catalog] Workspace synced from catalog (${copied} files updated)`);
+    return { synced: true, filesCount: copied };
+  } catch (err) {
+    console.error('[catalog] Workspace sync failed:', (err as Error).message);
+    return { synced: false, warning: `Workspace sync failed: ${(err as Error).message}` };
+  }
+}
+
+/**
+ * Recursively list all files in a directory.
+ */
+async function listFilesRecursive(dir: string): Promise<string[]> {
+  const result: string[] = [];
+  
+  async function walk(current: string, relativePath: string = '') {
+    const entries = await fs.readdir(current, { withFileTypes: true });
+    
+    for (const entry of entries) {
+      const fullPath = path.join(current, entry.name);
+      const relPath = relativePath ? `${relativePath}/${entry.name}` : entry.name;
+      
+      if (entry.isDirectory()) {
+        await walk(fullPath, relPath);
+      } else if (entry.isFile()) {
+        result.push(relPath);
+      }
+    }
+  }
+  
+  await walk(dir);
+  return result;
 }
 
 /**

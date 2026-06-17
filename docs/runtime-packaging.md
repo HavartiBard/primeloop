@@ -54,17 +54,22 @@ services:
 
 #### Mode 2: Git Source (Recommended for Multi-Host/CI)
 
-Configure Git as the catalog source:
+Configure Git as the catalog source with workspace backup:
 
 ```bash
 CATALOG_SOURCE_TYPE=git
 CATALOG_GIT_URL=https://github.com/org/primeloop-catalog.git
 CATALOG_GIT_REF=main
+CATALOG_GIT_TOKEN=<pat-with-repo-scope>
+WORKSPACE_SYNC_INTERVAL=3600  # Auto-backup workspace every hour (0 to disable)
 ```
 
 **Important**:
-- Container reads from Git working tree, no local writes
-- Changes require Git push + catalog sync + approval
+- Container clones catalog repo on startup (includes `workspace/` subdirectory)
+- Workspace content syncs from catalog → /workspace on boot
+- Operator-authored skills/prompts/policies auto-commit + push to Git hourly
+- Agent-created runtime files excluded via .gitignore patterns
+- Recovery: single `git clone` restores both catalog AND workspace
 
 ##### Required Git Permissions (PAT)
 
@@ -74,8 +79,8 @@ For the installer and runtime to work with the catalog repo:
 |-----------|------------|-------|
 | Clone / Pull catalog on startup | `repo` (full) or `contents:read` | Repository |
 | Sync catalog changes (POST `/api/catalog/sync`) | `contents:read` | Repository |
+| Auto-backup workspace changes | `contents:write` | Repository |
 | Tag versions for rollback | `contents:write` | Repository |
-| Create release notes | `contents:write` | Repository |
 
 **Minimal PAT scope**:
 - Private repos: `repo` (full control) — simplest single-scope option
@@ -155,10 +160,17 @@ On startup, PrimeLoop validates catalog configuration:
    cd primeloop
    
    # Create empty catalog repo (or fork existing template)
-   # Copy starter catalog files
+   # Copy starter catalog files (includes workspace/ template)
    cp -r backend/catalog /path/to/your/catalog-repo/
+   
+   # Optional: Pre-populate workspace content
+   mkdir -p /path/to/your/catalog-repo/workspace/skills
+   mkdir -p /path/to/your/catalog-repo/workspace/prompts/agents
+   mkdir -p /path/to/your/catalog-repo/workspace/policies
+   cp backend/prompts/agents/*.md /path/to/your/catalog-repo/workspace/prompts/agents/
+   
    git -C /path/to/your/catalog-repo add .
-   git -C /path/to/your/catalog-repo commit -m "Initial catalog"
+   git -C /path/to/your/catalog-repo commit -m "Initial catalog + workspace template"
    git -C /path/to/your/catalog-repo push origin main
    ```
 
@@ -242,7 +254,8 @@ Before production deployment, verify:
 
 - [ ] PostgreSQL data volume is mounted and persistent
 - [ ] CATALOG_GIT_TOKEN set (Git mode) or catalog dir exists (local mode)
-- [ ] Git PAT has `repo` scope (private repos) or `public_repo`+`contents:write` (public)
+- [ ] Git PAT has `repo` scope + `contents:write` for workspace auto-backup
+- [ ] WORKSPACE_SYNC_INTERVAL configured (0 to disable auto-sync)
 - [ ] Workspace path is writable and outside container
 - [ ] No hardcoded paths in `docker-compose.prod.yml` that point to container-only locations
 - [ ] Environment variables for catalog source are set correctly
