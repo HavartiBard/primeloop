@@ -1,5 +1,4 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
-import { randomUUID } from 'node:crypto'
 import pg from 'pg'
 import { createPool, runMigrations } from '../src/db.js'
 import {
@@ -14,7 +13,7 @@ import {
   listToolGrants,
   getAgentRuntimeConfig,
 } from '../src/registry.js'
-import { createWorkItem } from '../src/runtime.js'
+import { createWorkItem, createDelegation } from '../src/runtime.js'
 
 const TEST_DB = process.env.TEST_DATABASE_URL ?? 'postgresql://primeloop:primeloop_dev@127.0.0.1:5434/primeloop_test'
 
@@ -36,6 +35,10 @@ describe('ephemeral templates', () => {
   afterAll(async () => {
     await pool.end()
   })
+
+  // tool_grants.delegation_id is FK-constrained to delegations; create a real row.
+  const mkDelegationId = async (): Promise<string> =>
+    (await createDelegation(pool, { capability: 'implementation' })).id
 
   describe('template definitions', () => {
     it('lists default ephemeral templates', () => {
@@ -68,7 +71,7 @@ describe('ephemeral templates', () => {
   describe('spawn', () => {
     it('creates ephemeral agent from template', async () => {
       const result = await spawnEphemeralAgent(pool, 'implementer', {
-        delegationId: randomUUID(),
+        delegationId: await mkDelegationId(),
       })
 
       expect(result.agent.tier).toBe('ephemeral')
@@ -78,7 +81,7 @@ describe('ephemeral templates', () => {
     })
 
     it('creates tool grant for spawned agent', async () => {
-      const delegationId = randomUUID()
+      const delegationId = await mkDelegationId()
       // work_item_id is FK-constrained to work_items, so create a real row.
       const workItem = await createWorkItem(pool, { title: 'ephemeral grant test' })
       const result = await spawnEphemeralAgent(pool, 'implementer', {
@@ -93,7 +96,7 @@ describe('ephemeral templates', () => {
 
     it('creates runtime config with resource limits', async () => {
       const result = await spawnEphemeralAgent(pool, 'implementer', {
-        delegationId: randomUUID(),
+        delegationId: await mkDelegationId(),
       })
 
       const config = await getAgentRuntimeConfig(pool, result.agent.id)
@@ -109,10 +112,10 @@ describe('ephemeral templates', () => {
 
     it('creates unique agent names to avoid collisions', async () => {
       const result1 = await spawnEphemeralAgent(pool, 'implementer', {
-        delegationId: randomUUID(),
+        delegationId: await mkDelegationId(),
       })
       const result2 = await spawnEphemeralAgent(pool, 'implementer', {
-        delegationId: randomUUID(),
+        delegationId: await mkDelegationId(),
       })
 
       expect(result1.agent.id).not.toBe(result2.agent.id)
@@ -123,7 +126,7 @@ describe('ephemeral templates', () => {
   describe('retire', () => {
     it('revokes active tool grants', async () => {
       const spawnResult = await spawnEphemeralAgent(pool, 'implementer', {
-        delegationId: randomUUID(),
+        delegationId: await mkDelegationId(),
       })
 
       await retireEphemeralAgent(pool, spawnResult.agent.id, { success: true })
@@ -135,7 +138,7 @@ describe('ephemeral templates', () => {
 
     it('persists retirement event', async () => {
       const spawnResult = await spawnEphemeralAgent(pool, 'implementer', {
-        delegationId: randomUUID(),
+        delegationId: await mkDelegationId(),
       })
 
       await retireEphemeralAgent(pool, spawnResult.agent.id, { success: false, error: 'test failure' })
@@ -150,7 +153,7 @@ describe('ephemeral templates', () => {
 
     it('keeps agent row queryable for audit', async () => {
       const spawnResult = await spawnEphemeralAgent(pool, 'implementer', {
-        delegationId: randomUUID(),
+        delegationId: await mkDelegationId(),
       })
       const agentId = spawnResult.agent.id
 
