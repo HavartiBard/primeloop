@@ -53,7 +53,9 @@ jobs:
             sleep 2
           done
 
-          docker build -t "$IMG" -f backend/Dockerfile.test backend
+          # Use the legacy builder: this runner's Docker has BuildKit on by default
+          # but no buildx plugin installed, which makes `docker build` fail.
+          DOCKER_BUILDKIT=0 docker build -t "$IMG" -f backend/Dockerfile.test backend
 
           docker run --rm --network "$NET" \
             -e TEST_DATABASE_URL="$DSN" \
