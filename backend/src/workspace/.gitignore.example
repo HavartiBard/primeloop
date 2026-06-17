@@ -1,0 +1,27 @@
+# Workspace .gitignore template
+# Copy to: your-catalog-repo/workspace/.gitignore
+# This determines which files agents should NOT commit to catalog repo
+
+# Agent-created runtime data (high-churn, environment-specific)
+memory/decisions.md
+memory/preferences.md
+
+# Runtime state and cache
+cache/
+*.tmp
+*.log
+
+# Local environment overrides (not shared)
+config/local.yaml
+config/secrets.yaml
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS metadata
+.DS_Store
+Thumbs.db

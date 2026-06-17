@@ -49,6 +49,19 @@ docker compose down              # stop (add -v to also drop the database volume
 For a production deployment using a pre-built image and persistent volumes, use
 `docker-compose.prod.yml` instead.
 
+### Production deployment notes
+
+**Prebuilt image path (recommended)**: Pull the latest image and configure via
+`docker-compose.prod.yml`. The container is disposable — all durable state lives in
+volume-mounted paths (Postgres data, catalog YAML, workspace files).
+
+**Catalog storage**: Agent templates (`backend/catalog/*.yaml`) must be on durable
+storage. See [docs/runtime-packaging.md](docs/runtime-packaging.md) for setup options.
+
+**Disposable container / durable state model**: The container payload is ephemeral.
+Workspace files, database records, and catalog YAML are the durable surfaces for
+customization and self-improvement.
+
 ### Required environment variables
 
 | Variable | Required | Notes |

@@ -18,6 +18,9 @@ services:
     volumes:
       - /mnt/user/appdata/primeloop/codex:/root/.codex
       - /mnt/user/appdata/primeloop/workspace:/workspace
+      # Catalog YAML is durable storage — mounted read-write for Git clone/pull
+      # Container clones catalog repo on startup, operator edits via Git push + API sync
+      - /mnt/user/appdata/primeloop/catalog:/app/backend/catalog
     environment:
       DATABASE_URL: postgresql://primeloop:${POSTGRES_PASSWORD}@postgres:5432/primeloop
       SECRET_ENCRYPTION_KEY: ${SECRET_ENCRYPTION_KEY:?required}
@@ -47,6 +50,8 @@ services:
       LAUNCHER_URL: ${LAUNCHER_URL:-http://launcher:8787}
       LAUNCHER_ENABLED: ${LAUNCHER_ENABLED:-0}
       LAUNCHER_ADAPTER: ${LAUNCHER_ADAPTER:-docker}
+      # Catalog Git token for workspace auto-backup (dual-repo model)
+      CATALOG_GIT_TOKEN: ${CATALOG_GIT_TOKEN:-}
     ports:
       - "3100:3100"
     depends_on:
