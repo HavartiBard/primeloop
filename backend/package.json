@@ -7,7 +7,7 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "test": "vitest run",
-    "test:db": "TEST_DATABASE_URL=postgresql://primeloop:primeloop_test@localhost:55432/primeloop_test vitest run",
+    "test:db": "TEST_DATABASE_URL=postgresql://primeloop:primeloop_test@localhost:55433/primeloop_test vitest run",
     "test:db:up": "docker compose -f ../docker-compose.test.yml up -d postgres-test",
     "test:db:down": "docker compose -f ../docker-compose.test.yml down -v",
     "test:db:docker": "docker build -t primeloop-backend-test -f Dockerfile.test . && docker run --rm --network primeloop_default -e TEST_DATABASE_URL=postgresql://primeloop:primeloop_test@postgres-test:5432/primeloop_test primeloop-backend-test npm test"
