@@ -1,5 +1,7 @@
 # PrimeLoop
 
+[![backend-tests](https://code.klsll.com/HavartiBard/primeloop/actions/workflows/backend-tests.yml/badge.svg?branch=main)](https://code.klsll.com/HavartiBard/primeloop/actions?workflow=backend-tests.yml)
+
 Multi-agent dashboard and control plane.
 
 ## Installation
