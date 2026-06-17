@@ -160,7 +160,9 @@ export interface WizardState {
 }
 
 const DEFAULT_LOCAL_AI_BASE_URL = ((import.meta.env.VITE_LOCAL_AI_BASE_URL as string | undefined) ?? '').trim().replace(/\/+$/, '')
-const DEFAULT_LOCAL_AI_PROVIDER_TYPE = DEFAULT_LOCAL_AI_BASE_URL
+// Typed as string: this default is compared against all local provider types
+// (llamacpp, vllm, lmstudio, llm-proxy, …) below, so it must not narrow to a literal union.
+const DEFAULT_LOCAL_AI_PROVIDER_TYPE: string = DEFAULT_LOCAL_AI_BASE_URL
   ? (DEFAULT_LOCAL_AI_BASE_URL.endsWith('/v1') ? 'litellm' : 'ollama')
   : 'ollama'
 
