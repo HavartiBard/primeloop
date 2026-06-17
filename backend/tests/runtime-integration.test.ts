@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest'
-import { randomUUID } from 'node:crypto'
 import pg from 'pg'
 import { createPool, runMigrations } from '../src/db.js'
+import { createDelegation } from '../src/runtime.js'
 import { bootstrapDurableStaff } from '../src/durable-staff.js'
 import { spawnEphemeralAgent, retireEphemeralAgent } from '../src/ephemeral-templates.js'
 import {
@@ -33,6 +33,10 @@ describe('runtime integration', () => {
   afterAll(async () => {
     await pool.end()
   })
+
+  // tool_grants.delegation_id is FK-constrained to delegations; create a real row.
+  const mkDelegationId = async (): Promise<string> =>
+    (await createDelegation(pool, { capability: 'implementation' })).id
 
   describe('durable worker full path', () => {
     it('bootstrap → identity stable → profile linked → config created', async () => {
@@ -81,7 +85,7 @@ describe('runtime integration', () => {
   describe('ephemeral worker full path', () => {
     it('spawn → grant created → retire → audit queryable', async () => {
       // Spawn ephemeral agent
-      const delegationId = randomUUID()
+      const delegationId = await mkDelegationId()
       const spawnResult = await spawnEphemeralAgent(pool, 'implementer', {
         delegationId,
       })
@@ -110,8 +114,8 @@ describe('runtime integration', () => {
     })
 
     it('multiple ephemeral agents can coexist', async () => {
-      const del1 = randomUUID()
-      const del2 = randomUUID()
+      const del1 = await mkDelegationId()
+      const del2 = await mkDelegationId()
 
       const spawn1 = await spawnEphemeralAgent(pool, 'implementer', { delegationId: del1 })
       const spawn2 = await spawnEphemeralAgent(pool, 'reviewer', { delegationId: del2 })
@@ -131,7 +135,7 @@ describe('runtime integration', () => {
 
       // Spawn ephemeral implementer
       const spawnResult = await spawnEphemeralAgent(pool, 'implementer', {
-        delegationId: randomUUID(),
+        delegationId: await mkDelegationId(),
       })
 
       // Verify architect has broader platform primitives than implementer
@@ -151,7 +155,7 @@ describe('runtime integration', () => {
 
       // Spawn ephemeral agent
       const spawnResult = await spawnEphemeralAgent(pool, 'implementer', {
-        delegationId: randomUUID(),
+        delegationId: await mkDelegationId(),
       })
 
       // Verify both tiers exist and are separate
@@ -176,7 +180,7 @@ describe('runtime integration', () => {
 
       // Spawn ephemeral agent
       const spawnResult = await spawnEphemeralAgent(pool, 'implementer', {
-        delegationId: randomUUID(),
+        delegationId: await mkDelegationId(),
       })
 
       // Verify profiles exist for both tiers
