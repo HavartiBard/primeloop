@@ -563,23 +563,29 @@ export function createSetupRouter({
         operatingSections = { default_behaviors: '', approval_thresholds: '' }
       }
 
-      await ensureWorkspaceScaffold(pool)
+      // Wrap filesystem operations in try/catch with clear error messages
+      try {
+        await ensureWorkspaceScaffold(pool)
 
-      // Seed chief_profiles row if missing; writeProfileFiles overwrites it immediately after.
-      await pool.query(
-        `INSERT INTO chief_profiles (id, name, persona, operating_policy)
-         VALUES ('default', $1, '', '')
-         ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, updated_at = now()`,
-        [name],
-      )
+        // Seed chief_profiles row if missing; writeProfileFiles overwrites it immediately after.
+        await pool.query(
+          `INSERT INTO chief_profiles (id, name, persona, operating_policy)
+           VALUES ('default', $1, '', '')
+           ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, updated_at = now()`,
+          [name],
+        )
 
-      // Read existing so unknown sections are preserved across legacy → structured upgrade
-      const current = await readProfileFiles(pool)
-      current.soul.sections = soulSections
-      if (body.profile) {
-        current.operating.sections = operatingSections
+        // Read existing so unknown sections are preserved across legacy → structured upgrade
+        const current = await readProfileFiles(pool)
+        current.soul.sections = soulSections
+        if (body.profile) {
+          current.operating.sections = operatingSections
+        }
+        await writeProfileFiles(pool, current)
+      } catch (err) {
+        console.error('[setup] Filesystem operation failed:', err)
+        throw new Error(`Workspace setup failed: ${(err as Error).message}. This is a filesystem error - check disk space and permissions.`)
       }
-      await writeProfileFiles(pool, current)
 
       // --- standing rules ---
       const rules = body.rules
@@ -634,12 +640,18 @@ export function createSetupRouter({
       const launch = body.launch === true
       const workspace = body.workspace ?? {}
 
-      await updateWorkspaceConfig(pool, {
-        mode: workspace.mode === 'git' ? 'git' : 'local',
-        ...(workspace.root_path ? { root_path: workspace.root_path } : {}),
-        remote_url: workspace.remote_url?.trim() || null,
-        branch: workspace.branch?.trim() || 'main',
-      })
+      // Wrap workspace config update in try/catch with clear error messages
+      try {
+        await updateWorkspaceConfig(pool, {
+          mode: workspace.mode === 'git' ? 'git' : 'local',
+          ...(workspace.root_path ? { root_path: workspace.root_path } : {}),
+          remote_url: workspace.remote_url?.trim() || null,
+          branch: workspace.branch?.trim() || 'main',
+        })
+      } catch (err) {
+        console.error('[setup] Workspace config update failed:', err)
+        throw new Error(`Workspace configuration update failed: ${(err as Error).message}`)
+      }
 
       // Merge cost_controls with prime_config values for persistence
       const finalCostControls = {
@@ -755,7 +767,28 @@ export function createSetupRouter({
 
 
     } catch (err) {
-      res.status(500).json({ error: (err as Error).message ?? 'internal error' })
+      const errorMessage = (err as Error).message ?? 'internal error'
+      console.error('[setup] Setup completion failed:', errorMessage)
+      
+      // Distinguish between different error types for better debugging
+      if (errorMessage.includes('Workspace') || errorMessage.includes('filesystem')) {
+        res.status(500).json({ 
+          error: 'Setup failed: filesystem error',
+          details: errorMessage,
+          suggestion: 'Check disk space, file permissions, and workspace directory accessibility.'
+        })
+      } else if (errorMessage.includes('database') || errorMessage.includes('Postgres')) {
+        res.status(500).json({ 
+          error: 'Setup failed: database error',
+          details: errorMessage,
+          suggestion: 'Check database connectivity and available connections.'
+        })
+      } else {
+        res.status(500).json({ 
+          error: 'Setup failed',
+          details: errorMessage
+        })
+      }
     }
   })
 
