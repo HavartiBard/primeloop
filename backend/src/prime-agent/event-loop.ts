@@ -2,6 +2,7 @@ import type pg from 'pg'
 import { appendThreadMessage, createDelegation, createWorkItem, getPrimeProfile, insertRuntimeEvent, updateWorkItem, type WorkItem } from '../runtime.js'
 import { getAgentByRole } from '../registry.js'
 import { routeInvestigation, recordRoutingOutcome } from '../routing/index.js'
+import { reconcileWorkItemStates as runWorkItemReconciliation } from '../audits.js'
 import { createPrimeSessionSpan, createModuleSpan, recordModuleCompletion, recordDecision, recordBudget, endSpan, recordError, isOTelInitialized } from '../observability/otel.js'
 import type { AgentHarness } from '../fleet-executor/harness.js'
 import type { PrimeActionDispatchResult } from './actions.js'
@@ -123,60 +124,6 @@ async function isCronQuiescent(pool: pg.Pool): Promise<boolean> {
   return parseInt(newEvents.n, 10) === 0
 }
 
-async function reconcileWorkItemStates(pool: pg.Pool): Promise<void> {
-  const { rows } = await pool.query<{
-    id: string
-    blocked_reason: string | null
-    routing_outcome: string | null
-    metadata: Record<string, unknown> | null
-  }>(`
-    SELECT wi.id,
-           COALESCE(evt.payload->>'reason', wi.blocked_by, 'no-investigation-route') AS blocked_reason,
-           COALESCE(evt.payload->>'routing_outcome', wi.metadata->>'routing_outcome') AS routing_outcome,
-           wi.metadata
-      FROM work_items wi
-      LEFT JOIN LATERAL (
-        SELECT payload
-          FROM runtime_events re
-         WHERE re.work_item_id = wi.id
-           AND re.event_type IN ('prime.failure.investigation_needed', 'prime.blocker.investigation_needed')
-         ORDER BY re.created_at DESC
-         LIMIT 1
-      ) evt ON true
-     WHERE wi.status = 'active'
-       AND wi.metadata->>'action_type' IN ('hard_failure_investigation', 'prime_blocker_investigation')
-       AND evt.payload IS NOT NULL
-       AND NOT EXISTS (
-         SELECT 1
-           FROM delegations d
-          WHERE d.work_item_id = wi.id
-            AND d.status IN ('queued', 'running', 'pending')
-       )
-  `)
-
-  for (const row of rows) {
-    await updateWorkItem(pool, row.id, {
-      status: 'blocked',
-      blocked_by: row.blocked_reason ?? 'no-investigation-route',
-      metadata: {
-        ...(row.metadata ?? {}),
-        investigation_status: 'blocked',
-        routing_outcome: row.routing_outcome ?? (row.metadata?.['routing_outcome'] as string | undefined) ?? 'blocked_runtime_unavailable',
-      },
-    })
-    await insertRuntimeEvent(pool, {
-      event_type: 'work.reclassified',
-      actor: 'Prime',
-      work_item_id: row.id,
-      payload: {
-        previous_status: 'active',
-        status: 'blocked',
-        reason: row.blocked_reason ?? 'no-investigation-route',
-      },
-    })
-  }
-}
-
 export async function handlePrimeEvent(
   pool: pg.Pool,
   event: PrimeEvent,
@@ -195,7 +142,11 @@ export async function handlePrimeEvent(
     )
   }
   
-  await reconcileWorkItemStates(pool)
+  // Note: Full work-item state reconciliation moved to scheduled audit/sweeper
+  // This lightweight check remains for immediate duplicate handling
+  await runWorkItemReconciliation(pool).catch((err) => {
+    console.warn('[event-loop] Work item reconciliation failed:', err)
+  })
 
   const duplicate = event.type === 'prime.message'
     ? await reconcilePrimeMessageSession(pool, event.payload.message_id)
