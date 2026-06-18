@@ -17,6 +17,7 @@ import { PostgresCheckpointStore } from './checkpoint-store.js'
 import { createPrimeAgentService } from './prime-agent/service.js'
 import { FleetDispatcher } from './fleet-executor/dispatcher.js'
 import { startRuntimeLeaseReclaimScheduler } from './runtime/lease.js'
+import { initOTel, shutdownOTel } from './observability/otel.js'
 
 const {
   DATABASE_URL = '',
@@ -96,6 +97,11 @@ startWorkspaceSyncScheduler(syncInterval);
 traceStep('upserting local codex provider')
 await upsertLocalCodexProvider(pool)
 traceStep('local codex provider ready')
+
+// Initialize OpenTelemetry for Prime session and module tracing
+traceStep('initializing OpenTelemetry')
+await initOTel({})
+traceStep('OpenTelemetry initialized')
 
 const checkpointStore = new PostgresCheckpointStore(pool)
 traceStep('recovering stale checkpoints')
@@ -244,6 +250,7 @@ process.on('SIGTERM', async () => {
   await fleetDispatcher.stop()
   await primeAgentService.close()
   server.close()
+  await shutdownOTel()
   await pool.end()
   process.exit(0)
 })

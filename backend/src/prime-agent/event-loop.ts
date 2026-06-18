@@ -2,6 +2,7 @@ import type pg from 'pg'
 import { appendThreadMessage, createDelegation, createWorkItem, getPrimeProfile, insertRuntimeEvent, updateWorkItem, type WorkItem } from '../runtime.js'
 import { getAgentByRole } from '../registry.js'
 import { routeInvestigation, recordRoutingOutcome } from '../routing/index.js'
+import { createPrimeSessionSpan, createModuleSpan, recordModuleCompletion, recordDecision, recordBudget, endSpan, recordError, isOTelInitialized } from '../observability/otel.js'
 import type { AgentHarness } from '../fleet-executor/harness.js'
 import type { PrimeActionDispatchResult } from './actions.js'
 import type { PrimeContext } from './context.js'
@@ -181,6 +182,19 @@ export async function handlePrimeEvent(
   event: PrimeEvent,
   deps: PrimeEventLoopDeps
 ): Promise<PrimeEventHandleResult> {
+  // Create root span for Prime session if OTel is initialized
+  let sessionSpan: any = null
+  let moduleSpans: Map<string, any> = new Map()
+  
+  if (isOTelInitialized()) {
+    const triggerType = mapTriggerType(event)
+    sessionSpan = createPrimeSessionSpan(
+      'temp-session', // Will be updated with real session ID after creation
+      event.type,
+      triggerType
+    )
+  }
+  
   await reconcileWorkItemStates(pool)
 
   const duplicate = event.type === 'prime.message'
@@ -239,6 +253,13 @@ export async function handlePrimeEvent(
   }
 
   const workspace = await loadPrimeWorkspaceTemplates(pool)
+  
+  // Update session span with workspace info
+  if (sessionSpan) {
+    sessionSpan.setAttribute('prime.workspace_root', workspace.effectiveRoot)
+    sessionSpan.setAttribute('prime.workspace_revision', workspace.revision)
+  }
+  
   const configuredModules = await listConfiguredPrimeModules(pool)
   const activeModules = configuredModules.filter((entry) => entry.rollout_mode === 'active')
   const shadowModules = configuredModules.filter((entry) => entry.rollout_mode === 'shadow')
@@ -252,6 +273,12 @@ export async function handlePrimeEvent(
       prime_modules: summarizeConfiguredPrimeModules(configuredModules),
     },
   })
+  
+  // Update session span with real session ID
+  if (sessionSpan) {
+    sessionSpan.setAttribute('prime.session_id', session.id)
+  }
+  
   const state: PrimeLoopState = {
     event,
     session,
@@ -302,11 +329,11 @@ export async function handlePrimeEvent(
           const stageShadowModules = shadowModules.filter((entry) => entry.module.stage === stage)
 
           for (const configured of stageActiveModules) {
-            await runConfiguredModule(pool, depsWithSignal, state, configured, 'active')
+            await runConfiguredModule(pool, depsWithSignal, state, configured, 'active', sessionSpan, moduleSpans)
           }
 
           for (const configured of stageShadowModules) {
-            await runConfiguredModule(pool, depsWithSignal, state, configured, 'shadow')
+            await runConfiguredModule(pool, depsWithSignal, state, configured, 'shadow', sessionSpan, moduleSpans)
           }
         }
       })(),
@@ -316,6 +343,18 @@ export async function handlePrimeEvent(
     const context = requireContext(state)
     const decision = requireDecision(state)
     const actions = state.actions
+    
+    // Record decision and budget in OTel span
+    if (sessionSpan) {
+      recordDecision(
+        sessionSpan,
+        decision.provider_used,
+        decision.model_used,
+        decision.token_count,
+        decision.actions.length
+      )
+      recordBudget(sessionSpan, state.budget.llmCalls, state.budget.actionsDispatched)
+    }
 
     await emitPrimeEvent(deps, 'prime.turn.reasoning', {
       session_id: session.id,
@@ -365,6 +404,11 @@ export async function handlePrimeEvent(
       })
     }
 
+    // End session span on success
+    if (sessionSpan) {
+      endSpan(sessionSpan, 'ok')
+    }
+    
     _sessionAbortControllers.delete(session.id)
     await updateLastStep(pool, session.id, 'completed')
     const completed = await completePrimeSession(pool, session.id, {
@@ -416,6 +460,12 @@ export async function handlePrimeEvent(
       actions,
     }
   } catch (error) {
+    // End session span on error
+    if (sessionSpan) {
+      recordError(sessionSpan, error instanceof Error ? error : new Error(String(error)))
+      endSpan(sessionSpan, 'error')
+    }
+    
     _sessionAbortControllers.delete(session.id)
     await savePrimeSessionModuleRuns(pool, session.id, state.moduleRuns)
     await updateLastStep(pool, session.id, 'failed')
@@ -765,7 +815,9 @@ async function runConfiguredModule(
   deps: PrimeEventLoopDeps,
   state: PrimeLoopState,
   configured: PrimeConfiguredModule,
-  mode: 'active' | 'shadow'
+  mode: 'active' | 'shadow',
+  sessionSpan?: any,
+  moduleSpans?: Map<string, any>
 ): Promise<void> {
   const step = mode === 'shadow'
     ? `shadow:${configured.module.id}`
@@ -783,6 +835,21 @@ async function runConfiguredModule(
     ...getTriggerMetadata(state.event),
   })
 
+  // Create module span if OTel is available
+  let moduleSpan: any = null
+  if (sessionSpan && configured.module.stage) {
+    moduleSpan = createModuleSpan(
+      sessionSpan,
+      configured.module.id,
+      configured.module.stage,
+      configured.module.version,
+      mode
+    )
+    if (moduleSpan) {
+      moduleSpans?.set(configured.module.id, moduleSpan)
+    }
+  }
+  
   try {
     if (mode === 'shadow') {
       await runShadowPrimeModules(
@@ -813,6 +880,17 @@ async function runConfiguredModule(
     }
 
     const latestRun = state.moduleRuns[state.moduleRuns.length - 1]
+    
+    // Record module completion in OTel span
+    if (moduleSpan) {
+      recordModuleCompletion(
+        moduleSpan,
+        latestRun?.status === 'failed' ? 'failed' : 'success',
+        latestRun?.detail
+      )
+      moduleSpans?.delete(configured.module.id)
+    }
+    
     await emitPrimeEvent(deps, 'prime.turn.step', {
       session_id: state.session.id,
       trigger_type: state.event.type,
@@ -826,6 +904,12 @@ async function runConfiguredModule(
       ...getTriggerMetadata(state.event),
     })
   } catch (error) {
+    // Record module failure in OTel span
+    if (moduleSpan) {
+      recordModuleCompletion(moduleSpan, 'failed', error instanceof Error ? error.message : String(error))
+      moduleSpans?.delete(configured.module.id)
+    }
+    
     const message = error instanceof Error ? error.message : String(error)
     await emitPrimeEvent(deps, 'prime.turn.step', {
       session_id: state.session.id,
