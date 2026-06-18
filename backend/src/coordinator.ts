@@ -39,8 +39,17 @@ export interface PrimeRoute {
   reason: string
 }
 
+/**
+ * Result from handlePrimeMessage().
+ * 
+ * NOTE: `prime_message` is optional. When Prime processor bypass is active
+ * (synchronous processing), an immediate "Processing..." acknowledgment is returned.
+ * When async queue processing is used, the response includes no prime_message
+ * and the user must poll for the eventual async reply.
+ */
 export interface PrimeMessageResult {
   user_message: ThreadMessage
+  /** Immediate acknowledgment message (optional - may be absent in async mode) */
   prime_message?: ThreadMessage
   work_item?: WorkItem
   delegation?: Delegation
@@ -219,11 +228,20 @@ export async function handlePrimeMessage(
 
     let primeMessage: ThreadMessage | undefined
     if (!primeProcessor) {
+      // No processor configured - return error message
       primeMessage = await appendThreadMessage(pool, threadId, {
         role: 'assistant',
         sender: coordinatorName,
         content: 'I could not process that yet because Prime processing is not running.',
         metadata: { prime_processing: false },
+      })
+    } else {
+      // Processor is configured - send immediate acknowledgment
+      primeMessage = await appendThreadMessage(pool, threadId, {
+        role: 'assistant',
+        sender: coordinatorName,
+        content: 'Processing...',
+        metadata: { prime_processing: true, async: true },
       })
     }
 
