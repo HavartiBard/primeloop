@@ -4,12 +4,13 @@
 .agent-workspace/
 .claude/
 .commandcode/
-context/
-context-qwen-local/
-implement/
-review-qwen-local/
-worker-qwen-local/
-subagents/
+# Root-level directories only (not nested)
+/./context$
+/./context-qwen-local$
+/./implement$
+/./review-qwen-local$
+/./worker-qwen-local$
+/./subagents$
 .specify/workflows/runs/
 backend/.env.test
 .env

@@ -14,6 +14,15 @@ import type {
   PrimeLoopState,
 } from './types.js'
 
+// Workspace module loader (optional dependency)
+let workspaceModuleLoader: typeof import('../../workspace/modules-loader.js') | null = null;
+try {
+  workspaceModuleLoader = await import('../../workspace/modules-loader.js');
+} catch (err) {
+  // Workspace modules not available — use built-in only
+  console.log('[modules] Workspace module loader not available:', (err as Error).message);
+}
+
 const TRIGGER_MODULE: PrimeModule = {
   id: 'trigger.event-ingress',
   stage: 'trigger',
@@ -156,12 +165,49 @@ const STATIC_PRIME_MODULES: PrimeModule[] = [
   FEEDBACK_APPROVAL_CONTINUATION_MODULE,
 ]
 
-export function listPrimeModules(): PrimeModule[] {
-  return [...STATIC_PRIME_MODULES].sort(comparePrimeModules)
+/**
+ * Get all Prime modules, merging workspace overrides with built-in modules.
+ * Workspace modules in /workspace/modules/ can override built-ins by template_id.
+ */
+export async function listPrimeModules(): Promise<PrimeModule[]> {
+  let modules = [...STATIC_PRIME_MODULES];
+
+  // Load and merge workspace modules if available
+  if (workspaceModuleLoader) {
+    const workspaceRoot = process.env.WORKSPACE_ROOT ?? '/workspace';
+    try {
+      const { loadWorkspaceModules, mergeWorkspaceModules } = workspaceModuleLoader;
+      const { modules: workspaceMods, errors, overridden } = await loadWorkspaceModules(workspaceRoot);
+
+      if (errors.length > 0) {
+        for (const err of errors) {
+          console.warn(`[modules] ${err}`);
+        }
+      }
+
+      if (overridden.length > 0) {
+        console.log(`[modules] Workspace modules overriding built-ins: ${overridden.join(', ')}`);
+      }
+
+      modules = mergeWorkspaceModules(modules, workspaceMods);
+    } catch (err) {
+      console.warn('[modules] Failed to load workspace modules:', (err as Error).message);
+    }
+  }
+
+  return modules.sort(comparePrimeModules);
+}
+
+/**
+ * Get only built-in Prime modules (no workspace overrides).
+ * Used for fallback and testing.
+ */
+export function listBuiltInPrimeModules(): PrimeModule[] {
+  return [...STATIC_PRIME_MODULES].sort(comparePrimeModules);
 }
 
 export async function listConfiguredPrimeModules(pool: pg.Pool): Promise<PrimeConfiguredModule[]> {
-  const modules = listPrimeModules()
+  const modules = await listPrimeModules()
   const configs = await listPrimeModuleConfigs(pool)
   const configById = new Map(configs.map((config) => [config.module_id, config]))
 
@@ -353,8 +399,11 @@ export function summarizePrimeModules(modules: PrimeModule[]): string {
 export async function runPrimeModules(
   state: PrimeLoopState,
   deps: PrimeModuleDeps,
-  modules = listPrimeModules(),
+  modules?: PrimeModule[],
 ): Promise<void> {
+  if (!modules) {
+    modules = await listPrimeModules();
+  }
   for (const module of modules) {
     const startedAt = new Date().toISOString()
     try {
@@ -415,7 +464,8 @@ function comparePrimeModules(left: PrimeModule, right: PrimeModule): number {
 }
 
 async function ensurePrimeModuleConfigRows(pool: pg.Pool): Promise<void> {
-  for (const module of listPrimeModules()) {
+  const modules = await listPrimeModules();
+  for (const module of modules) {
     await pool.query(
       `INSERT INTO prime_agent_modules (module_id, stage, default_version)
        VALUES ($1, $2, $3)
@@ -481,7 +531,7 @@ function validatePrimeModuleConfig(module: PrimeModule, config: Pick<PrimeModule
 }
 
 function requirePrimeModule(moduleId: string): PrimeModule {
-  const module = listPrimeModules().find((entry) => entry.id === moduleId)
+  const module = listBuiltInPrimeModules().find((entry) => entry.id === moduleId)
   if (!module) {
     throw new Error(`unknown prime module: ${moduleId}`)
   }
