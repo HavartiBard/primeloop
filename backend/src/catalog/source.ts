@@ -7,7 +7,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import * as yaml from 'yaml';
 
-import type { CatalogTemplate, FailureReason } from './types.js';
+import type { CatalogTemplate, FailureReason, PrimeModuleTemplate } from './types.js';
 
 /**
  * Read a local catalog source directory and parse all YAML files.
@@ -140,6 +140,74 @@ export async function readTemplateFile(filePath: string): Promise<{ template: Ca
   );
   
   return { template: resolved, yamlContent: content };
+}
+
+/**
+ * Read Prime module templates from a local directory.
+ */
+export async function readLocalModuleTemplates(
+  modulesPath: string
+): Promise<{ modules: PrimeModuleTemplate[]; errors: FailureReason[] }> {
+  const modules: PrimeModuleTemplate[] = [];
+  const errors: FailureReason[] = [];
+  
+  try {
+    const files = await fs.readdir(modulesPath);
+    
+    for (const file of files) {
+      if (!file.endsWith('.yaml') && !file.endsWith('.yml')) {
+        continue;
+      }
+      
+      const filePath = path.join(modulesPath, file);
+      const content = await fs.readFile(filePath, 'utf-8');
+      
+      try {
+        const parsed = yaml.parse(content);
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+          // Validate required fields
+          const moduleTemplate = parsed as PrimeModuleTemplate;
+          if (!moduleTemplate.templateId) {
+            errors.push({
+              code: 'MISSING_REQUIRED_FIELD',
+              field: file,
+              detail: 'Missing required field: templateId'
+            });
+            continue;
+          }
+          if (!moduleTemplate.manifest?.stage) {
+            errors.push({
+              code: 'MISSING_REQUIRED_FIELD',
+              field: file,
+              detail: 'Missing required field: manifest.stage'
+            });
+            continue;
+          }
+          
+          modules.push(moduleTemplate);
+        } else {
+          errors.push({
+            code: 'INVALID_FIELD_TYPE',
+            field: file,
+            detail: 'YAML root must be an object'
+          });
+        }
+      } catch (err) {
+        errors.push({
+          code: 'INVALID_FIELD_TYPE',
+          field: file,
+          detail: `YAML parse error: ${(err as Error).message}`
+        });
+      }
+    }
+  } catch (err) {
+    errors.push({
+      code: 'UNKNOWN_CAPABILITY_BUNDLE',
+      detail: `Failed to read modules directory: ${(err as Error).message}`
+    });
+  }
+  
+  return { modules, errors };
 }
 
 // Git source reader for Agent Catalog

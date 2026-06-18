@@ -1,0 +1,53 @@
+# Prime Module Template: policy.scope-required
+# This template defines the scope validation policy module
+# Location: catalog/modules/policy.scope-required.yaml
+
+template_id: policy.scope-required
+version: "1.0.0"
+description: Validates that scoped delegate actions have allowed_files
+
+manifest:
+  stage: policy
+  order: 250
+  requires_active: false
+  available_versions:
+    - "1.0.0"
+
+interface:
+  inputs:
+    - decision: PrimeDecision
+      description: The LLM decision to validate
+    - context: PrimeContext
+      description: Prime context with allowed files
+  outputs:
+    - result: PolicyValidationResult
+      description: Pass/fail with error message if blocked
+
+configuration:
+  schema:
+    type: object
+    properties:
+      required_capabilities:
+        type: array
+        items:
+          type: string
+        default:
+          - implementation
+          - code-exploration
+        description: Capabilities that require allowed_files validation
+    additionalProperties: false
+
+testing:
+  required_tests:
+    - name: allows_unscoped_actions
+      description: Verifies non-scoped actions pass
+    - name: blocks_scoped_without_files
+      description: Verifies scoped actions without allowed_files are blocked
+    - name: allows_scoped_with_files
+      description: Verifies scoped actions with allowed_files pass
+
+provenance:
+  author: system
+  created_at: "2026-06-17"
+  source: built-in
+  git_sha: null  # Populated when synced from Git catalog

@@ -146,3 +146,71 @@ export interface AdmissionEvent {
   metadata: Record<string, unknown>;
   createdAt: string;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Prime Module Types (catalog extension)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const PRIME_MODULE_STAGES = [
+  'trigger',
+  'debounce',
+  'context',
+  'decision',
+  'policy',
+  'action',
+  'feedback',
+  'learning',
+  'observer',
+] as const;
+
+export type PrimeModuleStage = typeof PRIME_MODULE_STAGES[number];
+
+export interface PrimeModuleManifest {
+  stage: PrimeModuleStage;
+  order: number;
+  requires_active?: boolean;
+  available_versions?: string[];
+}
+
+export interface PrimeModuleInterface {
+  inputs?: Array<{
+    name: string;
+    type: string;
+    description?: string;
+  }>;
+  outputs?: Array<{
+    name: string;
+    type: string;
+    description?: string;
+  }>;
+}
+
+export interface PrimeModuleTesting {
+  required_tests?: Array<{
+    name: string;
+    description?: string;
+  }>;
+}
+
+export interface PrimeModuleTemplate {
+  templateId: string;
+  version: string;
+  description?: string;
+  manifest: PrimeModuleManifest;
+  interface?: PrimeModuleInterface;
+  configuration?: {
+    schema: Record<string, unknown>;
+  };
+  testing?: PrimeModuleTesting;
+  provenance?: {
+    author?: string;
+    created_at?: string;
+    source?: string;
+    git_sha?: string | null;
+  };
+}
+
+// CatalogTemplate extended with optional module manifest
+export interface CatalogTemplateWithModule extends CatalogTemplate {
+  primeModule?: PrimeModuleTemplate;
+}

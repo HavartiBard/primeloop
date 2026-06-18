@@ -1,0 +1,45 @@
+# Prime Module Template: context.fleet-state
+# This template defines the fleet state context assembly module
+# Location: catalog/modules/context.fleet-state.yaml
+
+template_id: context.fleet-state
+version: "1.0.0"
+description: Assembles Prime context from fleet state and runtime truth
+
+manifest:
+  stage: context
+  order: 100
+  requires_active: true
+  available_versions:
+    - "1.0.0"
+
+interface:
+  inputs:
+    - event: PrimeEvent
+      description: The triggering Prime event
+    - pool: pg.Pool
+      description: Database connection pool
+    - getHarness: (agentId: string) => AgentHarness | undefined
+      description: Function to get agent harness by ID
+  outputs:
+    - context: PrimeContext
+      description: Assembled Prime context with fleet state
+
+configuration:
+  # No configuration options for this module
+  schema: {}
+
+testing:
+  required_tests:
+    - name: assembles_fleet_state
+      description: Verifies context assembly with active agents
+    - name: handles_empty_fleet
+      description: Verifies graceful handling of no agents
+    - name: counts_dispatchable_agents
+      description: Verifies dispatchable agent counting
+
+provenance:
+  author: system
+  created_at: "2026-06-17"
+  source: built-in
+  git_sha: null  # Populated when synced from Git catalog

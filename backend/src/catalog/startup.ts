@@ -17,6 +17,7 @@ const execFile = promisify(execFileCallback);
 const MODULE_DIR = path.dirname(fileURLToPath(import.meta.url));
 const APP_ROOT = path.resolve(MODULE_DIR, '../..');
 const DEFAULT_CATALOG_PATH = path.join(APP_ROOT, 'catalog');
+const DEFAULT_MODULES_PATH = path.join(DEFAULT_CATALOG_PATH, 'modules');
 
 /**
  * Validate catalog source durability at startup.
@@ -278,3 +279,63 @@ export function logCatalogStartup(result: Awaited<ReturnType<typeof validateCata
     console.log('  status: OK');
   }
 }
+
+/**
+ * Discover Prime modules from catalog/modules directory.
+ * Returns module IDs and their configuration.
+ */
+export async function discoverPrimeModulesFromCatalog(): Promise<{
+  modules: Array<{
+    templateId: string;
+    version: string;
+    stage: string;
+    order: number;
+  }>;
+  errors: string[];
+}> {
+  const modules: Array<{
+    templateId: string;
+    version: string;
+    stage: string;
+    order: number;
+  }> = [];
+  const errors: string[] = [];
+  
+  try {
+    await fs.access(DEFAULT_MODULES_PATH);
+  } catch (err) {
+    console.log('[catalog] No modules/ directory found, using built-in modules');
+    return { modules: [], errors: [] };
+  }
+  
+  const { modules: moduleTemplates, errors: parseErrors } = await readLocalModuleTemplates(DEFAULT_MODULES_PATH);
+  
+  if (parseErrors.length > 0) {
+    for (const err of parseErrors) {
+      errors.push(`[${err.field}] ${err.detail}`);
+    }
+  }
+  
+  for (const mod of moduleTemplates) {
+    modules.push({
+      templateId: mod.templateId,
+      version: mod.version,
+      stage: mod.manifest.stage,
+      order: mod.manifest.order,
+    });
+  }
+  
+  if (modules.length > 0) {
+    console.log(`[catalog] Discovered ${modules.length} Prime modules:`);
+    for (const mod of modules.sort((a, b) => a.stage.localeCompare(b.stage))) {
+      console.log(`  - ${mod.templateId}@${mod.version} (${mod.stage}, order=${mod.order})`);
+    }
+  } else if (errors.length === 0) {
+    console.log('[catalog] No Prime modules found in catalog/modules/');
+  }
+  
+  return { modules, errors };
+}
+
+// Re-export for use in startup
+import { readLocalModuleTemplates } from './source.js';
