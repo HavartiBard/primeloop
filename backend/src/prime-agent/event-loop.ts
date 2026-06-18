@@ -4,9 +4,11 @@ import { getAgentByRole } from '../registry.js'
 import { routeInvestigation, recordRoutingOutcome } from '../routing/index.js'
 import { reconcileWorkItemStates as runWorkItemReconciliation } from '../audits.js'
 import { createPrimeSessionSpan, createModuleSpan, recordModuleCompletion, recordDecision, recordBudget, endSpan, recordError, isOTelInitialized } from '../observability/otel.js'
+import { PostgresCheckpointStore } from '../checkpoint-store.js'
 import type { AgentHarness } from '../fleet-executor/harness.js'
 import type { PrimeActionDispatchResult } from './actions.js'
 import type { PrimeContext } from './context.js'
+import { assemblePrimeContext, buildContextSnapshot } from './context.js'
 import type { PrimeEvent } from './events.js'
 import type { LlmRouter, PrimeDecision } from './llm-router.js'
 import { listConfiguredPrimeModules, runPrimeModules, runShadowPrimeModules } from './modules/registry.js'
@@ -38,7 +40,7 @@ export interface PrimeEventHandleResult {
 
 const STALE_DUPLICATE_MESSAGE_SESSION_MS = 5 * 60 * 1000
 
-// Per-session AbortControllers — lets the abort API cancel in-flight LLM calls.
+// Per-session AbortControllers - lets the abort API cancel in-flight LLM calls.
 const _sessionAbortControllers = new Map<string, AbortController>()
 
 export function abortPrimeSession(sessionId: string): boolean {
@@ -46,6 +48,61 @@ export function abortPrimeSession(sessionId: string): boolean {
   if (!controller) return false
   controller.abort()
   return true
+}
+
+/**
+ * Handle checkpoint continuation replay for approval resolution.
+ * Returns a handlePrimeEventHandleResult if continuation was successfully replayed,
+ * or null if full LLM cycle should run.
+ */
+async function handleContinuationReplay(
+  pool: pg.Pool,
+  checkpointStore: PostgresCheckpointStore,
+  event: PrimeEvent,
+  deps: PrimeEventLoopDeps
+): Promise<PrimeEventHandleResult | null> {
+  // Only handle goal.created events (approval resolution)
+  if (event.type !== 'goal.created') return null
+
+  const continuation = await checkpointStore.loadContinuation(event.payload.thread_id as string)
+  if (!continuation) return null // No continuation to replay
+
+  // Load fresh context and compare
+  const freshContext = await assemblePrimeContext({ pool, getHarness: deps.getHarness }, event)
+  const freshSnapshot = buildContextSnapshot(freshContext)
+
+  if (checkpointStore.contextChanged(continuation, freshSnapshot)) {
+    // Context changed - discard continuation and run full LLM cycle
+    await checkpointStore.discardContinuation(continuation.id)
+    return null
+  }
+
+  // Context unchanged - replay decision from continuation
+  const decision = continuation.continuation.decision as PrimeDecision
+  await checkpointStore.markResumed(continuation.id)
+
+  // Create a minimal session record for tracking
+  const session = await startPrimeSession(pool, {
+    trigger_type: 'event',
+    trigger_payload: event.payload,
+    workspace_root: '',
+    workspace_revision: '',
+    prompt_templates: {},
+  })
+  await updateLastStep(pool, session.id, 'deciding')
+  await completePrimeSession(pool, session.id, {
+    reasoning_summary: 'Replayed decision from continuation (context unchanged).',
+    actions_taken: decision.actions,
+    token_count: 0,
+    provider_used: null,
+    model_used: null,
+  })
+
+  return {
+    session,
+    decision,
+    actions: [], // Actions will be dispatched separately
+  }
 }
 
 async function updateLastStep(pool: pg.Pool, sessionId: string, step: string): Promise<void> {
@@ -94,12 +151,12 @@ async function isCronQuiescent(pool: pg.Pool): Promise<boolean> {
        )`
   )
   if (parseInt(uncoveredCount.n, 10) > 0) {
-    // At least one item has no in-flight delegation — prime may need to act.
+    // At least one item has no in-flight delegation - prime may need to act.
     return false
   }
 
   // 3. All items are covered. Only wake if a delegation event arrived since the
-  //    last completed cron_fast session — otherwise there is nothing new to react to.
+  //    last completed cron_fast session - otherwise there is nothing new to react to.
   const { rows: [lastSession] } = await pool.query<{ completed_at: string | null }>(
     `SELECT completed_at
      FROM prime_agent_sessions
@@ -132,7 +189,7 @@ export async function handlePrimeEvent(
   // Create root span for Prime session if OTel is initialized
   let sessionSpan: any = null
   let moduleSpans: Map<string, any> = new Map()
-  
+
   if (isOTelInitialized()) {
     const triggerType = mapTriggerType(event)
     sessionSpan = createPrimeSessionSpan(
@@ -141,12 +198,22 @@ export async function handlePrimeEvent(
       triggerType
     )
   }
-  
+
   // Note: Full work-item state reconciliation moved to scheduled audit/sweeper
   // This lightweight check remains for immediate duplicate handling
   await runWorkItemReconciliation(pool).catch((err) => {
     console.warn('[event-loop] Work item reconciliation failed:', err)
   })
+
+  // Checkpoint / Resume: Handle approval continuation replay
+  const checkpointStore = new PostgresCheckpointStore(pool)
+  const continuationResult = await handleContinuationReplay(pool, checkpointStore, event, deps).catch((err) => {
+    console.warn('[event-loop] Continuation replay failed:', err)
+    return null
+  })
+  if (continuationResult) {
+    return continuationResult
+  }
 
   const duplicate = event.type === 'prime.message'
     ? await reconcilePrimeMessageSession(pool, event.payload.message_id)
@@ -204,13 +271,13 @@ export async function handlePrimeEvent(
   }
 
   const workspace = await loadPrimeWorkspaceTemplates(pool)
-  
+
   // Update session span with workspace info
   if (sessionSpan) {
     sessionSpan.setAttribute('prime.workspace_root', workspace.effectiveRoot)
     sessionSpan.setAttribute('prime.workspace_revision', workspace.revision)
   }
-  
+
   const configuredModules = await listConfiguredPrimeModules(pool)
   const activeModules = configuredModules.filter((entry) => entry.rollout_mode === 'active')
   const shadowModules = configuredModules.filter((entry) => entry.rollout_mode === 'shadow')
@@ -224,12 +291,15 @@ export async function handlePrimeEvent(
       prime_modules: summarizeConfiguredPrimeModules(configuredModules),
     },
   })
-  
+
   // Update session span with real session ID
   if (sessionSpan) {
     sessionSpan.setAttribute('prime.session_id', session.id)
   }
-  
+
+  // Mark assembling_context phase
+  await updateLastStep(pool, session.id, 'assembling_context')
+
   const state: PrimeLoopState = {
     event,
     session,
@@ -248,7 +318,7 @@ export async function handlePrimeEvent(
     ...triggerMetadata,
   })
 
-  // Per-session AbortController — allows the abort API to cancel the LLM call.
+  // Per-session AbortController - allows the abort API to cancel the LLM call.
   const abortController = new AbortController()
   _sessionAbortControllers.set(session.id, abortController)
 
@@ -291,10 +361,16 @@ export async function handlePrimeEvent(
       sessionTimeoutPromise,
     ])
 
+    // Mark deciding phase complete
+    await updateLastStep(pool, session.id, 'deciding')
+
     const context = requireContext(state)
     const decision = requireDecision(state)
     const actions = state.actions
-    
+
+    // Mark dispatching phase
+    await updateLastStep(pool, session.id, 'dispatching')
+
     // Record decision and budget in OTel span
     if (sessionSpan) {
       recordDecision(
@@ -359,7 +435,7 @@ export async function handlePrimeEvent(
     if (sessionSpan) {
       endSpan(sessionSpan, 'ok')
     }
-    
+
     _sessionAbortControllers.delete(session.id)
     await updateLastStep(pool, session.id, 'completed')
     const completed = await completePrimeSession(pool, session.id, {
@@ -416,7 +492,7 @@ export async function handlePrimeEvent(
       recordError(sessionSpan, error instanceof Error ? error : new Error(String(error)))
       endSpan(sessionSpan, 'error')
     }
-    
+
     _sessionAbortControllers.delete(session.id)
     await savePrimeSessionModuleRuns(pool, session.id, state.moduleRuns)
     await updateLastStep(pool, session.id, 'failed')
@@ -547,7 +623,7 @@ async function createSreInvestigationForPrimeFailure(
     }
   }
 
-  // No executable route — mark blocked, record the blocker, and inform user (FR-009, FR-011)
+  // No executable route - mark blocked, record the blocker, and inform user (FR-009, FR-011)
   const blockedReason = outcome.type === 'blocked_runtime_unavailable' ? 'runtime-unavailable' : 'no-investigation-route'
   await updateWorkItem(pool, workItem.id, {
     status: 'blocked',
@@ -684,7 +760,7 @@ async function createSreInvestigationForPrimeBlocker(
     }
   }
 
-  // No executable route — mark blocked, record the blocker, and inform user (FR-009, FR-011)
+  // No executable route - mark blocked, record the blocker, and inform user (FR-009, FR-011)
   const blockedReason = outcome.type === 'blocked_runtime_unavailable' ? 'runtime-unavailable' : 'no-investigation-route'
   await updateWorkItem(pool, workItem.id, {
     status: 'blocked',
@@ -800,7 +876,7 @@ async function runConfiguredModule(
       moduleSpans?.set(configured.module.id, moduleSpan)
     }
   }
-  
+
   try {
     if (mode === 'shadow') {
       await runShadowPrimeModules(
@@ -831,7 +907,7 @@ async function runConfiguredModule(
     }
 
     const latestRun = state.moduleRuns[state.moduleRuns.length - 1]
-    
+
     // Record module completion in OTel span
     if (moduleSpan) {
       recordModuleCompletion(
@@ -841,7 +917,7 @@ async function runConfiguredModule(
       )
       moduleSpans?.delete(configured.module.id)
     }
-    
+
     await emitPrimeEvent(deps, 'prime.turn.step', {
       session_id: state.session.id,
       trigger_type: state.event.type,
@@ -860,7 +936,7 @@ async function runConfiguredModule(
       recordModuleCompletion(moduleSpan, 'failed', error instanceof Error ? error.message : String(error))
       moduleSpans?.delete(configured.module.id)
     }
-    
+
     const message = error instanceof Error ? error.message : String(error)
     await emitPrimeEvent(deps, 'prime.turn.step', {
       session_id: state.session.id,
@@ -985,7 +1061,7 @@ function getTriggerMetadata(event: PrimeEvent): Record<string, unknown> {
 function truncateForTitle(value: string, max = 72): string {
   const normalized = value.replace(/\s+/g, ' ').trim()
   if (normalized.length <= max) return normalized
-  return `${normalized.slice(0, max - 1)}…`
+  return `${normalized.slice(0, max - 1)}...`
 }
 
 function errorSignature(value: string): string {
