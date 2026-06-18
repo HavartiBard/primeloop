@@ -32,6 +32,7 @@ import type {
   AgentWorkspaceStatus,
   AgentWorkspaceFile,
   PrimeMessageResult,
+  PrimeQueueItem,
   CodexAuthStatus,
   CodexDeviceAuthResult,
   CodexDeviceAuthPoll,
@@ -434,6 +435,27 @@ export async function fetchThreads(): Promise<RuntimeThread[]> {
   const res = await fetch(`${API_BASE}/threads`)
   if (!res.ok) throw new Error(`HTTP ${res.status}`)
   return res.json() as Promise<RuntimeThread[]>
+}
+
+export async function fetchPrimeQueueItems(params?: {
+  status?: string
+  event_type?: string
+  limit?: number
+  offset?: number
+}): Promise<PrimeQueueItem[]> {
+  const searchParams = new URLSearchParams()
+  if (params?.status) searchParams.set('status', params.status)
+  if (params?.event_type) searchParams.set('event_type', params.event_type)
+  if (params?.limit) searchParams.set('limit', params.limit.toString())
+  if (params?.offset) searchParams.set('offset', params.offset.toString())
+
+  const url = searchParams.toString()
+    ? `${API_BASE}/prime-agent/queue-items?${searchParams}`
+    : `${API_BASE}/prime-agent/queue-items`
+
+  const res = await fetch(url)
+  if (!res.ok) throw new Error(`HTTP ${res.status}`)
+  return res.json() as Promise<PrimeQueueItem[]>
 }
 
 export async function createThread(data: { title: string; metadata?: Record<string, unknown> }): Promise<RuntimeThread> {

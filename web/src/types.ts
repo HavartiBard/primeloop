@@ -434,6 +434,18 @@ export interface RuntimeOverview {
   recent_events: RuntimeEvent[]
 }
 
+export interface PrimeQueueItem {
+  id: string
+  event_type: string
+  payload: Record<string, unknown>
+  status: 'pending' | 'processing' | 'done' | 'failed'
+  actor_agent_id: string | null
+  attempt: number
+  error: string | null
+  created_at: string
+  updated_at: string
+}
+
 export interface SessionHeader {
   session_id: string
   owner_type: 'delegation' | 'prime_session'

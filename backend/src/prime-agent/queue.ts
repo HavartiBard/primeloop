@@ -1,5 +1,54 @@
 import type { CheckpointStore } from '../checkpoint.js'
 import type { PrimeEvent } from './events.js'
+import type pg from 'pg'
+
+export interface PrimeQueueItem {
+  id: string
+  event_type: string
+  payload: Record<string, unknown>
+  status: 'pending' | 'processing' | 'done' | 'failed'
+  actor_agent_id: string | null
+  attempt: number
+  error: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface ListPrimeQueueItemsOptions {
+  statusFilter?: string
+  eventTypeFilter?: string
+  limit?: number
+  offset?: number
+}
+
+export async function listPrimeQueueItems(
+  pool: pg.Pool,
+  options: ListPrimeQueueItemsOptions = {}
+): Promise<PrimeQueueItem[]> {
+  const { statusFilter, eventTypeFilter, limit = 50, offset = 0 } = options
+
+  let sql = 'SELECT * FROM prime_queue_items WHERE 1=1'
+  const params: unknown[] = []
+  let paramIndex = 1
+
+  if (statusFilter) {
+    params.push(statusFilter)
+    sql += ` AND status = $${paramIndex++}`
+  }
+
+  if (eventTypeFilter) {
+    params.push(eventTypeFilter)
+    sql += ` AND event_type = $${paramIndex++}`
+  }
+
+  sql += ' ORDER BY created_at DESC LIMIT $' + paramIndex++
+  params.push(limit)
+  sql += ' OFFSET $' + paramIndex++
+  params.push(offset)
+
+  const { rows } = await pool.query<PrimeQueueItem>(sql, params)
+  return rows
+}
 
 export interface PrimeQueue {
   enqueue(event: PrimeEvent): Promise<void>

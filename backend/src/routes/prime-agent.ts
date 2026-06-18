@@ -1,5 +1,6 @@
 import { Router } from 'express'
 import type pg from 'pg'
+import { listPrimeQueueItems } from '../prime-agent/queue.js'
 import { getPrimeConfig, updatePrimeConfig } from '../prime-agent/config.js'
 import type { PrimeEvent } from '../prime-agent/events.js'
 import {
@@ -25,6 +26,22 @@ export function createPrimeAgentRouter(
   { pool, queue, onConfigUpdated }: { pool: pg.Pool; queue: PrimeQueue; onConfigUpdated?: () => Promise<void> | void }
 ) {
   const router = Router()
+
+  // Prime Queue listing endpoint
+  router.get('/queue-items', async (req, res) => {
+    const statusFilter = typeof req.query.status === 'string' ? req.query.status : undefined
+    const eventTypeFilter = typeof req.query.event_type === 'string' ? req.query.event_type : undefined
+    const limit = typeof req.query.limit === 'string' ? parseInt(req.query.limit, 10) : 50
+    const offset = typeof req.query.offset === 'string' ? parseInt(req.query.offset, 10) : 0
+
+    try {
+      const items = await listPrimeQueueItems(pool, { statusFilter, eventTypeFilter, limit, offset })
+      res.json(items)
+    } catch (err) {
+      console.error('[prime-queue] Error listing queue items:', err)
+      res.status(500).json({ error: 'Failed to list queue items' })
+    }
+  })
 
   router.get('/config', async (_req, res) => {
     try {

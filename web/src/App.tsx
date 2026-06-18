@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from 'react'
 import { useQuery, QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { ActivitySquare, Bot, BookOpen, CalendarClock, CircuitBoard, Library, MessageSquare, PuzzleIcon, Server, Settings as SettingsIcon, Sliders } from 'lucide-react'
+import { ActivitySquare, Bot, BookOpen, CalendarClock, CircuitBoard, Library, List, MessageSquare, PuzzleIcon, Server, Settings as SettingsIcon, Sliders } from 'lucide-react'
 import { Sidebar } from './components/Sidebar'
 import { FloatingTabbedWindow } from './components/FloatingTabbedWindow'
 import type { NavItem } from './components/Sidebar'
@@ -13,6 +13,7 @@ import { GoalList, GoalDetail } from './pages/goals'
 import { ApprovalQueue } from './pages/approvals/ApprovalQueue'
 import { LearningRecords } from './pages/learning/LearningRecords'
 import { Catalog } from './pages/Catalog'
+import { PrimeQueue } from './pages/PrimeQueue'
 import { LoopPage } from './pages/prime/LoopPage'
 import { useApprovals } from './hooks/useApprovals'
 import { useSetupStatus } from './hooks/useSetupStatus.js'
@@ -40,6 +41,7 @@ const NAV: NavItem[] = [
 const PRIME_NAV: NavItem[] = [
   { label: 'Loop',     icon: <ActivitySquare className={ICON_SM} />, href: '/prime/loop' },
   { label: 'Learning', icon: <BookOpen className={ICON_SM} />,       href: '/learning' },
+  { label: 'Queue',    icon: <List className={ICON_SM} />,           href: '/prime/queue' },
   { label: 'Sessions', icon: <MessageSquare className={ICON_SM} />,  href: '#', disabled: true },
   { label: 'Modules',  icon: <PuzzleIcon className={ICON_SM} />,     href: '#', disabled: true },
   { label: 'Config',   icon: <Sliders className={ICON_SM} />,        href: '/prime/config' },
@@ -438,6 +440,7 @@ function Layout() {
     : page === '/catalog'    ? Catalog
     : page === '/learning'   ? LearningRecords
     : page === '/prime/loop' ? LoopPage
+    : page === '/prime/queue' ? PrimeQueue
     : page === '/schedule'   ? Schedule
     : page === '/governance' ? Governance
     : (page === '/settings' || settingsTab != null) ? () => <Settings defaultTab={settingsTab} />
