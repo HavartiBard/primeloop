@@ -139,17 +139,16 @@ export function createApp(deps: AppDeps): express.Express {
 }
 
 function getAllowedCorsOrigins(): Set<string> {
+  // Support both new (PRIMELOOP_CORS_ORIGINS) and legacy (ACP_CORS_ORIGINS) env vars
   const configured = process.env['PRIMELOOP_CORS_ORIGINS'] ?? process.env['ACP_CORS_ORIGINS']
     ?.split(',')
     .map((value) => value.trim())
     .filter(Boolean)
 
+  // Default to localhost only - no hardcoded LAN IPs
   return new Set(
     configured && configured.length > 0
       ? configured
-      : [
-          'http://192.168.20.60:4176',
-          'http://localhost:4176',
-        ]
+      : ['http://localhost:4176']
   )
 }
