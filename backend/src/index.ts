@@ -4,7 +4,7 @@ import { createPool, runMigrations, seedRegistry } from './db.js'
 import { listAgents, upsertLocalCodexProvider } from './registry.js'
 import { createBroadcaster } from './ws/broadcast.js'
 import { createApp } from './app.js'
-import { validateCatalogStartup, logCatalogStartup } from './catalog/startup.js'
+import { validateCatalogStartup, logCatalogStartup, discoverPrimeModulesFromCatalog } from './catalog/startup.js'
 import { startWorkspaceSyncScheduler } from './workspace/sync.js'
 import { setDelegationRuntimeStarter } from './delegation-runner.js'
 import { createSlackBot, notifyApprovalNeeded } from './slack/bot.js'
@@ -88,6 +88,18 @@ const catalogValidation = await validateCatalogStartup()
 logCatalogStartup(catalogValidation)
 if (catalogValidation.warnings.some(w => w.includes('ephemeral'))) {
   console.warn('[startup] Catalog is using ephemeral storage — data will be lost on container restart')
+}
+
+// Discover Prime modules from catalog templates
+const { modules: moduleTemplates, errors: moduleParseErrors } = await discoverPrimeModulesFromCatalog()
+if (moduleParseErrors.length > 0) {
+  console.warn('[modules] Catalog template parse errors:', moduleParseErrors)
+}
+if (moduleTemplates.length > 0) {
+  console.log(`[modules] Discovered ${moduleTemplates.length} catalog module template(s)`)
+  for (const mod of moduleTemplates) {
+    console.log(`  - ${mod.templateId} (${mod.stage}, order=${mod.order})`)
+  }
 }
 
 // Start workspace Git sync scheduler (if enabled)
