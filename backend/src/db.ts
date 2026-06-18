@@ -572,6 +572,22 @@ CREATE TABLE IF NOT EXISTS prime_agent_module_runs (
 CREATE INDEX IF NOT EXISTS idx_prime_agent_module_runs_session_index
 ON prime_agent_module_runs (session_id, run_index);
 
+CREATE TABLE IF NOT EXISTS prime_agent_module_shadow_comparisons (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  session_id UUID NOT NULL REFERENCES prime_agent_sessions(id) ON DELETE CASCADE,
+  module_id TEXT NOT NULL,
+  stage TEXT NOT NULL CHECK (stage IN ('trigger', 'debounce', 'context', 'decision', 'policy', 'action', 'feedback', 'learning', 'observer')),
+  version TEXT NOT NULL,
+  comparison TEXT NOT NULL CHECK (comparison IN ('identical', 'differing', 'error')),
+  differences JSONB NOT NULL DEFAULT '[]',
+  risk_level TEXT NOT NULL CHECK (risk_level IN ('low', 'medium', 'high')),
+  recommendation TEXT NOT NULL CHECK (recommendation IN ('promote', 'review', 'rollback')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_prime_agent_module_shadow_comparisons_module_created_at
+ON prime_agent_module_shadow_comparisons (module_id, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS prime_queue_items (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   event_type TEXT NOT NULL,

@@ -194,3 +194,117 @@ The module system is **perfectly suited** for catalog integration:
 3. Should catalog templates include test files, or tests live separately?
 4. What's the upgrade path for breaking changes in module interfaces?
 5. Should we support multiple implementations of the same stage (e.g., multiple policy modules)?
+
+---
+
+## Phase C: Module Testing Framework ✅ Complete (2026-06-17)
+
+### What Was Implemented
+
+**Test Runner Utilities** (`backend/tests/prime-agent/modules/module-runner.test.ts`):
+- `createMockEvent()`, `createMockContext()`, `createMockDecision()` - Test fixtures
+- `createMockDeps()` - Mock module dependencies
+- `createMockState()` - Complete mock loop state
+- `runModuleTest()` / `runModuleShadowTest()` - Execute modules in isolation
+- `compareShadowResults()` - Compare shadow vs active results
+- `validateModuleContract()` - Validate module interface compliance
+- `describeModule()` - Test suite helper with automatic contract validation
+
+**Shadow Comparison Utilities** (`backend/src/prime-agent/modules/shadow-comparison.ts`):
+- `runShadowComparison()` - Run module in both modes and compare
+- `compareStates()` - Detect differences in actions, budget, diagnostics
+- `determineRiskLevel()` - Low/medium/high based on difference severity
+- `determineRecommendation()` - Promote/review/rollback decision
+- `storeShadowComparison()` - Persist results to database
+- `getModuleShadowComparisons()` - Retrieve historical comparisons
+- `canPromoteModule()` - Check if module is safe to promote
+
+**Database Schema** (`backend/src/db.ts`):
+- `prime_agent_module_shadow_comparisons` table for audit trail
+- Tracks comparison results, risk levels, recommendations
+- Indexed by module_id and created_at for efficient queries
+
+**Documentation** (`docs/module-testing.md`):
+- Complete testing guide for operators
+- Examples for unit tests, shadow comparisons, integration tests
+- Best practices and troubleshooting
+
+### Testing Workflow
+
+```
+1. Write module implementation (workspace/modules/...)
+2. Validate contract: validateModuleContract(module)
+3. Run unit tests: runModuleTest() with mock state
+4. Run shadow comparisons: runShadowComparison() multiple times
+5. Check promotion readiness: canPromoteModule(pool, id, 5)
+6. If safe, promote to active via API
+7. Monitor ongoing comparisons in production
+```
+
+### Risk Level Examples
+
+| Scenario | Severity | Risk Level | Recommendation |
+|----------|----------|------------|----------------|
+| Diagnostics differ only | info | low | promote |
+| LLM call count differs | warning | medium | review |
+| Action count differs | error | high | rollback |
+| Execution fails | error | high | rollback |
+
+### Example Test
+
+```typescript
+import { describeModule, createMockState } from '../tests/prime-agent/modules/module-runner.js';
+
+describeModule(myModule, () => {
+  it('should execute successfully', async () => {
+    const state = createMockState({ context: createMockContext() });
+    const deps = createMockDeps();
+    
+    const result = await myModule.run(state, deps);
+    
+    expect(result.detail).toBeDefined();
+  });
+});
+```
+
+### Comparison Example
+
+```typescript
+import { runShadowComparison } from '../src/prime-agent/modules/shadow-comparison.js';
+
+const comparison = await runShadowComparison(myModule, initialState, deps);
+
+if (comparison.riskLevel === 'high') {
+  console.warn('High risk differences:', comparison.differences);
+} else if (comparison.recommendation === 'promote') {
+  console.log('Safe to promote module');
+}
+```
+
+---
+
+## Current State Summary
+
+| Phase | Status | Files | Lines |
+|-------|--------|-------|-------|
+| **Phase A: Catalog Discovery** | ✅ Complete | 6 | ~500 |
+| **Phase B: Workspace Loading** | ✅ Complete | 6 | ~750 |
+| **Phase C: Testing Framework** | ✅ Complete | 4 | ~3,500 |
+| **Phase D: Observer Modules** | ❌ Pending | - | - |
+
+### Total Implementation
+
+- **Files Created**: 16 files
+- **Total Lines Added**: ~5,000 lines
+- **Test Coverage**: Unit tests + shadow comparisons + integration tests
+- **Documentation**: Complete usage guides for operators
+
+### Next Steps (Phase D: Observer & Learning Modules)
+
+1. Implement `observer.trace` module (full production version)
+2. Implement `learning.pattern-detect` module
+3. Wire into Arize Phoenix or other OTel backend
+4. Add lesson extraction from module failures
+5. Document observer module contracts
+
+**Estimated Time**: 3-5 hours
