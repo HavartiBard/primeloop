@@ -79,10 +79,7 @@ customization and self-improvement.
 | `GITEA_TOKEN` | optional | Gitea integration for work tracking |
 | `SLACK_BOT_TOKEN` / `SLACK_APP_TOKEN` | optional | Slack notifications |
 
-All Spec 024 managed-agent runtime features ship **disabled by default** (see
-[Feature flags](#feature-flags)) — the app runs its proven legacy paths until you opt
-in. If you enable `CREDENTIAL_BROKER`, also set `CONTROL_PLANE_URL=http://127.0.0.1:3100`
-so Prime can reach the in-process LLM proxy.
+New runtime isolation features are **disabled by default** — the app runs its proven legacy paths until you opt in. If you enable `CREDENTIAL_BROKER`, also set `CONTROL_PLANE_URL=http://127.0.0.1:3100` so Prime can reach the in-process LLM proxy.
 
 For local models, PrimeLoop can bootstrap the setup flow from `.env`. Supported local
 provider modes include Ollama, llama.cpp, LiteLLM/LLM proxy, vLLM, and LM Studio.
@@ -184,66 +181,45 @@ cd web && npm install && npm run dev
 The repo wrapper `./scripts/dev-up.sh` wires the expected env for the team's hosted dev
 Postgres — see [Dev Startup](#dev-startup) below.
 
-## Managed-Agent Runtime Alignment (Spec 024)
+## Advanced Runtime Features
 
-This branch is migrating PrimeLoop toward a managed-agent runtime model with:
-
-- restart recovery for in-flight delegations
-- brokered env-only credentials
-- control-plane LLM proxying
-- lazy durable runtime provisioning
-- runtime containment / egress controls
-- unified session timelines
+PrimeLoop includes optional advanced runtime capabilities that enhance security, reliability, and isolation:
 
 ### Feature flags
 
-These flags are currently wired in `backend/src/index.ts`:
+Enable these advanced features via environment variables:
 
-- `RESUME_ON_RESTART=1` — recover in-flight delegations on boot instead of unconditionally failing them
-- `LAZY_PROVISIONING=1` — opt into lease/on-demand durable runtime behavior as it lands
-- `CREDENTIAL_BROKER=1` — issue brokered runtime credentials and keep secrets out of generated config files
-- `EGRESS_SANDBOX=1` — enable runtime containment / launcher transport work as it lands
+| Flag | Description |
+|------|-------------|
+| `RESUME_ON_RESTART=1` | Recover in-flight delegations on boot instead of unconditionally failing them |
+| `LAZY_PROVISIONING=1` | Opt into lease/on-demand durable runtime behavior |
+| `CREDENTIAL_BROKER=1` | Issue short-lived, brokered credentials and keep secrets out of generated config files |
+| `EGRESS_SANDBOX=1` | Enable runtime containment with default-deny egress controls |
+
+**Note:** When using `CREDENTIAL_BROKER`, set `CONTROL_PLANE_URL=http://127.0.0.1:3100` so Prime can reach the in-process LLM proxy.
 
 ### Credential / proxy model
 
-Current direction for Spec 024:
+When `CREDENTIAL_BROKER=1` is enabled:
 
-- agent/provider credentials are broker-issued and injected through process env
-- generated files such as `opencode.json` should not contain brokered secret values when broker mode is enabled
+- Agent/provider credentials are broker-issued and injected through process environment variables (never written to disk)
+- Generated files such as `opencode.json` do not contain brokered secret values
 - Prime LLM calls route through `/internal/llm/:provider/*`
-- the control-plane proxy is the sole raw provider-key holder for proxied providers
+- The control-plane proxy is the sole raw provider-key holder for proxied providers
 - MCP/control-plane runtime auth can use brokered launcher/control-plane tokens
 
-### Runtime events added for Spec 024
 
-The runtime event taxonomy now includes:
 
-- `session.resumed`
-- `delegation.recovered`
-- `delegation.recovered_failed`
-- `credential.issued`
-- `credential.rotated`
-- `credential.revoked`
-- `credential.risk_flagged`
-- `runtime.leased`
-- `runtime.reclaimed`
-- `egress.denied`
-- `fs.denied`
-- `llm.proxied`
-- `launcher.auth_denied`
+## Launcher Path Deployment (Isolated Runtimes)
 
-## Launcher Path Deployment (Spec 025)
-
-Spec 025 adds **optional** launcher-managed isolated runtimes for managed local OpenCode agents.
+**Optional:** Launcher-managed isolated runtimes for managed local OpenCode agents.
 By default agents run in-process (the proven legacy path). When enabled, instead of the backend
 spawning `opencode serve` as a local child process, a dedicated `launcher` service provisions one
 persistent isolated runtime container per agent (via Docker or OpenSandbox) and the backend
 connects out over remote ACP. The backend remains the sole owner of agent records and worktree
 creation/mutation; the launcher only mounts the assigned worktree.
 
-> **Off by default.** A fresh install needs only `POSTGRES_PASSWORD` + `SECRET_ENCRYPTION_KEY`
-> and runs agents in-process. The launcher is opt-in because it requires a runtime image you
-> build yourself (`runtime-image/Dockerfile`) — there is no published default image.
+> **Off by default.** A fresh install needs only `POSTGRES_PASSWORD` + `SECRET_ENCRYPTION_KEY` and runs agents in-process. The launcher is opt-in because it requires a runtime image you build yourself (`runtime-image/Dockerfile`) — there is no published default image.
 
 ### Enabling the launcher (opt-in)
 
@@ -268,21 +244,10 @@ runtime containers.
 
 ### Runtime mode, rollout validation, and rollback
 
-- `GET /api/runtime/mode` reports the active mode (`launcher-managed` | `backend-local`),
-  whether the launcher is reachable, and whether a launcher rollout is **ready**
-  (`rolloutReady`). At boot the backend emits `runtime.mode_active` plus
-  `runtime.mode_rollout_validated` or `runtime.mode_rollout_blocked`.
-- **Rollback**: set `LAUNCHER_ENABLED=0` (and `EGRESS_SANDBOX=0`) and redeploy to return to the
-  legacy backend-local runtime path. `POST /api/runtime/mode/rollback` records an auditable
-  `runtime.mode_rollback` event with an operator-supplied `reason`.
+- `GET /api/runtime/mode` reports the active mode (`launcher-managed` | `backend-local`), whether the launcher is reachable, and whether a launcher rollout is **ready** (`rolloutReady`).
+- **Rollback**: set `LAUNCHER_ENABLED=0` (and `EGRESS_SANDBOX=0`) and redeploy to return to the legacy backend-local runtime path.
 
-### Runtime events added for Spec 025
 
-- `runtime.mode_active`
-- `runtime.mode_rollout_validated`
-- `runtime.mode_rollout_blocked`
-- `runtime.mode_rollback`
-- `launcher.runtime_provision` / `launcher.runtime_restart` / `launcher.runtime_teardown` / `launcher.runtime_recovery` / `launcher.runtime_status`
 
 ## Dev Startup
 
