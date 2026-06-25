@@ -1,57 +1,9 @@
 # PrimeLoop deployment for Unraid (192.168.20.14)
 # Uses Unraid share paths for persistent volumes
+# Port 3101 used instead of 3100 to avoid conflict with LOKI
 
 services:
-  postgres:
-    image: pgvector/pgvector:pg16
-    environment:
-      POSTGRES_DB: primeloop
-      POSTGRES_USER: primeloop
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?required}
-    volumes:
-      - /mnt/user/appdata/primeloop/postgres:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD", "pg_isready", "-U", "primeloop"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-    restart: unless-stopped
-
   backend:
-    build: .
-    environment:
-      DATABASE_URL: postgresql://primeloop:${POSTGRES_PASSWORD}@postgres:5432/primeloop
-      SECRET_ENCRYPTION_KEY: ${SECRET_ENCRYPTION_KEY:?required}
-      LANGGRAPH_API_URL: ${LANGGRAPH_API_URL:-http://192.168.20.14:8000}
-      RACLETTE_API_URL: ${RACLETTE_API_URL:-http://192.168.20.169:9119}
-      RACLETTE_SESSION_TOKEN: ${RACLETTE_SESSION_TOKEN:-}
-      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:-}
-      SLACK_APP_TOKEN: ${SLACK_APP_TOKEN:-}
-      SLACK_CHANNEL_ID: ${SLACK_CHANNEL_ID:-C0AU0620ATX}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
-      LOCAL_LLM_ENABLED: ${LOCAL_LLM_ENABLED:-1}
-      LOCAL_LLM_TYPE: ${LOCAL_LLM_TYPE:-ollama}
-      LOCAL_LLM_BASE_URL: ${LOCAL_LLM_BASE_URL:-http://192.168.20.14:11434}
-      LOCAL_LLM_HOST: ${LOCAL_LLM_HOST:-}
-      LOCAL_LLM_API_KEY: ${LOCAL_LLM_API_KEY:-}
-      LOCAL_LLM_MODEL: ${LOCAL_LLM_MODEL:-llama3.1:8b-instruct-q4_K_M}
-      LOCAL_LLM_NAME: ${LOCAL_LLM_NAME:-local-ollama}
-      AGENT_REPO_ROOT: ${AGENT_REPO_ROOT:-/workspace/repo}
-      AGENT_WORKTREE_ROOT: ${AGENT_WORKTREE_ROOT:-/workspace/agents}
-      GITEA_TOKEN: ${GITEA_TOKEN:-}
-      # Launcher-managed isolated runtimes - OPT-IN, off by default
-      LAUNCHER_AUTH_SECRET: ${LAUNCHER_AUTH_SECRET:-}
-      LAUNCHER_URL: ${LAUNCHER_URL:-http://launcher:8787}
-      LAUNCHER_ENABLED: ${LAUNCHER_ENABLED:-0}
-      LAUNCHER_ADAPTER: ${LAUNCHER_ADAPTER:-docker}
-      CREDENTIAL_BROKER: ${CREDENTIAL_BROKER:-1}
-      EGRESS_SANDBOX: ${EGRESS_SANDBOX:-1}
-      CONTROL_PLANE_URL: ${CONTROL_PLANE_URL:-http://127.0.0.1:3100}
-      # Catalog Git token for workspace auto-backup
-      CATALOG_GIT_TOKEN: ${CATALOG_GIT_TOKEN:-}
-    # Override port from docker-compose.yml (3100 -> 3101 to avoid conflict with LOKI)
-    ports: []
     ports:
       - "3101:3100"
     volumes:
@@ -59,34 +11,15 @@ services:
       - /mnt/user/appdata/primeloop/postgres:/var/lib/postgresql/data
       - /mnt/user/appdata/primeloop/workspace:/workspace
       - /mnt/user/appdata/primeloop/catalog:/app/backend/catalog:ro
-    depends_on:
-      postgres:
-        condition: service_healthy
-    restart: unless-stopped
 
   # Opt-in: only started with `docker compose --profile launcher up`
   launcher:
-    profiles: ["launcher"]
-    build: .
-    command: ["node", "dist/launcher/index.js"]
-    environment:
-      LAUNCHER_AUTH_SECRET: ${LAUNCHER_AUTH_SECRET:-}
-      LAUNCHER_PORT: ${LAUNCHER_PORT:-8787}
-      LAUNCHER_VERSION: ${LAUNCHER_VERSION:-1.0.0}
-      LAUNCHER_ADAPTER: ${LAUNCHER_ADAPTER:-docker}
-      OPENSANDBOX_URL: ${OPENSANDBOX_URL:-http://opensandbox:8080}
-      OPENSANDBOX_API_KEY: ${OPENSANDBOX_API_KEY:-}
-      OPENSANDBOX_IMAGE_OPENCODE: ${OPENSANDBOX_IMAGE_OPENCODE:-opencode/opencode:latest}
     ports:
       - "8787:8787"
     volumes:
       # Docker adapter needs the host socket to provision sibling runtime containers
       - /var/run/docker.sock:/var/run/docker.sock
       - /mnt/user/appdata/primeloop/workspace:/workspace
-    depends_on:
-      postgres:
-        condition: service_healthy
-    restart: unless-stopped
 
 volumes:
   # Named volumes are not used in Unraid config
