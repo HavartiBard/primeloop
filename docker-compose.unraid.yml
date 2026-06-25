@@ -50,6 +50,8 @@ services:
       CONTROL_PLANE_URL: ${CONTROL_PLANE_URL:-http://127.0.0.1:3100}
       # Catalog Git token for workspace auto-backup
       CATALOG_GIT_TOKEN: ${CATALOG_GIT_TOKEN:-}
+    # Override port from docker-compose.yml (3100 -> 3101 to avoid conflict with LOKI)
+    ports: []
     ports:
       - "3101:3100"
     volumes:
