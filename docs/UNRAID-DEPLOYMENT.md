@@ -159,7 +159,7 @@ docker compose -f docker-compose.yml -f docker-compose.unraid.yml ps
 
 ```bash
 # Test API endpoint
-curl http://192.168.20.14:3100/health
+curl http://192.168.20.14:3101/health
 
 # Expected response: {"status":"ok"}
 ```
@@ -178,7 +178,7 @@ docker compose -f docker-compose.yml -f docker-compose.unraid.yml logs -f postgr
 
 ## First-Time Setup
 
-1. **Access the dashboard**: http://192.168.20.14:3100
+1. **Access the dashboard**: http://192.168.20.14:3101
 2. **Create admin account** on first visit
 3. **Configure local LLM** in the setup flow (Ollama at http://192.168.20.14:11434)
 4. **Test agent creation** with a simple "Hello World" agent
@@ -286,7 +286,7 @@ For better agent performance on Unraid:
 
 After deployment:
 
-1. ✅ Access http://192.168.20.14:3100
+1. ✅ Access http://192.168.20.14:3101
 2. ✅ Complete initial setup wizard
 3. ✅ Configure your first agent
 4. ✅ Set up Gitea integration (optional)

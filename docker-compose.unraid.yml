@@ -51,7 +51,7 @@ services:
       # Catalog Git token for workspace auto-backup
       CATALOG_GIT_TOKEN: ${CATALOG_GIT_TOKEN:-}
     ports:
-      - "3100:3100"
+      - "3101:3100"
     volumes:
       # Unraid share paths for persistent storage
       - /mnt/user/appdata/primeloop/postgres:/var/lib/postgresql/data
