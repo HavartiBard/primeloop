@@ -4,6 +4,7 @@
 
 services:
   backend:
+    ports: null
     ports:
       - "3101:3100"
     volumes:
@@ -14,6 +15,7 @@ services:
 
   # Opt-in: only started with `docker compose --profile launcher up`
   launcher:
+    ports: null
     ports:
       - "8787:8787"
     volumes:
