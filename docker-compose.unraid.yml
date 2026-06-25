@@ -57,4 +57,9 @@ services:
     restart: unless-stopped
 
 volumes:
-  # All data stored in Unraid shares under /mnt/user/appdata/primeloop/
+  primeloop_postgres:
+    driver: local
+  primeloop_workspace:
+    driver: local
+  primeloop_catalog:
+    driver: local
