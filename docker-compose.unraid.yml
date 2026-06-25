@@ -19,7 +19,9 @@ services:
     restart: unless-stopped
 
   backend:
-    image: code.klsll.com/havartibard/primeloop:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
     environment:
       DATABASE_URL: postgresql://primeloop:${POSTGRES_PASSWORD}@postgres:5432/primeloop
       SECRET_ENCRYPTION_KEY: ${SECRET_ENCRYPTION_KEY:?required}
