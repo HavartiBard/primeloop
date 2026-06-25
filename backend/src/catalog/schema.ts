@@ -32,6 +32,7 @@ const OPTIONAL_FIELDS: Record<string, string> = {
   runtimeRequirements: 'object',
   approvalPolicy: 'object',
   routing: 'object',
+  primeModule: 'object', // New: Module template definition
 };
 
 // Nested field types
@@ -52,6 +53,29 @@ const FIELD_TYPES: Record<string, Record<string, string>> = {
   routing: {
     preferredRole: 'string',
     workClass: 'string',
+  },
+  primeModule: {
+    templateId: 'string',
+    version: 'string',
+    description: 'string',
+    manifest: 'object',
+    interface: 'object',
+    configuration: 'object',
+    testing: 'object',
+    dependencies: 'array', // New: Module dependencies
+  },
+  primeModule_manifest: {
+    stage: 'string',
+    order: 'number',
+    requires_active: 'boolean',
+    available_versions: 'array',
+  },
+  primeModule_interface: {
+    inputs: 'array',
+    outputs: 'array',
+  },
+  primeModule_testing: {
+    required_tests: 'array',
   },
 };
 
@@ -144,6 +168,50 @@ export function parseTemplateYaml(yamlContent: string): {
     }
   }
   
+  // Check primeModule
+  if ('primeModule' in parsed && isRecord(parsed.primeModule)) {
+    for (const [field, expectedType] of Object.entries(FIELD_TYPES.primeModule)) {
+      if (field in parsed.primeModule) {
+        if (!isValidType(parsed.primeModule[field], expectedType)) {
+          errors.push({ code: 'INVALID_FIELD_TYPE', field: `primeModule.${field}` });
+        }
+      }
+    }
+    
+    // Validate primeModule.manifest
+    if (isRecord(parsed.primeModule.manifest)) {
+      for (const [field, expectedType] of Object.entries(FIELD_TYPES.primeModule_manifest)) {
+        if (field in parsed.primeModule.manifest) {
+          if (!isValidType(parsed.primeModule.manifest[field], expectedType)) {
+            errors.push({ code: 'INVALID_FIELD_TYPE', field: `primeModule.manifest.${field}` });
+          }
+        }
+      }
+    }
+    
+    // Validate primeModule.interface
+    if (isRecord(parsed.primeModule.interface)) {
+      for (const [field, expectedType] of Object.entries(FIELD_TYPES.primeModule_interface)) {
+        if (field in parsed.primeModule.interface) {
+          if (!isValidType(parsed.primeModule.interface[field], expectedType)) {
+            errors.push({ code: 'INVALID_FIELD_TYPE', field: `primeModule.interface.${field}` });
+          }
+        }
+      }
+    }
+    
+    // Validate primeModule.testing
+    if (isRecord(parsed.primeModule.testing)) {
+      for (const [field, expectedType] of Object.entries(FIELD_TYPES.primeModule_testing)) {
+        if (field in parsed.primeModule.testing) {
+          if (!isValidType(parsed.primeModule.testing[field], expectedType)) {
+            errors.push({ code: 'INVALID_FIELD_TYPE', field: `primeModule.testing.${field}` });
+          }
+        }
+      }
+    }
+  }
+  
   if (errors.length > 0) {
     return { errors };
   }
@@ -178,4 +246,62 @@ function isValidType(value: unknown, expectedType: string): boolean {
     default:
       return false;
   }
+}
+
+/**
+ * Parse a module dependency string (e.g., "context.fleet-state@^1.0.0")
+ * Returns { templateId, versionRange } or null if invalid.
+ */
+export function parseModuleDependency(dep: string): { templateId: string; versionRange: string } | null {
+  const match = dep.match(/^([a-zA-Z0-9._-]+)@(.+)$/);
+  if (!match) return null;
+  return { templateId: match[1], versionRange: match[2] };
+}
+
+/**
+ * Validate a semver version range string.
+ * Supports: ^1.0.0 (caret), ~1.0.0 (tilde), >=1.0.0, <=2.0.0, 1.0.0 (exact)
+ */
+export function isValidVersionRange(range: string): boolean {
+  // Exact version
+  if (/^\d+\.\d+\.\d+$/.test(range)) return true;
+  
+  // Caret range (^1.2.3)
+  if (/^\^\d+\.\d+\.\d+$/.test(range)) return true;
+  
+  // Tilde range (~1.2.3)
+  if (/^~\d+\.\d+\.\d+$/.test(range)) return true;
+  
+  // Comparison operators
+  if (/^(>=|<=|>|<|!=|=)\d+\.\d+\.\d+$/.test(range)) return true;
+  
+  // Range with hyphen (1.0.0 - 2.0.0)
+  if (/^\d+\.\d+\.\d+\s*-\s*\d+\.\d+\.\d+$/.test(range)) return true;
+  
+  // Wildcard versions
+  if (/^(\d+|x)\.(\d+|x)\.(\d+|x)$/.test(range)) return true;
+  if (/^\d+\.x$/.test(range)) return true;
+  if (/^\d+$/.test(range)) return true;
+  
+  return false;
+}
+
+/**
+ * Parse module dependencies from YAML array.
+ */
+export function parseModuleDependencies(
+  deps: unknown,
+): { templateId: string; versionRange: string }[] {
+  if (!Array.isArray(deps)) return [];
+  
+  const result: { templateId: string; versionRange: string }[] = [];
+  for (const dep of deps) {
+    if (typeof dep === 'string') {
+      const parsed = parseModuleDependency(dep);
+      if (parsed && isValidVersionRange(parsed.versionRange)) {
+        result.push(parsed);
+      }
+    }
+  }
+  return result;
 }

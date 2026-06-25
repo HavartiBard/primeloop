@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import type pg from 'pg'
-import { appendThreadMessage, type Delegation } from '../runtime.js'
+import { appendThreadMessage, insertRuntimeEvent, type Delegation } from '../runtime.js'
 import type { PrimeQueue } from '../prime-agent/queue.js'
 import type { AgentState } from '../registry.js'
 import { loadWorkspaceTemplate, renderTemplate } from '../workspace.js'
@@ -66,6 +66,51 @@ export class FleetDispatcher {
     if (claimed.length === 0) return
 
     const agentId = delegation.to_agent_id
+    const templateId = typeof delegation.request['template_id'] === 'string'
+      ? delegation.request['template_id'] as string
+      : undefined
+
+    if (!agentId && templateId) {
+      try {
+        const spawnResult = await spawnEphemeralAgent(this.pool, templateId, {
+          delegationId: delegation.id,
+          workItemId: delegation.work_item_id ?? undefined,
+          taskScope: delegation.request['task_scope'] as Record<string, unknown> | undefined,
+        })
+
+        await this.pool.query(
+          `UPDATE delegations SET to_agent_id = $1 WHERE id = $2`,
+          [spawnResult.agent.id, delegation.id],
+        )
+
+        await this.pool.query(
+          `UPDATE delegations SET status='queued', updated_at=now() WHERE id=$1`,
+          [delegation.id],
+        )
+
+        await insertRuntimeEvent(this.pool, {
+          event_type: 'delegation.spawned',
+          actor: 'fleet-dispatcher',
+          work_item_id: delegation.work_item_id,
+          delegation_id: delegation.id,
+          payload: {
+            template_id: templateId,
+            spawned_agent_id: spawnResult.agent.id,
+            spawned_agent_name: spawnResult.agent.name,
+          },
+        })
+
+        return
+      } catch (err) {
+        await routeResult(
+          { pool: this.pool, primeQueue: this.primeQueue },
+          delegation,
+          { success: false, error: `failed to spawn ephemeral agent: ${(err as Error).message}` },
+        )
+        return
+      }
+    }
+
     if (!agentId) {
       await routeResult(
         { pool: this.pool, primeQueue: this.primeQueue },
@@ -82,10 +127,6 @@ export class FleetDispatcher {
 
     // If no harness exists, check if this is an ephemeral template spawn request
     if (!harness) {
-      const templateId = typeof delegation.request['template_id'] === 'string'
-        ? delegation.request['template_id'] as string
-        : undefined
-
       if (templateId) {
         try {
           // Spawn ephemeral agent from template

@@ -365,3 +365,313 @@ export function createCatalogStore(pool: pg.Pool): Store {
     },
   };
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Prime Agent Module Version Store
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface ModuleTemplateVersionInput {
+  templatePk: string;
+  version: string;
+  admissionState: string;
+  manifest: Record<string, unknown>;
+  interface?: Record<string, unknown> | null;
+  configurationSchema?: Record<string, unknown> | null;
+  dependencies: ModuleDependency[];
+  testing?: Record<string, unknown> | null;
+  provenance?: Record<string, unknown> | null;
+  contentHash: string;
+  sourceId?: string;
+  commitSha?: string;
+  sourcePath?: string;
+  sourceRef?: string;
+  failureReasons: FailureReason[];
+}
+
+export interface ModuleDependency {
+  templateId: string;
+  versionRange: string;
+}
+
+export function createModuleStore(pool: pg.Pool): ModuleStore {
+  return {
+    async createModuleTemplate(templateId: string, name: string): Promise<string> {
+      const { rows } = await pool.query(
+        `INSERT INTO prime_agent_module_templates (template_id, name)
+         VALUES ($1, $2)
+         ON CONFLICT (template_id) DO UPDATE SET
+           name = EXCLUDED.name,
+           updated_at = now()
+         RETURNING id`,
+        [templateId, name]
+      );
+      return rows[0].id;
+    },
+    
+    async getModuleTemplateByTemplateId(templateId: string): Promise<ModuleTemplate | null> {
+      const { rows } = await pool.query(
+        `SELECT id, template_id, name, current_version_id, lifecycle_state, created_at, updated_at
+         FROM prime_agent_module_templates WHERE template_id = $1`,
+        [templateId]
+      );
+      return rows[0] ? mapModuleTemplateRow(rows[0]) : null;
+    },
+    
+    async updateModuleCurrentVersion(templateId: string, versionId: string): Promise<void> {
+      await pool.query(
+        `UPDATE prime_agent_module_templates SET current_version_id = $1, updated_at = now()
+         WHERE template_id = $2`,
+        [versionId, templateId]
+      );
+    },
+    
+    async createModuleVersion(version: ModuleTemplateVersionInput): Promise<string> {
+      const { rows } = await pool.query(
+        `INSERT INTO prime_agent_module_versions (
+          template_pk, version, admission_state, manifest, interface, configuration_schema,
+          dependencies, testing, provenance, content_hash,
+          source_id, commit_sha, source_path, source_ref, failure_reasons
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+         ON CONFLICT (template_pk, version) DO UPDATE SET
+           admission_state = EXCLUDED.admission_state,
+           manifest = EXCLUDED.manifest,
+           interface = EXCLUDED.interface,
+           configuration_schema = EXCLUDED.configuration_schema,
+           dependencies = EXCLUDED.dependencies,
+           testing = EXCLUDED.testing,
+           provenance = EXCLUDED.provenance,
+           content_hash = EXCLUDED.content_hash,
+           source_id = EXCLUDED.source_id,
+           commit_sha = EXCLUDED.commit_sha,
+           source_path = EXCLUDED.source_path,
+           source_ref = EXCLUDED.source_ref,
+           failure_reasons = EXCLUDED.failure_reasons,
+           updated_at = now()
+         RETURNING id`,
+        [
+          version.templatePk,
+          version.version,
+          version.admissionState,
+          JSON.stringify(version.manifest),
+          version.interface ? JSON.stringify(version.interface) : null,
+          version.configurationSchema ? JSON.stringify(version.configurationSchema) : null,
+          JSON.stringify(version.dependencies.map(d => ({ templateId: d.templateId, versionRange: d.versionRange }))),
+          version.testing ? JSON.stringify(version.testing) : null,
+          version.provenance ? JSON.stringify(version.provenance) : null,
+          version.contentHash,
+          version.sourceId || null,
+          version.commitSha || null,
+          version.sourcePath || null,
+          version.sourceRef || null,
+          JSON.stringify(version.failureReasons),
+        ]
+      );
+      return rows[0].id;
+    },
+    
+    async getModuleVersionById(id: string): Promise<ModuleVersionSnapshot | null> {
+      const { rows } = await pool.query(
+        `SELECT v.id, t.template_id, v.version, v.admission_state, v.manifest, v.interface,
+                v.configuration_schema, v.dependencies, v.testing, v.provenance,
+                v.content_hash, v.source_id, v.commit_sha, v.source_path, v.source_ref,
+                v.failure_reasons, v.created_at, v.updated_at
+         FROM prime_agent_module_versions v
+         JOIN prime_agent_module_templates t ON t.id = v.template_pk
+         WHERE v.id = $1`,
+        [id]
+      );
+      return rows[0] ? mapModuleVersionRow(rows[0]) : null;
+    },
+    
+    async listModuleVersions(templateId: string): Promise<ModuleVersionSnapshot[]> {
+      const { rows } = await pool.query(
+        `SELECT v.id, t.template_id, v.version, v.admission_state, v.manifest, v.interface,
+                v.configuration_schema, v.dependencies, v.testing, v.provenance,
+                v.content_hash, v.source_id, v.commit_sha, v.source_path, v.source_ref,
+                v.failure_reasons, v.created_at, v.updated_at
+         FROM prime_agent_module_versions v
+         JOIN prime_agent_module_templates t ON t.id = v.template_pk
+         WHERE t.template_id = $1
+         ORDER BY v.created_at DESC`,
+        [templateId]
+      );
+      return (rows as any[]).map(mapModuleVersionRow);
+    },
+    
+    async getLatestRegisteredModuleVersion(templateId: string): Promise<ModuleVersionSnapshot | null> {
+      const { rows } = await pool.query(
+        `SELECT v.id, t.template_id, v.version, v.admission_state, v.manifest, v.interface,
+                v.configuration_schema, v.dependencies, v.testing, v.provenance,
+                v.content_hash, v.source_id, v.commit_sha, v.source_path, v.source_ref,
+                v.failure_reasons, v.created_at, v.updated_at
+         FROM prime_agent_module_versions v
+         JOIN prime_agent_module_templates t ON t.id = v.template_pk
+         WHERE t.template_id = $1 AND v.admission_state = 'registered'
+         ORDER BY v.created_at DESC LIMIT 1`,
+        [templateId]
+      );
+      return rows[0] ? mapModuleVersionRow(rows[0]) : null;
+    },
+    
+    async recordModuleDependency(
+      moduleVersionId: string,
+      dependencyTemplateId: string,
+      requiredVersionRange: string
+    ): Promise<string> {
+      const { rows } = await pool.query(
+        `INSERT INTO prime_agent_module_dependencies (
+          module_version_id, dependency_template_id, required_version_range
+        ) VALUES ($1, $2, $3)
+         ON CONFLICT (module_version_id, dependency_template_id) DO UPDATE SET
+           required_version_range = EXCLUDED.required_version_range,
+           resolved_version = NULL,
+           satisfied = false,
+           updated_at = now()
+         RETURNING id`,
+        [moduleVersionId, dependencyTemplateId, requiredVersionRange]
+      );
+      return rows[0].id;
+    },
+    
+    async updateModuleDependencySatisfied(
+      moduleVersionId: string,
+      dependencyTemplateId: string,
+      satisfied: boolean,
+      resolvedVersion?: string
+    ): Promise<void> {
+      await pool.query(
+        `UPDATE prime_agent_module_dependencies SET
+           satisfied = $1,
+           resolved_version = $2,
+           updated_at = now()
+         WHERE module_version_id = $3 AND dependency_template_id = $4`,
+        [satisfied, resolvedVersion || null, moduleVersionId, dependencyTemplateId]
+      );
+    },
+    
+    async pinModuleVersion(moduleVersionId: string, actor: string, reason?: string): Promise<string> {
+      const { rows } = await pool.query(
+        `INSERT INTO prime_agent_module_pins (module_version_id, actor, reason)
+         VALUES ($1, $2, $3)
+         RETURNING id`,
+        [moduleVersionId, actor, reason || null]
+      );
+      return rows[0].id;
+    },
+    
+    async rollbackModuleVersion(
+      moduleTemplateId: string,
+      fromVersionId: string,
+      toVersionId: string,
+      actor: string,
+      reason?: string
+    ): Promise<string> {
+      const { rows } = await pool.query(
+        `INSERT INTO prime_agent_module_rollback_history (
+          module_template_id, from_version_id, to_version_id, actor, reason
+        ) VALUES ($1, $2, $3, $4, $5)
+         RETURNING id`,
+        [moduleTemplateId, fromVersionId, toVersionId, actor, reason || null]
+      );
+      return rows[0].id;
+    },
+  };
+}
+
+function mapModuleTemplateRow(row: any): ModuleTemplate {
+  return {
+    id: row.id,
+    templateId: row.template_id,
+    name: row.name,
+    currentVersionId: row.current_version_id || undefined,
+    lifecycleState: row.lifecycle_state as 'available' | 'deprecated',
+    createdAt: row.created_at.toISOString(),
+    updatedAt: row.updated_at.toISOString(),
+  };
+}
+
+function mapModuleVersionRow(row: any): ModuleVersionSnapshot {
+  return {
+    id: row.id,
+    templateId: row.template_id,
+    version: row.version,
+    admissionState: row.admission_state,
+    manifest: JSON.parse(row.manifest),
+    interface: row.interface ? JSON.parse(row.interface) : undefined,
+    configurationSchema: row.configuration_schema ? JSON.parse(row.configuration_schema) : undefined,
+    dependencies: JSON.parse(row.dependencies || '[]'),
+    testing: row.testing ? JSON.parse(row.testing) : undefined,
+    provenance: row.provenance ? JSON.parse(row.provenance) : undefined,
+    contentHash: row.content_hash,
+    sourceId: row.source_id || undefined,
+    commitSha: row.commit_sha || undefined,
+    sourcePath: row.source_path || undefined,
+    sourceRef: row.source_ref || undefined,
+    failureReasons: JSON.parse(row.failure_reasons || '[]'),
+    createdAt: row.created_at.toISOString(),
+    updatedAt: row.updated_at.toISOString(),
+  };
+}
+
+export interface ModuleTemplate {
+  id: string;
+  templateId: string;
+  name: string;
+  currentVersionId?: string;
+  lifecycleState: 'available' | 'deprecated';
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ModuleVersionSnapshot {
+  id: string;
+  templateId: string;
+  version: string;
+  admissionState: string;
+  manifest: Record<string, unknown>;
+  interface?: Record<string, unknown>;
+  configurationSchema?: Record<string, unknown>;
+  dependencies: ModuleDependency[];
+  testing?: Record<string, unknown>;
+  provenance?: Record<string, unknown>;
+  contentHash: string;
+  sourceId?: string;
+  commitSha?: string;
+  sourcePath?: string;
+  sourceRef?: string;
+  failureReasons: FailureReason[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ModuleStore {
+  createModuleTemplate(templateId: string, name: string): Promise<string>;
+  getModuleTemplateByTemplateId(templateId: string): Promise<ModuleTemplate | null>;
+  updateModuleCurrentVersion(templateId: string, versionId: string): Promise<void>;
+  
+  createModuleVersion(version: ModuleTemplateVersionInput): Promise<string>;
+  getModuleVersionById(id: string): Promise<ModuleVersionSnapshot | null>;
+  listModuleVersions(templateId: string): Promise<ModuleVersionSnapshot[]>;
+  getLatestRegisteredModuleVersion(templateId: string): Promise<ModuleVersionSnapshot | null>;
+  
+  recordModuleDependency(
+    moduleVersionId: string,
+    dependencyTemplateId: string,
+    requiredVersionRange: string
+  ): Promise<string>;
+  updateModuleDependencySatisfied(
+    moduleVersionId: string,
+    dependencyTemplateId: string,
+    satisfied: boolean,
+    resolvedVersion?: string
+  ): Promise<void>;
+  
+  pinModuleVersion(moduleVersionId: string, actor: string, reason?: string): Promise<string>;
+  rollbackModuleVersion(
+    moduleTemplateId: string,
+    fromVersionId: string,
+    toVersionId: string,
+    actor: string,
+    reason?: string
+  ): Promise<string>;
+}

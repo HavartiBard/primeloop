@@ -546,7 +546,11 @@ describe('OpenCodeProcessManager', () => {
       if (sql.startsWith('SELECT * FROM agents WHERE id = $1')) {
         return { rows: [{ ...durable, state: 'idle' }] }
       }
-      if (sql === 'SELECT * FROM agents ORDER BY created_at') {
+      if (sql.includes('FROM agents')) {
+        // New query filters out ephemeral agents for process-manager sync
+        if (sql.includes('COALESCE(tier') && sql.includes('<>')) {
+          return { rows: [durable] }  // Only durable agents
+        }
         return { rows: [durable, ephemeral] }
       }
       if (sql.startsWith('SELECT * FROM providers')) {
@@ -609,6 +613,10 @@ describe('OpenCodeProcessManager', () => {
         return { rows: [{ agent_id: durable.id, capability_profile_id: 'profile-1' }] }
       }
       if (sql.startsWith('UPDATE capability_profiles SET')) {
+        return { rows: [], rowCount: 1 }
+      }
+      // bootstrapDurableStaff updates agent persona/soul
+      if (sql.startsWith('UPDATE agents SET persona_file') || sql.startsWith('UPDATE agents SET soul = $2')) {
         return { rows: [], rowCount: 1 }
       }
       throw new Error(`unexpected query: ${sql}`)

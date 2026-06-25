@@ -34,7 +34,7 @@ export type { ToolbarActionComposerProps } from './ToolbarActionComposer'
 // Utility exports
 // ─────────────────────────────────────────────────────────────────────────────
 
-export { ChatDisplayEvent, ContextAttachment, UserAction, DisplayStatus, ChatEventKind } from '../../types'
+export type { ChatDisplayEvent, ContextAttachment, UserAction, DisplayStatus, ChatEventKind } from '../../types'
 export {
   getStatusLabel,
   getStatusColorClass,

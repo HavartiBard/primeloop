@@ -398,7 +398,7 @@ export async function updateWorkItem(
   data: Partial<WorkItem>
 ): Promise<WorkItem | null> {
   const fields: Array<[keyof WorkItem, string, (value: unknown) => unknown]> = [
-    ['title', 'title', (value) => value],
+    ['title', 'title', (value) => normalizeWorkItemTitle(value)],
     ['description', 'description', (value) => value],
     ['status', 'status', (value) => value],
     ['priority', 'priority', (value) => value],
@@ -415,10 +415,11 @@ export async function updateWorkItem(
   const sets: string[] = []
 
   for (const [key, col, encode] of fields) {
-    if (key in data) {
-      vals.push(encode(data[key]))
-      sets.push(`${col} = $${vals.length}`)
-    }
+    if (!(key in data)) continue
+    const value = data[key]
+    if (value === undefined) continue
+    vals.push(encode(value))
+    sets.push(`${col} = $${vals.length}`)
   }
 
   if (sets.length === 0) {

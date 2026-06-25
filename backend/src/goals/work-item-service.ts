@@ -110,6 +110,20 @@ function validateSelfDependency(workItemId: string, dependsOn: string[] | undefi
   }
 }
 
+function normalizeWorkItemTitle(title: unknown, scope?: string): string {
+  if (typeof title === 'string') {
+    const normalized = title.replace(/\s+/g, ' ').trim();
+    if (normalized) return normalized.length > 160 ? `${normalized.slice(0, 157)}...` : normalized;
+  }
+
+  if (typeof scope === 'string') {
+    const normalized = scope.replace(/\s+/g, ' ').trim();
+    if (normalized) return normalized.length > 160 ? `${normalized.slice(0, 157)}...` : normalized;
+  }
+
+  return 'Untitled work item';
+}
+
 // ─── CRUD operations ──────────────────────────────────────────────
 
 /**
@@ -131,11 +145,11 @@ export async function createWorkItem(
     priority,
     dependsOn,
   } = input;
+  const normalizedTitle = normalizeWorkItemTitle(title, scope);
 
   // Required field validation
   if (!goalId) throw new Error('goal_id is required');
   if (!assignedAgentRole) throw new Error('assigned_agent_role is required');
-  if (!title) throw new Error('title is required');
 
   // Validate assigned_agent_role exists in agent_roles table
   const roleResult = await pool.query(
@@ -169,7 +183,7 @@ export async function createWorkItem(
       parentWorkItemId ?? null,
       assignedAgentRole,
       domain ?? null,
-      title,
+      normalizedTitle,
       scope ?? null,
       status,
       priority ?? null,

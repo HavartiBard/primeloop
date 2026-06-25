@@ -42,8 +42,8 @@ const PRIME_NAV: NavItem[] = [
   { label: 'Loop',     icon: <ActivitySquare className={ICON_SM} />, href: '/prime/loop' },
   { label: 'Learning', icon: <BookOpen className={ICON_SM} />,       href: '/learning' },
   { label: 'Queue',    icon: <List className={ICON_SM} />,           href: '/prime/queue' },
-  { label: 'Sessions', icon: <MessageSquare className={ICON_SM} />,  href: '#', disabled: true },
-  { label: 'Modules',  icon: <PuzzleIcon className={ICON_SM} />,     href: '#', disabled: true },
+  { label: 'Sessions', icon: <MessageSquare className={ICON_SM} />,  href: '/prime/sessions', disabled: true },
+  { label: 'Modules',  icon: <PuzzleIcon className={ICON_SM} />,     href: '/prime/modules', disabled: true },
   { label: 'Config',   icon: <Sliders className={ICON_SM} />,        href: '/prime/config' },
 ]
 

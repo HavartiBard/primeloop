@@ -337,5 +337,141 @@ export async function discoverPrimeModulesFromCatalog(): Promise<{
   return { modules, errors };
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Prime Agent Module Registration (spec 027)
+// ─────────────────────────────────────────────────────────────────────────────
+
+import { createModuleStore, ModuleTemplateVersionInput } from './store.js';
+import type { FailureReason, PrimeModuleManifest } from './types.js';
+import type { ModuleDependency } from './types.js';
+import { parseModuleDependency, isValidVersionRange } from './schema.js';
+
+/**
+ * Register Prime module versions from catalog YAML files.
+ */
+export async function registerPrimeModulesFromCatalog(pool: any): Promise<void> {
+  const store = createModuleStore(pool);
+  
+  const { modules: yamlModules, errors: parseErrors } = await readLocalModuleTemplates(DEFAULT_MODULES_PATH);
+  
+  if (parseErrors.length > 0) {
+    console.warn('[catalog] Module YAML parsing errors:', parseErrors);
+  }
+  
+  for (const mod of yamlModules) {
+    // Create or get template
+    let templateId = mod.templateId;
+    const existingTemplate = await store.getModuleTemplateByTemplateId(mod.templateId);
+    if (!existingTemplate) {
+      templateId = await store.createModuleTemplate(
+        mod.templateId,
+        (mod.manifest as PrimeModuleManifest)?.name ? String((mod.manifest as PrimeModuleManifest)?.name) : mod.templateId
+      );
+    }
+    
+    // Validate dependencies
+    const deps: ModuleDependency[] = Array.isArray(mod.dependencies)
+      ? mod.dependencies
+          .filter(d => typeof d === 'string')
+          .map(d => parseModuleDependency(d))
+          .filter((d): d is ModuleDependency => d !== null)
+      : [];
+    
+    // Validate version ranges
+    for (const dep of deps) {
+      if (!isValidVersionRange(dep.versionRange)) {
+        console.warn(`[catalog] Invalid version range in ${mod.templateId}: ${dep.versionRange}`);
+      }
+    }
+    
+    const contentHash = Buffer.from(JSON.stringify({
+      version: mod.version,
+      manifest: mod.manifest as PrimeModuleManifest,
+      dependencies: deps,
+    }), 'utf8').toString('hex');
+    
+    // Create or update version
+    await store.createModuleVersion({
+      templatePk: templateId,
+      version: mod.version,
+      admissionState: 'discovered',
+      manifest: (mod.manifest as PrimeModuleManifest) || {},
+      interface: (mod as any).interface || null,
+      configurationSchema: (mod as any).configuration_schema || null,
+      dependencies: deps,
+      testing: (mod as any).testing || null,
+      provenance: (mod as any).provenance || null,
+      contentHash,
+      sourceId: undefined,
+      commitSha: undefined,
+      sourcePath: undefined,
+      sourceRef: undefined,
+      failureReasons: parseErrors as FailureReason[],
+    });
+    
+    console.log(`[catalog] Registered module ${mod.templateId}@${mod.version}`);
+  }
+}
+
+/**
+ * Resolve and validate dependencies for a module version.
+ */
+export async function resolveModuleDependencies(
+  store: any,
+  templateId: string,
+  version: string
+): Promise<{ satisfied: boolean; resolved: Map<string, string> }> {
+  const versions = await store.listModuleVersions(templateId);
+  const targetVersion = versions.find((v: any) => v.version === version);
+  
+  if (!targetVersion) {
+    return { satisfied: false, resolved: new Map() };
+  }
+  
+  const resolved = new Map<string, string>();
+  let allSatisfied = true;
+  
+  for (const dep of targetVersion.dependencies) {
+    const depVersions = await store.listModuleVersions(dep.templateId);
+    if (depVersions.length === 0) {
+      allSatisfied = false;
+      continue;
+    }
+    
+    // Find highest satisfying version
+    const satisfying = depVersions.filter((v: any) => {
+      const parsed = parseVersion(v.version);
+      return parsed ? satisfiesVersion(parsed, dep.versionRange) : false;
+    });
+    
+    if (satisfying.length === 0) {
+      allSatisfied = false;
+      continue;
+    }
+    
+    // Find highest satisfying version
+    const highest = findHighestSatisfyingVersion(
+      satisfying.map((v: any) => parseVersion(v.version)!),
+      [{ templateId: dep.templateId, versionRange: dep.versionRange }]
+    );
+    
+    if (highest) {
+      const resolvedVersion = `${highest.major}.${highest.minor}.${highest.patch}`;
+      await store.updateModuleDependencySatisfied(
+        targetVersion.id,
+        dep.templateId,
+        true,
+        resolvedVersion
+      );
+      resolved.set(dep.templateId, resolvedVersion);
+    } else {
+      allSatisfied = false;
+    }
+  }
+  
+  return { satisfied: allSatisfied, resolved };
+}
+
 // Re-export for use in startup
 import { readLocalModuleTemplates } from './source.js';
+import { parseVersion, satisfiesVersion, findHighestSatisfyingVersion } from './types.js';

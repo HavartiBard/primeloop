@@ -226,9 +226,13 @@ export class OpenCodeProcessManager {
       )
     }
 
-    const { rows } = await this.pool.query<RegistryAgent>('SELECT * FROM agents ORDER BY created_at')
+    const { rows } = await this.pool.query<RegistryAgent>(
+      `SELECT *
+       FROM agents
+       WHERE COALESCE(tier, 'durable') <> 'ephemeral'
+       ORDER BY created_at`
+    )
     for (const agent of rows) {
-      if (agent.tier === 'ephemeral') continue
       await this.syncAgent(agent).catch((err: unknown) => {
         console.error(`[process-manager] failed to sync agent ${agent.name} (${agent.id}):`, err)
       })

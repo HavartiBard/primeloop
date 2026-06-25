@@ -441,18 +441,17 @@ export function Agents() {
 
   useEffect(() => {
     if (agents.length === 0) {
-      setSelectedAgentId(null)
-      if (panelMode !== 'create') setPanelMode('empty')
+      if (selectedAgentId !== null) setSelectedAgentId(null)
+      if (panelMode !== 'create' && panelMode !== 'empty') setPanelMode('empty')
       return
     }
-    if (!selectedAgentId) {
-      setSelectedAgentId(agents[0].id)
+
+    const fallbackAgentId = agents[0]?.id ?? null
+    const hasSelectedAgent = selectedAgentId ? agents.some((agent) => agent.id === selectedAgentId) : false
+
+    if (!selectedAgentId || !hasSelectedAgent) {
+      if (fallbackAgentId && selectedAgentId !== fallbackAgentId) setSelectedAgentId(fallbackAgentId)
       if (panelMode === 'empty') setPanelMode('inspect')
-      return
-    }
-    if (!agents.some((agent) => agent.id === selectedAgentId)) {
-      setSelectedAgentId(agents[0].id)
-      if (panelMode !== 'create') setPanelMode('inspect')
     }
   }, [agents, selectedAgentId, panelMode])
 

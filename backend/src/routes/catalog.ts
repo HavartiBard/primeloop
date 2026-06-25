@@ -18,6 +18,10 @@ import { instantiateFromVersion } from '../catalog/instantiate.js';
 import { createRegistrar } from '../catalog/registrar.js';
 import { createCatalogStore } from '../catalog/store.js';
 import { migrateToCatalog } from '../catalog/migrate.js';
+import { createModuleStore } from '../catalog/store.js';
+import type { ModuleTemplate, ModuleVersionSnapshot, ModuleDependency } from '../catalog/store.js';
+import { parseModuleDependency, isValidVersionRange } from '../catalog/schema.js';
+import { compareVersions, findHighestSatisfyingVersion, detectCircularDependencies, parseVersion, satisfiesVersion } from '../catalog/types.js';
 
 /**
  * Resolve a (templateId text, version string) pair to a version row id.
@@ -308,6 +312,334 @@ export function createCatalogRouter(deps: CatalogDeps): Router {
       res.status(200).json(result);
     } catch (err) {
       console.error('[catalog] POST /migrate error:', err);
+      res.status(500).json({ error: 'internal server error' });
+    }
+  });
+
+  // ─────────────────────────────────────────────────────────────────────────────
+  // Prime Agent Module Versioning API (spec 027)
+  // ─────────────────────────────────────────────────────────────────────────────
+
+  // GET /modules - list all module templates with their versions
+  router.get('/modules', async (req, res) => {
+    try {
+      const store = createModuleStore(deps.pool);
+      const { rows } = await deps.pool.query(
+        `SELECT id, template_id, name, current_version_id, lifecycle_state, created_at, updated_at
+         FROM prime_agent_module_templates ORDER BY created_at DESC`,
+      );
+      const templates: ModuleTemplate[] = rows.map((row: any) => ({
+        id: row.id,
+        templateId: row.template_id,
+        name: row.name,
+        currentVersionId: row.current_version_id ?? undefined,
+        lifecycleState: row.lifecycle_state,
+        createdAt: row.created_at instanceof Date ? row.created_at.toISOString() : String(row.created_at),
+        updatedAt: row.updated_at instanceof Date ? row.updated_at.toISOString() : String(row.updated_at),
+      }));
+      
+      // Load versions for each template
+      const result = await Promise.all(
+        templates.map(async (t) => ({
+          ...t,
+          versions: await store.listModuleVersions(t.templateId),
+        }))
+      );
+      res.json({ modules: result });
+    } catch (err) {
+      console.error('[catalog] GET /modules error:', err);
+      res.status(500).json({ error: 'internal server error' });
+    }
+  });
+
+  // GET /modules/:id - get module template with all versions
+  router.get('/modules/:id', async (req, res) => {
+    try {
+      const store = createModuleStore(deps.pool);
+      const { id } = req.params;
+      
+      const template = await store.getModuleTemplateByTemplateId(id);
+      if (!template) {
+        return res.status(404).json({ error: 'module template not found' });
+      }
+      
+      const versions = await store.listModuleVersions(template.templateId);
+      res.json({ module: template, versions });
+    } catch (err) {
+      console.error('[catalog] GET /modules/:id error:', err);
+      res.status(500).json({ error: 'internal server error' });
+    }
+  });
+
+  // POST /modules/:id/versions - register a new module version from YAML
+  router.post('/modules/:id/versions', async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { version, manifest, interface: iface, configuration_schema, dependencies, testing, provenance } = req.body as {
+        version: string;
+        manifest: Record<string, unknown>;
+        interface?: Record<string, unknown>;
+        configuration_schema?: Record<string, unknown>;
+        dependencies?: ModuleDependency[];
+        testing?: Record<string, unknown>;
+        provenance?: Record<string, unknown>;
+      };
+      
+      if (!version || !manifest) {
+        return res.status(400).json({ error: 'version and manifest are required' });
+      }
+      
+      const store = createModuleStore(deps.pool);
+      let templateId = id;
+      
+      // Create or get template
+      const existingTemplate = await store.getModuleTemplateByTemplateId(id);
+      if (!existingTemplate) {
+        templateId = await store.createModuleTemplate(id, typeof manifest.name === 'string' ? manifest.name : id);
+      }
+      
+      // Validate dependencies
+      for (const dep of dependencies || []) {
+        if (!isValidVersionRange(dep.versionRange)) {
+          return res.status(400).json({ error: `Invalid version range: ${dep.versionRange}` });
+        }
+      }
+      
+      const contentHash = Buffer.from(JSON.stringify({ version, manifest, dependencies }), 'utf8').toString('hex');
+      const versionId = await store.createModuleVersion({
+        templatePk: templateId,
+        version,
+        admissionState: 'discovered',
+        manifest,
+        interface: iface || null,
+        configurationSchema: configuration_schema || null,
+        dependencies: dependencies || [],
+        testing: testing || null,
+        provenance: provenance || null,
+        contentHash,
+        sourceId: undefined,
+        commitSha: undefined,
+        sourcePath: undefined,
+        sourceRef: undefined,
+        failureReasons: [],
+      });
+      
+      // Record dependencies
+      for (const dep of dependencies || []) {
+        await store.recordModuleDependency(versionId, dep.templateId, dep.versionRange);
+      }
+      
+      res.status(201).json({ versionId, state: 'discovered' });
+    } catch (err) {
+      console.error('[catalog] POST /modules/:id/versions error:', err);
+      res.status(500).json({ error: 'internal server error' });
+    }
+  });
+
+  // POST /modules/:id/versions/:version/approve - approve a module version
+  router.post('/modules/:id/versions/:version/approve', async (req, res) => {
+    try {
+      const { id, version } = req.params;
+      const store = createModuleStore(deps.pool);
+      
+      const versions = await store.listModuleVersions(id);
+      const targetVersion = versions.find(v => v.version === version);
+      if (!targetVersion) {
+        return res.status(404).json({ error: 'version not found' });
+      }
+      
+      // Resolve dependencies
+      const allVersions = await store.listModuleVersions(id);
+      const moduleMap = new Map<string, { version: any; dependencies: ModuleDependency[] }>();
+      for (const v of allVersions) {
+        moduleMap.set(v.templateId, { version: parseVersion(v.version), dependencies: v.dependencies });
+      }
+      
+      let allSatisfied = true;
+      const resolvedDeps: Array<{ templateId: string; resolvedVersion?: string }> = [];
+      
+      for (const dep of targetVersion.dependencies) {
+        const depVersions = allVersions.filter(v => v.templateId === dep.templateId);
+        if (depVersions.length === 0) {
+          allSatisfied = false;
+          resolvedDeps.push({ templateId: dep.templateId });
+          continue;
+        }
+        
+        const satisfying = depVersions.filter(v => {
+          const parsed = parseVersion(v.version);
+          return parsed ? compareVersions(parsed, parseVersion(version)!) >= 0 && satisfiesVersion(parsed, dep.versionRange) : false;
+        });
+        
+        if (satisfying.length === 0) {
+          allSatisfied = false;
+          resolvedDeps.push({ templateId: dep.templateId });
+          continue;
+        }
+        
+        const highest = findHighestSatisfyingVersion(
+          satisfying.map(v => parseVersion(v.version)!),
+          [{ templateId: dep.templateId, versionRange: dep.versionRange }]
+        );
+        
+        if (highest) {
+          await store.updateModuleDependencySatisfied(targetVersion.id, dep.templateId, true, highest.major + '.' + highest.minor + '.' + highest.patch);
+          resolvedDeps.push({ templateId: dep.templateId, resolvedVersion: highest.major + '.' + highest.minor + '.' + highest.patch });
+        } else {
+          allSatisfied = false;
+        }
+      }
+      
+      // Update admission state
+      await store.createModuleVersion({
+        ...targetVersion,
+        templatePk: targetVersion.id,
+        admissionState: 'registered',
+        failureReasons: [],
+      });
+      
+      res.json({
+        versionId: targetVersion.id,
+        state: 'registered',
+        dependenciesSatisfied: allSatisfied,
+        resolvedDependencies: resolvedDeps,
+      });
+    } catch (err) {
+      console.error('[catalog] POST /modules/:id/versions/:version/approve error:', err);
+      res.status(500).json({ error: 'internal server error' });
+    }
+  });
+
+  // POST /modules/:id/rollback - rollback to a previous version
+  router.post('/modules/:id/rollback', async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { version } = req.body as { version: string };
+      const actor = req.body?.actor || 'operator';
+      const reason = req.body?.reason;
+      
+      if (!version) {
+        return res.status(400).json({ error: 'version is required' });
+      }
+      
+      const store = createModuleStore(deps.pool);
+      const template = await store.getModuleTemplateByTemplateId(id);
+      if (!template) {
+        return res.status(404).json({ error: 'module template not found' });
+      }
+      
+      const versions = await store.listModuleVersions(id);
+      const targetVersion = versions.find(v => v.version === version);
+      if (!targetVersion) {
+        return res.status(404).json({ error: 'target version not found' });
+      }
+      
+      const currentVersionId = template.currentVersionId;
+      if (!currentVersionId) {
+        return res.status(400).json({ error: 'no current version to rollback from' });
+      }
+      
+      // Record rollback
+      await store.rollbackModuleVersion(
+        template.id,
+        currentVersionId,
+        targetVersion.id,
+        actor,
+        reason
+      );
+      
+      // Update current version pointer
+      await store.updateModuleCurrentVersion(id, targetVersion.id);
+      
+      res.json({
+        success: true,
+        fromVersion: versions.find(v => v.id === currentVersionId)?.version,
+        toVersion: version,
+        actor,
+        reason,
+      });
+    } catch (err) {
+      console.error('[catalog] POST /modules/:id/rollback error:', err);
+      res.status(500).json({ error: 'internal server error' });
+    }
+  });
+
+  // POST /modules/:id/pins - pin a module version
+  router.post('/modules/:id/pins', async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { version } = req.body as { version: string };
+      const actor = req.body?.actor || 'operator';
+      const reason = req.body?.reason;
+      
+      if (!version) {
+        return res.status(400).json({ error: 'version is required' });
+      }
+      
+      const store = createModuleStore(deps.pool);
+      const template = await store.getModuleTemplateByTemplateId(id);
+      if (!template) {
+        return res.status(404).json({ error: 'module template not found' });
+      }
+      
+      const versions = await store.listModuleVersions(id);
+      const targetVersion = versions.find(v => v.version === version);
+      if (!targetVersion) {
+        return res.status(404).json({ error: 'version not found' });
+      }
+      
+      const pinId = await store.pinModuleVersion(targetVersion.id, actor, reason);
+      
+      res.status(201).json({
+        pinId,
+        versionId: targetVersion.id,
+        version,
+        actor,
+        reason,
+      });
+    } catch (err) {
+      console.error('[catalog] POST /modules/:id/pins error:', err);
+      res.status(500).json({ error: 'internal server error' });
+    }
+  });
+
+  // GET /modules/:id/versions/:version/dependencies - check dependency satisfaction
+  router.get('/modules/:id/versions/:version/dependencies', async (req, res) => {
+    try {
+      const { id, version } = req.params;
+      const store = createModuleStore(deps.pool);
+      
+      const versions = await store.listModuleVersions(id);
+      const targetVersion = versions.find(v => v.version === version);
+      if (!targetVersion) {
+        return res.status(404).json({ error: 'version not found' });
+      }
+      
+      // Check dependency satisfaction
+      const dependencyStatus = await Promise.all(
+        targetVersion.dependencies.map(async (dep) => {
+          const depVersions = await store.listModuleVersions(dep.templateId);
+          const satisfied = depVersions.some(v => {
+            const parsed = parseVersion(v.version);
+            return parsed ? satisfiesVersion(parsed, dep.versionRange) : false;
+          });
+          
+          return {
+            templateId: dep.templateId,
+            requiredVersionRange: dep.versionRange,
+            satisfied,
+            availableVersions: depVersions.map(v => v.version),
+          };
+        })
+      );
+      
+      res.json({
+        versionId: targetVersion.id,
+        version: targetVersion.version,
+        dependencies: dependencyStatus,
+      });
+    } catch (err) {
+      console.error('[catalog] GET /modules/:id/versions/:version/dependencies error:', err);
       res.status(500).json({ error: 'internal server error' });
     }
   });

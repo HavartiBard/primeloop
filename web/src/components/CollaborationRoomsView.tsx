@@ -811,45 +811,52 @@ export function CollaborationRoomsView({
     refetchInterval: runningPrimeSessions.length > 0 ? 1_000 : 3_000,
   })
 
-  const persistedMessages = rawMessages.length >= 1
-    ? rawMessages.map(msg => ({
-        speaker: msg.sender || msg.role,
-        text: msg.content,
-        at: formatShortTime(msg.created_at),
-        occurredAt: msg.created_at,
-        key: msg.id,
-        sessionId: typeof msg.metadata?.['session_id'] === 'string' ? msg.metadata['session_id'] : undefined,
-        queued: false,
-        failed: false,
+  const persistedMessages = useMemo(() => (
+    rawMessages.length >= 1
+      ? rawMessages.map(msg => ({
+          speaker: msg.sender || msg.role,
+          text: msg.content,
+          at: formatShortTime(msg.created_at),
+          occurredAt: msg.created_at,
+          key: msg.id,
+          sessionId: typeof msg.metadata?.['session_id'] === 'string' ? msg.metadata['session_id'] : undefined,
+          queued: false,
+          failed: false,
+        }))
+      : (selectedRoom?.messages ?? []).map((msg, index) => ({
+          ...msg,
+          occurredAt: `${selectedRoom?.id ?? 'room'}-${index}`,
+          key: `${selectedRoom?.id ?? 'room'}-${index}`,
+          sessionId: undefined,
+          queued: false,
+          failed: false,
+        }))
+  ), [rawMessages, selectedRoom])
+
+  const optimisticMessages = useMemo(() => (
+    queuedMessages
+      .filter((message) => message.roomId === activeRoomId)
+      .filter((message) => !persistedMessages.some((persisted) => {
+        if (persisted.speaker !== message.sender) return false
+        if (persisted.text.trim() !== message.content.trim()) return false
+        return true
       }))
-    : (selectedRoom?.messages ?? []).map((msg, index) => ({
-        ...msg,
-        occurredAt: `${Date.now() + index}`,
-        key: `${selectedRoom?.id ?? 'room'}-${index}`,
+      .map((message) => ({
+        speaker: message.sender,
+        text: message.content,
+        at: formatShortTime(message.queuedAt),
+        occurredAt: message.queuedAt,
+        key: `queued:${message.id}`,
         sessionId: undefined,
-        queued: false,
-        failed: false,
+        queued: true,
+        failed: message.status === 'error',
       }))
+  ), [activeRoomId, persistedMessages, queuedMessages])
 
-  const optimisticMessages = queuedMessages
-    .filter((message) => message.roomId === activeRoomId)
-    .filter((message) => !persistedMessages.some((persisted) => {
-      if (persisted.speaker !== message.sender) return false
-      if (persisted.text.trim() !== message.content.trim()) return false
-      return true
-    }))
-    .map((message) => ({
-      speaker: message.sender,
-      text: message.content,
-      at: formatShortTime(message.queuedAt),
-      occurredAt: message.queuedAt,
-      key: `queued:${message.id}`,
-      sessionId: undefined,
-      queued: true,
-      failed: message.status === 'error',
-    }))
-
-  const displayMessages = [...persistedMessages, ...optimisticMessages].sort((a, b) => a.occurredAt.localeCompare(b.occurredAt))
+  const displayMessages = useMemo(
+    () => [...persistedMessages, ...optimisticMessages].sort((a, b) => a.occurredAt.localeCompare(b.occurredAt)),
+    [optimisticMessages, persistedMessages],
+  )
 
   useEffect(() => {
     lastMessageCountRef.current = 0
@@ -858,13 +865,16 @@ export function CollaborationRoomsView({
   }, [activeRoomId])
 
   useEffect(() => {
-    setQueuedMessages((current) => current.filter((message) => {
-      if (message.roomId !== activeRoomId) return true
-      return !persistedMessages.some((persisted) => (
-        persisted.speaker === message.sender
-        && persisted.text.trim() === message.content.trim()
-      ))
-    }))
+    setQueuedMessages((current) => {
+      const next = current.filter((message) => {
+        if (message.roomId !== activeRoomId) return true
+        return !persistedMessages.some((persisted) => (
+          persisted.speaker === message.sender
+          && persisted.text.trim() === message.content.trim()
+        ))
+      })
+      return next.length === current.length ? current : next
+    })
   }, [activeRoomId, persistedMessages])
 
   useEffect(() => {

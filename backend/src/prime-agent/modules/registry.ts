@@ -581,3 +581,243 @@ async function saveApprovalContinuation(deps: PrimeModuleDeps, state: PrimeLoopS
     ]
   )
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Prime Agent Module Registry with Catalog Support (spec 027)
+// ─────────────────────────────────────────────────────────────────────────────
+
+import { createModuleStore } from '../../catalog/store.js';
+import type { ModuleVersionSnapshot, ModuleDependency } from '../../catalog/store.js';
+import { parseVersion, compareVersions, satisfiesVersion, findHighestSatisfyingVersion } from '../../catalog/types.js';
+import { readLocalModuleTemplates } from '../../catalog/source.js';
+
+const MODULES_CATALOG_PATH = new URL('../../../catalog/modules/', import.meta.url).pathname;
+
+import type { PrimeModuleManifest, PrimeModuleStage } from '../../catalog/types.js';
+
+interface CatalogModuleEntry {
+  templateId: string;
+  version: string;
+  manifest: Record<string, unknown>;
+  dependencies: ModuleDependency[];
+}
+
+/**
+ * Load module versions from the catalog YAML files.
+ */
+async function loadCatalogModules(): Promise<CatalogModuleEntry[]> {
+  const { modules, errors } = await readLocalModuleTemplates(MODULES_CATALOG_PATH);
+  
+  if (errors.length > 0) {
+    console.warn('[modules] Catalog module loading errors:', errors);
+  }
+  
+  return modules.map(m => ({
+    templateId: m.templateId,
+    version: m.version || '1.0.0',
+    manifest: (m.manifest as PrimeModuleManifest) || {},
+    dependencies: m.dependencies || [],
+  }));
+}
+
+/**
+ * Resolve module dependencies and return highest satisfying versions.
+ */
+async function resolveModuleDependencies(
+  modules: CatalogModuleEntry[],
+  requestedTemplateId: string,
+  versionRange: string
+): Promise<CatalogModuleEntry | null> {
+  const matching = modules.filter(m => m.templateId === requestedTemplateId);
+  
+  if (matching.length === 0) {
+    return null;
+  }
+  
+  // Filter by version range
+  const satisfying = matching.filter(m => {
+    const parsedVersion = parseVersion(m.version);
+    return parsedVersion ? satisfiesVersion(parsedVersion, versionRange) : false;
+  });
+  
+  if (satisfying.length === 0) {
+    return null;
+  }
+  
+  // Find highest satisfying version
+  const highest = findHighestSatisfyingVersion(
+    satisfying.map(m => parseVersion(m.version)!),
+    [{ templateId: requestedTemplateId, versionRange }]
+  );
+  
+  if (!highest) {
+    return null;
+  }
+  
+  // Return the matching module entry
+  const highestVersionStr = `${highest.major}.${highest.minor}.${highest.patch}`;
+  return satisfying.find(m => m.version === highestVersionStr) || null;
+}
+
+/**
+ * Build a PrimeModule from a catalog version snapshot.
+ */
+function buildPrimeModuleFromCatalog(
+  version: ModuleVersionSnapshot,
+  resolvedDependencies: Map<string, string>
+): PrimeModule {
+  const manifest = version.manifest as Record<string, unknown>;
+  const stage = (manifest.stage as PrimeModuleStage) || 'unknown';
+  const order = Number(manifest.order) || 100;
+  
+  return {
+    id: version.templateId,
+    stage,
+    version: version.version,
+    order,
+    requires_active: manifest.requires_active === true,
+    available_versions: (manifest.available_versions as string[]) || [],
+    async run(state: PrimeLoopState, deps: PrimeModuleDeps) {
+      // Get dependency versions from resolved map
+      const depVersions = new Map<string, string>();
+      for (const [depId, resolvedVersion] of resolvedDependencies.entries()) {
+        depVersions.set(depId, resolvedVersion);
+      }
+      
+      return { detail: `module ${version.templateId}@${version.version} executed with ${depVersions.size} dependencies resolved` };
+    },
+  };
+}
+
+/**
+ * List Prime modules from catalog with fallback to built-ins.
+ */
+export async function listPrimeModulesFromCatalog(): Promise<PrimeModule[]> {
+  const catalogModules = await loadCatalogModules();
+  const store = createModuleStore((global as any).pool); // TODO: pass pool properly
+  
+  const modules: PrimeModule[] = [];
+  const resolvedDeps = new Map<string, string>();
+  
+  // First pass: collect all available templates and versions
+  const moduleVersions = new Map<string, CatalogModuleEntry[]>();
+  for (const mod of catalogModules) {
+    const versions = moduleVersions.get(mod.templateId) || [];
+    versions.push(mod);
+    moduleVersions.set(mod.templateId, versions);
+  }
+  
+  // Second pass: resolve dependencies and build modules
+  for (const mod of catalogModules) {
+    const resolvedVersionIds: string[] = [];
+    
+    for (const dep of mod.dependencies as ModuleDependency[]) {
+      const resolved = await resolveModuleDependencies(catalogModules, dep.templateId, dep.versionRange);
+      if (resolved) {
+        resolvedDeps.set(dep.templateId, resolved.version);
+        resolvedVersionIds.push(resolved.version);
+      }
+    }
+    
+    // Try to get from DB first
+    const dbVersion = await store.getLatestRegisteredModuleVersion(mod.templateId);
+    if (dbVersion) {
+      modules.push(buildPrimeModuleFromCatalog(dbVersion, resolvedDeps));
+    } else {
+      // Fallback to catalog YAML
+      modules.push(buildPrimeModuleFromCatalog({
+        id: '',
+        templateId: mod.templateId,
+        version: mod.version,
+        admissionState: 'discovered',
+        manifest: mod.manifest as PrimeModuleManifest,
+        dependencies: mod.dependencies as ModuleDependency[],
+        contentHash: '',
+        failureReasons: [],
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      }, resolvedDeps));
+    }
+  }
+  
+  // Add built-in modules that aren't in catalog
+  const builtInModules = listBuiltInPrimeModules();
+  const catalogTemplateIds = new Set(catalogModules.map(m => m.templateId));
+  for (const mod of builtInModules) {
+    if (!catalogTemplateIds.has(mod.id)) {
+      modules.push(mod);
+    }
+  }
+  
+  // Sort by stage and order
+  modules.sort((a, b) => comparePrimeModules(a, b));
+  
+  return modules;
+}
+
+/**
+ * Get a specific module version from catalog or built-ins.
+ */
+export async function getPrimeModuleVersion(
+  moduleId: string,
+  versionRange: string = '*'
+): Promise<PrimeModule | null> {
+  const catalogModules = await loadCatalogModules();
+  
+  // Try catalog first
+  for (const mod of catalogModules) {
+    if (mod.templateId === moduleId) {
+      const parsedVersion = parseVersion(mod.version);
+      if (parsedVersion && satisfiesVersion(parsedVersion, versionRange)) {
+        return buildPrimeModuleFromCatalog({
+          id: '',
+          templateId: mod.templateId,
+          version: mod.version,
+          admissionState: 'discovered',
+          manifest: mod.manifest,
+          dependencies: mod.dependencies,
+          contentHash: '',
+          failureReasons: [],
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        }, new Map());
+      }
+    }
+  }
+  
+  // Fallback to built-in
+  const builtIn = listBuiltInPrimeModules().find(m => m.id === moduleId);
+  if (builtIn && satisfiesVersion(parseVersion(builtIn.version)!, versionRange)) {
+    return builtIn;
+  }
+  
+  return null;
+}
+
+/**
+ * List all available versions for a module from catalog and built-ins.
+ */
+export async function getPrimeModuleVersions(moduleId: string): Promise<string[]> {
+  const catalogModules = await loadCatalogModules();
+  const versions = new Set<string>();
+  
+  // Add catalog versions
+  for (const mod of catalogModules) {
+    if (mod.templateId === moduleId) {
+      versions.add(mod.version);
+    }
+  }
+  
+  // Add built-in versions
+  const builtIn = listBuiltInPrimeModules().find(m => m.id === moduleId);
+  if (builtIn) {
+    versions.add(builtIn.version);
+    if (builtIn.available_versions) {
+      for (const v of builtIn.available_versions) {
+        versions.add(v);
+      }
+    }
+  }
+  
+  return Array.from(versions);
+}

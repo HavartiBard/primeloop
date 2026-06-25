@@ -1165,6 +1165,76 @@ CREATE TABLE IF NOT EXISTS catalog_admission_events (
 -- Add provenance column to agents table
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS catalog_template_version_id UUID NULL REFERENCES catalog_template_versions(id) ON DELETE SET NULL;
 
+-- Prime Agent Module Versioning (spec 027)
+CREATE TABLE IF NOT EXISTS prime_agent_module_templates (
+  id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  template_id         TEXT NOT NULL,
+  name                TEXT NOT NULL,
+  current_version_id  UUID NULL REFERENCES prime_agent_module_versions(id) ON DELETE SET NULL,
+  lifecycle_state     TEXT NOT NULL DEFAULT 'available' CHECK (lifecycle_state IN ('available', 'deprecated')),
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (template_id)
+);
+
+CREATE TABLE IF NOT EXISTS prime_agent_module_versions (
+  id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  template_pk           UUID NOT NULL REFERENCES prime_agent_module_templates(id) ON DELETE CASCADE,
+  version               TEXT NOT NULL,
+  admission_state       TEXT NOT NULL CHECK (admission_state IN ('discovered', 'validated', 'rejected', 'pending_approval', 'registered')),
+  manifest              JSONB NOT NULL,
+  interface             JSONB NULL,
+  configuration_schema  JSONB NULL,
+  dependencies          JSONB NOT NULL DEFAULT '[]',
+  testing               JSONB NULL,
+  provenance            JSONB NULL,
+  content_hash          TEXT NOT NULL,
+  source_id             UUID NULL REFERENCES catalog_sources(id) ON DELETE SET NULL,
+  commit_sha            TEXT NULL,
+  source_path           TEXT NULL,
+  source_ref            TEXT NULL,
+  failure_reasons       JSONB NOT NULL DEFAULT '[]',
+  created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (template_pk, version)
+);
+
+CREATE INDEX IF NOT EXISTS idx_prime_agent_module_versions_admission_state ON prime_agent_module_versions (admission_state);
+CREATE INDEX IF NOT EXISTS idx_prime_agent_module_versions_content_hash ON prime_agent_module_versions (content_hash);
+
+-- Module dependency resolution table for tracking satisfied dependencies
+CREATE TABLE IF NOT EXISTS prime_agent_module_dependencies (
+  id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  module_version_id     UUID NOT NULL REFERENCES prime_agent_module_versions(id) ON DELETE CASCADE,
+  dependency_template_id TEXT NOT NULL,
+  required_version_range TEXT NOT NULL,
+  resolved_version      TEXT NULL,
+  satisfied             BOOLEAN NOT NULL DEFAULT false,
+  created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (module_version_id, dependency_template_id)
+);
+
+-- Module version pinning for operators
+CREATE TABLE IF NOT EXISTS prime_agent_module_pins (
+  id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  module_version_id     UUID NOT NULL REFERENCES prime_agent_module_versions(id) ON DELETE CASCADE,
+  actor                 TEXT NOT NULL,
+  reason                TEXT NULL,
+  created_at            TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Module version rollback history
+CREATE TABLE IF NOT EXISTS prime_agent_module_rollback_history (
+  id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  module_template_id    UUID NOT NULL REFERENCES prime_agent_module_templates(id) ON DELETE CASCADE,
+  from_version_id       UUID NOT NULL REFERENCES prime_agent_module_versions(id) ON DELETE CASCADE,
+  to_version_id         UUID NOT NULL REFERENCES prime_agent_module_versions(id) ON DELETE CASCADE,
+  actor                 TEXT NOT NULL,
+  reason                TEXT NULL,
+  created_at            TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- Seed default local source (idempotent)
 INSERT INTO catalog_sources (kind, name, location, enabled)
 VALUES ('local', 'default-local', 'backend/catalog', true)

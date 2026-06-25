@@ -1,0 +1,580 @@
+# Spec 009: Capability Registry ACP Message Contracts
+
+**Feature Branch**: `009-mcp-registry`  
+**Date**: 2026-06-24  
+**Status**: Draft
+
+---
+
+## Overview
+
+ACP messages for capability registry operations flow through the control plane and are processed by Prime.
+
+---
+
+## Control Plane Messages
+
+### `capability_registry.list_primitives`
+
+List all platform primitives available in the registry.
+
+**Request:**
+```json
+{
+  "type": "capability_registry.list_primitives",
+  "id": "msg-123",
+  "payload": {}
+}
+```
+
+**Response (Success):**
+```json
+{
+  "type": "capability_registry.list_primitives.response",
+  "id": "msg-123",
+  "success": true,
+  "payload": {
+    "primitives": [
+      {
+        "id": "delegate",
+        "display_name": "Delegate To Agent",
+        "description": "Delegate a sub-task to the best available agent for a capability.",
+        "is_prime_only": false,
+        "requires_approval": false,
+        "metadata": {}
+      }
+    ]
+  }
+}
+```
+
+**Response (Error):**
+```json
+{
+  "type": "capability_registry.list_primitives.response",
+  "id": "msg-123",
+  "success": false,
+  "error": {
+    "code": "registry_unavailable",
+    "message": "Capability registry is not available"
+  }
+}
+```
+
+---
+
+### `capability_registry.list_bundles`
+
+List all capability bundles available in the registry.
+
+**Request:**
+```json
+{
+  "type": "capability_registry.list_bundles",
+  "id": "msg-123",
+  "payload": {}
+}
+```
+
+**Response (Success):**
+```json
+{
+  "type": "capability_registry.list_bundles.response",
+  "id": "msg-123",
+  "success": true,
+  "payload": {
+    "bundles": [
+      {
+        "id": "repo.read",
+        "display_name": "Repository Read Access",
+        "description": "Read access to Git repositories",
+        "risk_level": "medium",
+        "metadata": {}
+      }
+    ]
+  }
+}
+```
+
+---
+
+### `capability_registry.list_adapters`
+
+List all provider adapters available in the registry.
+
+**Request:**
+```json
+{
+  "type": "capability_registry.list_adapters",
+  "id": "msg-123",
+  "payload": {}
+}
+```
+
+**Response (Success):**
+```json
+{
+  "type": "capability_registry.list_adapters.response",
+  "id": "msg-123",
+  "success": true,
+  "payload": {
+    "adapters": [
+      {
+        "id": "github-mcp",
+        "display_name": "GitHub MCP Server",
+        "description": "MCP server for GitHub repository operations",
+        "adapter_type": "mcp-http",
+        "requires_credentials": true,
+        "credential_needs": [
+          {
+            "env_name": "GITEA_TOKEN",
+            "scopes": ["repository"]
+          }
+        ],
+        "is_active": true
+      }
+    ]
+  }
+}
+```
+
+---
+
+### `capability_registry.list_profiles`
+
+List all capability profiles available in the registry.
+
+**Request:**
+```json
+{
+  "type": "capability_registry.list_profiles",
+  "id": "msg-123",
+  "payload": {}
+}
+```
+
+**Response (Success):**
+```json
+{
+  "type": "capability_registry.list_profiles.response",
+  "id": "msg-123",
+  "success": true,
+  "payload": {
+    "profiles": [
+      {
+        "id": "prime.default",
+        "display_name": "Prime Default Profile",
+        "description": "Default profile for Prime agent",
+        "is_default_for_durable": false,
+        "is_default_for_ephemeral": true,
+        "metadata": {}
+      }
+    ]
+  }
+}
+```
+
+---
+
+### `capability_registry.get_profile`
+
+Get a specific capability profile by ID.
+
+**Request:**
+```json
+{
+  "type": "capability_registry.get_profile",
+  "id": "msg-123",
+  "payload": {
+    "profile_id": "prime.default"
+  }
+}
+```
+
+**Response (Success):**
+```json
+{
+  "type": "capability_registry.get_profile.response",
+  "id": "msg-123",
+  "success": true,
+  "payload": {
+    "profile": {
+      "id": "prime.default",
+      "display_name": "Prime Default Profile",
+      "description": "Default profile for Prime agent",
+      "is_default_for_durable": false,
+      "is_default_for_ephemeral": true,
+      "metadata": {},
+      "primitives": [
+        {
+          "platform_primitive_id": "delegate",
+          "is_granted": true
+        }
+      ],
+      "bundles": [
+        {
+          "capability_bundle_id": "repo.read",
+          "is_granted": true
+        }
+      ]
+    }
+  }
+}
+```
+
+---
+
+### `capability_registry.resolve_grant`
+
+Resolve the tool grant for an agent based on their profile and current task context.
+
+**Request:**
+```json
+{
+  "type": "capability_registry.resolve_grant",
+  "id": "msg-123",
+  "payload": {
+    "agent_id": "agent-uuid",
+    "delegation_id": "delegation-uuid",
+    "work_item_id": "work-item-uuid",
+    "profile_id": "prime.default",
+    "task_scope": {},
+    "approval_state": "approved"
+  }
+}
+```
+
+**Response (Success):**
+```json
+{
+  "type": "capability_registry.resolve_grant.response",
+  "id": "msg-123",
+  "success": true,
+  "payload": {
+    "grant_id": "grant-uuid",
+    "agent_id": "agent-uuid",
+    "delegation_id": "delegation-uuid",
+    "work_item_id": "work-item-uuid",
+    "profile_id": "prime.default",
+    "task_scope": {},
+    "approval_state": "approved",
+    "granted_primitives": ["delegate", "request_approval"],
+    "granted_bundles": [
+      {
+        "bundle_id": "repo.read",
+        "adapter_id": "github-mcp",
+        "metadata": {}
+      }
+    ],
+    "selected_adapters": [
+      {
+        "adapter_id": "github-mcp",
+        "metadata": {}
+      }
+    ],
+    "excluded_primitives": [],
+    "excluded_bundles": [],
+    "excluded_adapters": [],
+    "grant_metadata": {
+      "resolved_at": "2026-06-24T12:00:00Z",
+      "resolver": "harness"
+    }
+  }
+}
+```
+
+**Response (Error - Profile Not Found):**
+```json
+{
+  "type": "capability_registry.resolve_grant.response",
+  "id": "msg-123",
+  "success": false,
+  "error": {
+    "code": "profile_not_found",
+    "message": "Profile 'prime.default' not found"
+  }
+}
+```
+
+**Response (Error - Insufficient Credentials):**
+```json
+{
+  "type": "capability_registry.resolve_grant.response",
+  "id": "msg-123",
+  "success": false,
+  "error": {
+    "code": "insufficient_credentials",
+    "message": "Required credentials not available for adapter 'github-mcp'",
+    "missing_credentials": ["GITEA_TOKEN"]
+  }
+}
+```
+
+---
+
+### `capability_registry.get_grant`
+
+Get a specific resolved tool grant by ID.
+
+**Request:**
+```json
+{
+  "type": "capability_registry.get_grant",
+  "id": "msg-123",
+  "payload": {
+    "grant_id": "grant-uuid"
+  }
+}
+```
+
+**Response (Success):**
+```json
+{
+  "type": "capability_registry.get_grant.response",
+  "id": "msg-123",
+  "success": true,
+  "payload": {
+    "grant": {
+      "id": "grant-uuid",
+      "agent_id": "agent-uuid",
+      "delegation_id": "delegation-uuid",
+      "work_item_id": "work-item-uuid",
+      "profile_id": "prime.default",
+      "task_scope": {},
+      "approval_state": "approved",
+      "granted_primitives": ["delegate", "request_approval"],
+      "granted_bundles": [
+        {
+          "bundle_id": "repo.read",
+          "adapter_id": "github-mcp",
+          "metadata": {}
+        }
+      ],
+      "selected_adapters": [
+        {
+          "adapter_id": "github-mcp",
+          "metadata": {}
+        }
+      ],
+      "grant_metadata": {
+        "resolved_at": "2026-06-24T12:00:00Z",
+        "resolver": "harness"
+      },
+      "created_at": "2026-06-24T12:00:00Z"
+    }
+  }
+}
+```
+
+---
+
+### `capability_registry.list_agent_grants`
+
+List all resolved tool grants for an agent.
+
+**Request:**
+```json
+{
+  "type": "capability_registry.list_agent_grants",
+  "id": "msg-123",
+  "payload": {
+    "agent_id": "agent-uuid"
+  }
+}
+```
+
+**Response (Success):**
+```json
+{
+  "type": "capability_registry.list_agent_grants.response",
+  "id": "msg-123",
+  "success": true,
+  "payload": {
+    "grants": [
+      {
+        "id": "grant-uuid-1",
+        "delegation_id": "delegation-uuid-1",
+        "work_item_id": "work-item-uuid-1",
+        "profile_id": "prime.default",
+        "approval_state": "approved",
+        "granted_primitives": ["delegate"],
+        "granted_bundles": [
+          {
+            "bundle_id": "repo.read",
+            "adapter_id": "github-mcp"
+          }
+        ],
+        "grant_metadata": {
+          "resolved_at": "2026-06-24T11:00:00Z"
+        },
+        "created_at": "2026-06-24T11:00:00Z"
+      },
+      {
+        "id": "grant-uuid-2",
+        "delegation_id": "delegation-uuid-2",
+        "work_item_id": "work-item-uuid-2",
+        "profile_id": "prime.default",
+        "approval_state": "pending",
+        "granted_primitives": ["delegate"],
+        "granted_bundles": [
+          {
+            "bundle_id": "repo.read",
+            "adapter_id": "github-mcp"
+          }
+        ],
+        "grant_metadata": {
+          "resolved_at": "2026-06-24T12:00:00Z"
+        },
+        "created_at": "2026-06-24T12:00:00Z"
+      }
+    ]
+  }
+}
+```
+
+---
+
+### `capability_registry.list_adapter_health`
+
+List health status for all provider adapters.
+
+**Request:**
+```json
+{
+  "type": "capability_registry.list_adapter_health",
+  "id": "msg-123",
+  "payload": {}
+}
+```
+
+**Response (Success):**
+```json
+{
+  "type": "capability_registry.list_adapter_health.response",
+  "id": "msg-123",
+  "success": true,
+  "payload": {
+    "health_records": [
+      {
+        "provider_adapter_id": "github-mcp",
+        "last_check": "2026-06-24T12:00:00Z",
+        "is_healthy": true,
+        "health_error": null,
+        "latency_ms": 45,
+        "metadata": {}
+      },
+      {
+        "provider_adapter_id": "gitlab-cli",
+        "last_check": "2026-06-24T11:55:00Z",
+        "is_healthy": false,
+        "health_error": "Connection refused",
+        "latency_ms": null,
+        "metadata": {}
+      }
+    ]
+  }
+}
+```
+
+---
+
+## Agent Runtime Messages
+
+### `agent.tool_grant`
+
+Sent to agent when their tool grant is resolved.
+
+**Payload:**
+```json
+{
+  "type": "agent.tool_grant",
+  "id": "msg-123",
+  "payload": {
+    "grant_id": "grant-uuid",
+    "granted_primitives": ["delegate", "request_approval"],
+    "granted_bundles": [
+      {
+        "bundle_id": "repo.read",
+        "adapter_id": "github-mcp"
+      }
+    ],
+    "selected_adapters": [
+      {
+        "adapter_id": "github-mcp",
+        "metadata": {}
+      }
+    ]
+  }
+}
+```
+
+---
+
+### `agent.tool_grant_update`
+
+Sent to agent when their tool grant is updated (e.g., approval granted).
+
+**Payload:**
+```json
+{
+  "type": "agent.tool_grant_update",
+  "id": "msg-123",
+  "payload": {
+    "grant_id": "grant-uuid",
+    "granted_primitives": ["delegate", "request_approval"],
+    "granted_bundles": [
+      {
+        "bundle_id": "repo.read",
+        "adapter_id": "github-mcp"
+      }
+    ],
+    "selected_adapters": [
+      {
+        "adapter_id": "github-mcp",
+        "metadata": {}
+      }
+    ]
+  }
+}
+```
+
+---
+
+### `agent.tool_grant_revoke`
+
+Sent to agent when a tool grant is revoked (e.g., adapter unhealthy).
+
+**Payload:**
+```json
+{
+  "type": "agent.tool_grant_revoke",
+  "id": "msg-123",
+  "payload": {
+    "grant_id": "grant-uuid",
+    "revoked_primitives": ["delegate"],
+    "revoked_bundles": [
+      {
+        "bundle_id": "repo.read",
+        "adapter_id": "github-mcp"
+      }
+    ],
+    "reason": "adapter_unhealthy"
+  }
+}
+```
+
+---
+
+## Error Codes
+
+| Code | Description |
+|------|-------------|
+| `registry_unavailable` | Capability registry is not available |
+| `profile_not_found` | Profile not found |
+| `bundle_not_found` | Bundle not found |
+| `adapter_not_found` | Adapter not found |
+| `grant_not_found` | Grant not found |
+| `insufficient_credentials` | Required credentials not available |
+| `approval_required` | Approval required for this capability |
+| `adapter_unhealthy` | Adapter is unhealthy |
+| `invalid_scope` | Requested scope is invalid |

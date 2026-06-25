@@ -2,7 +2,7 @@
 # This template defines the scope validation policy module
 # Location: catalog/modules/policy.scope-required.yaml
 
-template_id: policy.scope-required
+templateId: policy.scope-required
 version: "1.0.0"
 description: Validates that scoped delegate actions have allowed_files
 
@@ -15,12 +15,15 @@ manifest:
 
 interface:
   inputs:
-    - decision: PrimeDecision
+    - name: decision
+      type: PrimeDecision
       description: The LLM decision to validate
-    - context: PrimeContext
+    - name: context
+      type: PrimeContext
       description: Prime context with allowed files
   outputs:
-    - result: PolicyValidationResult
+    - name: result
+      type: PolicyValidationResult
       description: Pass/fail with error message if blocked
 
 configuration:

@@ -165,7 +165,7 @@ export const PRIME_MODULE_STAGES = [
 
 export type PrimeModuleStage = typeof PRIME_MODULE_STAGES[number];
 
-export interface PrimeModuleManifest {
+export interface PrimeModuleManifest extends Record<string, unknown> {
   stage: PrimeModuleStage;
   order: number;
   requires_active?: boolean;
@@ -192,6 +192,11 @@ export interface PrimeModuleTesting {
   }>;
 }
 
+export interface ModuleDependency {
+  templateId: string;
+  versionRange: string; // Semver range (e.g., '^1.0.0', '~1.2.3')
+}
+
 export interface PrimeModuleTemplate {
   templateId: string;
   version: string;
@@ -202,6 +207,7 @@ export interface PrimeModuleTemplate {
     schema: Record<string, unknown>;
   };
   testing?: PrimeModuleTesting;
+  dependencies?: ModuleDependency[]; // New: Module version dependencies
   provenance?: {
     author?: string;
     created_at?: string;
@@ -213,4 +219,210 @@ export interface PrimeModuleTemplate {
 // CatalogTemplate extended with optional module manifest
 export interface CatalogTemplateWithModule extends CatalogTemplate {
   primeModule?: PrimeModuleTemplate;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Semver utilities for version resolution
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Parse a semantic version string into components.
+ */
+export interface VersionParts {
+  major: number;
+  minor: number;
+  patch: number;
+  prerelease?: string;
+}
+
+export function parseVersion(version: string): VersionParts | null {
+  const match = version.match(/^(\d+)\.(\d+)\.(\d+)(?:-([a-zA-Z0-9.]+))?$/);
+  if (!match) return null;
+  return {
+    major: parseInt(match[1], 10),
+    minor: parseInt(match[2], 10),
+    patch: parseInt(match[3], 10),
+    prerelease: match[4],
+  };
+}
+
+/**
+ * Compare two versions. Returns:
+ * - negative if v1 < v2
+ * - zero if v1 === v2
+ * - positive if v1 > v2
+ */
+export function compareVersions(v1: VersionParts, v2: VersionParts): number {
+  // Compare major
+  if (v1.major !== v2.major) return v1.major - v2.major;
+  // Compare minor
+  if (v1.minor !== v2.minor) return v1.minor - v2.minor;
+  // Compare patch
+  if (v1.patch !== v2.patch) return v1.patch - v2.patch;
+  // Prerelease versions are lower than release versions
+  if (v1.prerelease && !v2.prerelease) return -1;
+  if (!v1.prerelease && v2.prerelease) return 1;
+  if (v1.prerelease && v2.prerelease) {
+    // Compare prerelease strings
+    if (v1.prerelease < v2.prerelease) return -1;
+    if (v1.prerelease > v2.prerelease) return 1;
+  }
+  return 0;
+}
+
+/**
+ * Check if a version satisfies a semver range.
+ * Supports: ^1.0.0, ~1.0.0, >=1.0.0, <=2.0.0, exact versions, x-ranges
+ */
+export function satisfiesVersion(version: VersionParts, range: string): boolean {
+  // Exact version match
+  if (/^\d+\.\d+\.\d+$/.test(range)) {
+    const parsed = parseVersion(range);
+    return parsed ? compareVersions(version, parsed) === 0 : false;
+  }
+  
+  // Caret range (^1.2.3): allow changes that do not modify major version
+  if (range.startsWith('^')) {
+    const target = parseVersion(range.slice(1));
+    if (!target) return false;
+    // Version must be >= target
+    if (compareVersions(version, target) < 0) return false;
+    // For major > 0, minor changes are breaking (so only same major)
+    // For major = 0, patch changes are breaking (so only same major.minor)
+    if (target.major > 0) {
+      return version.major === target.major;
+    } else {
+      return version.major === target.major && version.minor === target.minor;
+    }
+  }
+  
+  // Tilde range (~1.2.3): allow patch-level changes
+  if (range.startsWith('~')) {
+    const target = parseVersion(range.slice(1));
+    if (!target) return false;
+    if (compareVersions(version, target) < 0) return false;
+    return version.major === target.major && version.minor === target.minor;
+  }
+  
+  // Comparison operators
+  if (range.startsWith('>=')) {
+    const target = parseVersion(range.slice(2));
+    return target ? compareVersions(version, target) >= 0 : false;
+  }
+  if (range.startsWith('<=')) {
+    const target = parseVersion(range.slice(2));
+    return target ? compareVersions(version, target) <= 0 : false;
+  }
+  if (range.startsWith('>')) {
+    const target = parseVersion(range.slice(1));
+    return target ? compareVersions(version, target) > 0 : false;
+  }
+  if (range.startsWith('<')) {
+    const target = parseVersion(range.slice(1));
+    return target ? compareVersions(version, target) < 0 : false;
+  }
+  if (range.startsWith('!=')) {
+    const target = parseVersion(range.slice(2));
+    return target ? compareVersions(version, target) !== 0 : false;
+  }
+  if (range.startsWith('=')) {
+    const target = parseVersion(range.slice(1));
+    return target ? compareVersions(version, target) === 0 : false;
+  }
+  
+  // x-ranges
+  if (range.includes('x')) {
+    const parts = range.split('.');
+    if (parts.length !== 3) return false;
+    const target: VersionParts = {
+      major: parts[0] === 'x' ? version.major : parseInt(parts[0], 10),
+      minor: parts[1] === 'x' ? version.minor : parseInt(parts[1], 10),
+      patch: parts[2] === 'x' ? version.patch : parseInt(parts[2], 10),
+    };
+    return compareVersions(version, target) === 0;
+  }
+  
+  // Wildcard versions (1.x, 1)
+  if (/^\d+\.x$/.test(range)) {
+    const major = parseInt(range[0], 10);
+    return version.major === major;
+  }
+  if (/^\d+$/.test(range)) {
+    const major = parseInt(range, 10);
+    return version.major === major;
+  }
+  
+  // Range with hyphen (1.0.0 - 2.0.0)
+  if (/^\d+\.\d+\.\d+\s*-\s*\d+\.\d+\.\d+$/.test(range)) {
+    const [min, max] = range.split('-').map(s => parseVersion(s.trim())!);
+    return compareVersions(version, min) >= 0 && compareVersions(version, max) <= 0;
+  }
+  
+  return false;
+}
+
+/**
+ * Find the highest version that satisfies all dependencies.
+ */
+export function findHighestSatisfyingVersion(
+  versions: VersionParts[],
+  dependencies: { templateId: string; versionRange: string }[],
+): VersionParts | null {
+  // For now, we only support a single dependency per module
+  if (dependencies.length === 0) {
+    return versions.reduce((max, v) => compareVersions(v, max!) >= 0 ? v : max, versions[0] || null);
+  }
+  
+  const dep = dependencies[0];
+  const satisfying = versions.filter(v => satisfiesVersion(v, dep.versionRange));
+  if (satisfying.length === 0) return null;
+  
+  return satisfying.reduce((max, v) => compareVersions(v, max!) >= 0 ? v : max, satisfying[0]);
+}
+
+/**
+ * Detect circular dependencies in module dependency graph.
+ */
+export function detectCircularDependencies(
+  modules: Map<string, { templateId: string; version: VersionParts; dependencies: ModuleDependency[] }>,
+): string[] {
+  const visited = new Set<string>();
+  const recursionStack = new Set<string>();
+  const cycles: string[] = [];
+  
+  function dfs(templateId: string, path: string[]): boolean {
+    if (recursionStack.has(templateId)) {
+      const cycleStart = path.indexOf(templateId);
+      cycles.push(path.slice(cycleStart).concat(templateId).join(' -> '));
+      return true;
+    }
+    if (visited.has(templateId)) return false;
+    
+    visited.add(templateId);
+    recursionStack.add(templateId);
+    path.push(templateId);
+    
+    const module = modules.get(templateId);
+    if (module) {
+      for (const dep of module.dependencies) {
+        if (dfs(dep.templateId, path)) {
+          path.pop();
+          recursionStack.delete(templateId);
+          return true;
+        }
+      }
+    }
+    
+    path.pop();
+    recursionStack.delete(templateId);
+    return false;
+  }
+  
+  for (const [templateId] of modules) {
+    if (!visited.has(templateId)) {
+      dfs(templateId, []);
+    }
+  }
+  
+  return cycles;
 }

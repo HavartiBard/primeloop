@@ -1,0 +1,689 @@
+# Spec 009: Capability Registry REST API Contracts
+
+**Feature Branch**: `009-mcp-registry`  
+**Date**: 2026-06-24  
+**Status**: Draft
+
+---
+
+## Base Path
+
+```
+/api/v1/capability-registry
+```
+
+---
+
+## Platform Primitives
+
+### List All Primitives
+
+```http
+GET /primitives
+Authorization: Bearer <agent_token>
+```
+
+**Response (200 OK)**:
+```json
+{
+  "primitives": [
+    {
+      "id": "delegate",
+      "display_name": "Delegate To Agent",
+      "description": "Delegate a sub-task to the best available agent for a capability.",
+      "is_prime_only": false,
+      "requires_approval": false,
+      "metadata": {}
+    }
+  ]
+}
+```
+
+### Get Primitive by ID
+
+```http
+GET /primitives/{primitive_id}
+Authorization: Bearer <agent_token>
+```
+
+**Response (200 OK)**:
+```json
+{
+  "id": "delegate",
+  "display_name": "Delegate To Agent",
+  "description": "Delegate a sub-task to the best available agent for a capability.",
+  "is_prime_only": false,
+  "requires_approval": false,
+  "metadata": {}
+}
+```
+
+---
+
+## Capability Bundles
+
+### List All Bundles
+
+```http
+GET /bundles
+Authorization: Bearer <agent_token>
+```
+
+**Response (200 OK)**:
+```json
+{
+  "bundles": [
+    {
+      "id": "repo.read",
+      "display_name": "Repository Read Access",
+      "description": "Read access to Git repositories",
+      "risk_level": "medium",
+      "metadata": {}
+    }
+  ]
+}
+```
+
+### Get Bundle by ID
+
+```http
+GET /bundles/{bundle_id}
+Authorization: Bearer <agent_token>
+```
+
+**Response (200 OK)**:
+```json
+{
+  "id": "repo.read",
+  "display_name": "Repository Read Access",
+  "description": "Read access to Git repositories",
+  "risk_level": "medium",
+  "metadata": {}
+}
+```
+
+---
+
+## Provider Adapters
+
+### List All Adapters
+
+```http
+GET /adapters
+Authorization: Bearer <agent_token>
+```
+
+**Response (200 OK)**:
+```json
+{
+  "adapters": [
+    {
+      "id": "github-mcp",
+      "display_name": "GitHub MCP Server",
+      "description": "MCP server for GitHub repository operations",
+      "adapter_type": "mcp-http",
+      "requires_credentials": true,
+      "credential_needs": [
+        {
+          "env_name": "GITEA_TOKEN",
+          "scopes": ["repository"]
+        }
+      ],
+      "health_check_config": {
+        "endpoint": "/health",
+        "interval_ms": 30000
+      },
+      "metadata": {
+        "base_url": "https://github.example.com"
+      },
+      "is_active": true
+    }
+  ]
+}
+```
+
+### Get Adapter by ID
+
+```http
+GET /adapters/{adapter_id}
+Authorization: Bearer <agent_token>
+```
+
+**Response (200 OK)**:
+```json
+{
+  "id": "github-mcp",
+  "display_name": "GitHub MCP Server",
+  "description": "MCP server for GitHub repository operations",
+  "adapter_type": "mcp-http",
+  "requires_credentials": true,
+  "credential_needs": [
+    {
+      "env_name": "GITEA_TOKEN",
+      "scopes": ["repository"]
+    }
+  ],
+  "health_check_config": {
+    "endpoint": "/health",
+    "interval_ms": 30000
+  },
+  "metadata": {
+    "base_url": "https://github.example.com"
+  },
+  "is_active": true
+}
+```
+
+### Update Adapter Health
+
+```http
+POST /adapters/{adapter_id}/health
+Authorization: Bearer <agent_token>
+Content-Type: application/json
+
+{
+  "is_healthy": true,
+  "latency_ms": 45,
+  "metadata": {}
+}
+```
+
+**Response (200 OK)**:
+```json
+{
+  "success": true
+}
+```
+
+---
+
+## Capability-to-Adapter Mappings
+
+### List Mappings for Bundle
+
+```http
+GET /bundles/{bundle_id}/mappings
+Authorization: Bearer <agent_token>
+```
+
+**Response (200 OK)**:
+```json
+{
+  "mappings": [
+    {
+      "id": 1,
+      "capability_bundle_id": "repo.read",
+      "provider_adapter_id": "github-mcp",
+      "is_default": true,
+      "priority": 10,
+      "metadata": {}
+    }
+  ]
+}
+```
+
+### Create Mapping
+
+```http
+POST /bundles/{bundle_id}/mappings
+Authorization: Bearer <agent_token>
+Content-Type: application/json
+
+{
+  "provider_adapter_id": "github-mcp",
+  "is_default": true,
+  "priority": 10,
+  "metadata": {}
+}
+```
+
+**Response (201 Created)**:
+```json
+{
+  "id": 1,
+  "capability_bundle_id": "repo.read",
+  "provider_adapter_id": "github-mcp",
+  "is_default": true,
+  "priority": 10,
+  "metadata": {},
+  "created_at": "2026-06-24T12:00:00Z"
+}
+```
+
+### Delete Mapping
+
+```http
+DELETE /mappings/{mapping_id}
+Authorization: Bearer <agent_token>
+```
+
+**Response (204 No Content)**
+
+---
+
+## Capability Profiles
+
+### List All Profiles
+
+```http
+GET /profiles
+Authorization: Bearer <agent_token>
+```
+
+**Response (200 OK)**:
+```json
+{
+  "profiles": [
+    {
+      "id": "prime.default",
+      "display_name": "Prime Default Profile",
+      "description": "Default profile for Prime agent",
+      "is_default_for_durable": false,
+      "is_default_for_ephemeral": true,
+      "metadata": {}
+    }
+  ]
+}
+```
+
+### Get Profile by ID
+
+```http
+GET /profiles/{profile_id}
+Authorization: Bearer <agent_token>
+```
+
+**Response (200 OK)**:
+```json
+{
+  "id": "prime.default",
+  "display_name": "Prime Default Profile",
+  "description": "Default profile for Prime agent",
+  "is_default_for_durable": false,
+  "is_default_for_ephemeral": true,
+  "metadata": {}
+}
+```
+
+### Create Profile
+
+```http
+POST /profiles
+Authorization: Bearer <agent_token>
+Content-Type: application/json
+
+{
+  "id": "architect.default",
+  "display_name": "Architect Default Profile",
+  "description": "Default profile for Architect agents",
+  "is_default_for_durable": true,
+  "is_default_for_ephemeral": false,
+  "metadata": {}
+}
+```
+
+**Response (201 Created)**:
+```json
+{
+  "id": "architect.default",
+  "display_name": "Architect Default Profile",
+  "description": "Default profile for Architect agents",
+  "is_default_for_durable": true,
+  "is_default_for_ephemeral": false,
+  "metadata": {},
+  "created_at": "2026-06-24T12:00:00Z"
+}
+```
+
+### Update Profile
+
+```http
+PATCH /profiles/{profile_id}
+Authorization: Bearer <agent_token>
+Content-Type: application/json
+
+{
+  "is_default_for_durable": true,
+  "metadata": {}
+}
+```
+
+**Response (200 OK)**:
+```json
+{
+  "id": "architect.default",
+  "display_name": "Architect Default Profile",
+  "description": "Default profile for Architect agents",
+  "is_default_for_durable": true,
+  "is_default_for_ephemeral": false,
+  "metadata": {},
+  "updated_at": "2026-06-24T12:00:00Z"
+}
+```
+
+### Delete Profile
+
+```http
+DELETE /profiles/{profile_id}
+Authorization: Bearer <agent_token>
+```
+
+**Response (204 No Content)**
+
+---
+
+## Profile Primitives
+
+### List Profile Primitives
+
+```http
+GET /profiles/{profile_id}/primitives
+Authorization: Bearer <agent_token>
+```
+
+**Response (200 OK)**:
+```json
+{
+  "primitives": [
+    {
+      "id": 1,
+      "capability_profile_id": "prime.default",
+      "platform_primitive_id": "delegate",
+      "is_granted": true,
+      "metadata": {}
+    }
+  ]
+}
+```
+
+### Grant Primitive to Profile
+
+```http
+POST /profiles/{profile_id}/primitives
+Authorization: Bearer <agent_token>
+Content-Type: application/json
+
+{
+  "platform_primitive_id": "delegate",
+  "is_granted": true,
+  "metadata": {}
+}
+```
+
+**Response (201 Created)**:
+```json
+{
+  "id": 1,
+  "capability_profile_id": "prime.default",
+  "platform_primitive_id": "delegate",
+  "is_granted": true,
+  "metadata": {},
+  "created_at": "2026-06-24T12:00:00Z"
+}
+```
+
+### Revoke Primitive from Profile
+
+```http
+DELETE /profiles/{profile_id}/primitives/{primitive_id}
+Authorization: Bearer <agent_token>
+```
+
+**Response (204 No Content)**
+
+---
+
+## Profile Bundles
+
+### List Profile Bundles
+
+```http
+GET /profiles/{profile_id}/bundles
+Authorization: Bearer <agent_token>
+```
+
+**Response (200 OK)**:
+```json
+{
+  "bundles": [
+    {
+      "id": 1,
+      "capability_profile_id": "prime.default",
+      "capability_bundle_id": "repo.read",
+      "is_granted": true,
+      "metadata": {}
+    }
+  ]
+}
+```
+
+### Grant Bundle to Profile
+
+```http
+POST /profiles/{profile_id}/bundles
+Authorization: Bearer <agent_token>
+Content-Type: application/json
+
+{
+  "capability_bundle_id": "repo.read",
+  "is_granted": true,
+  "metadata": {}
+}
+```
+
+**Response (201 Created)**:
+```json
+{
+  "id": 1,
+  "capability_profile_id": "prime.default",
+  "capability_bundle_id": "repo.read",
+  "is_granted": true,
+  "metadata": {},
+  "created_at": "2026-06-24T12:00:00Z"
+}
+```
+
+### Revoke Bundle from Profile
+
+```http
+DELETE /profiles/{profile_id}/bundles/{bundle_id}
+Authorization: Bearer <agent_token>
+```
+
+**Response (204 No Content)**
+
+---
+
+## Resolved Tool Grants
+
+### List Agent's Resolved Grants
+
+```http
+GET /agents/{agent_id}/grants
+Authorization: Bearer <agent_token>
+```
+
+**Response (200 OK)**:
+```json
+{
+  "grants": [
+    {
+      "id": "abc-123",
+      "agent_id": "agent-uuid",
+      "delegation_id": "delegation-uuid",
+      "work_item_id": "work-item-uuid",
+      "profile_id": "prime.default",
+      "task_scope": {},
+      "approval_state": "approved",
+      "granted_primitives": ["delegate", "request_approval"],
+      "granted_bundles": [
+        {
+          "bundle_id": "repo.read",
+          "adapter_id": "github-mcp",
+          "metadata": {}
+        }
+      ],
+      "selected_adapters": [
+        {
+          "adapter_id": "github-mcp",
+          "metadata": {}
+        }
+      ],
+      "grant_metadata": {
+        "resolved_at": "2026-06-24T12:00:00Z",
+        "resolver": "harness"
+      },
+      "created_at": "2026-06-24T12:00:00Z"
+    }
+  ]
+}
+```
+
+### Get Grant by ID
+
+```http
+GET /grants/{grant_id}
+Authorization: Bearer <agent_token>
+```
+
+**Response (200 OK)**:
+```json
+{
+  "id": "abc-123",
+  "agent_id": "agent-uuid",
+  "delegation_id": "delegation-uuid",
+  "work_item_id": "work-item-uuid",
+  "profile_id": "prime.default",
+  "task_scope": {},
+  "approval_state": "approved",
+  "granted_primitives": ["delegate", "request_approval"],
+  "granted_bundles": [
+    {
+      "bundle_id": "repo.read",
+      "adapter_id": "github-mcp",
+      "metadata": {}
+    }
+  ],
+  "selected_adapters": [
+    {
+      "adapter_id": "github-mcp",
+      "metadata": {}
+    }
+  ],
+  "grant_metadata": {
+    "resolved_at": "2026-06-24T12:00:00Z",
+    "resolver": "harness"
+  },
+  "created_at": "2026-06-24T12:00:00Z"
+}
+```
+
+---
+
+## Adapter Health
+
+### Get Adapter Health
+
+```http
+GET /adapters/{adapter_id}/health
+Authorization: Bearer <agent_token>
+```
+
+**Response (200 OK)**:
+```json
+{
+  "provider_adapter_id": "github-mcp",
+  "last_check": "2026-06-24T12:00:00Z",
+  "is_healthy": true,
+  "health_error": null,
+  "latency_ms": 45,
+  "metadata": {},
+  "created_at": "2026-06-24T12:00:00Z",
+  "updated_at": "2026-06-24T12:00:00Z"
+}
+```
+
+### Update Adapter Health
+
+```http
+PUT /adapters/{adapter_id}/health
+Authorization: Bearer <agent_token>
+Content-Type: application/json
+
+{
+  "is_healthy": true,
+  "health_error": null,
+  "latency_ms": 45,
+  "metadata": {}
+}
+```
+
+**Response (200 OK)**:
+```json
+{
+  "success": true
+}
+```
+
+---
+
+## Error Responses
+
+### 401 Unauthorized
+
+```json
+{
+  "error": "unauthorized",
+  "message": "Invalid or expired token"
+}
+```
+
+### 403 Forbidden
+
+```json
+{
+  "error": "forbidden",
+  "message": "Insufficient permissions for this operation"
+}
+```
+
+### 404 Not Found
+
+```json
+{
+  "error": "not_found",
+  "message": "Resource not found"
+}
+```
+
+### 409 Conflict
+
+```json
+{
+  "error": "conflict",
+  "message": "Resource already exists"
+}
+```
+
+### 422 Unprocessable Entity
+
+```json
+{
+  "error": "validation_error",
+  "message": "Invalid request body",
+  "details": {
+    "field": "adapter_type",
+    "value": "invalid_type",
+    "allowed": ["mcp-stdio", "mcp-http", "http-api", "cli", "sdk"]
+  }
+}
+```
+
+### 500 Internal Server Error
+
+```json
+{
+  "error": "internal_error",
+  "message": "An unexpected error occurred"
+}
+```

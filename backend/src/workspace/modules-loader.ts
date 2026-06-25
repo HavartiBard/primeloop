@@ -55,7 +55,7 @@ export async function loadWorkspaceModules(
     return { modules: [], errors: [], overridden: [] };
   }
 
-  const stages = ['trigger', 'debounce', 'context', 'decision', 'policy', 'action', 'feedback', 'learning', 'observer'];
+  const stages: ('trigger' | 'debounce' | 'context' | 'decision' | 'policy' | 'action' | 'feedback' | 'learning' | 'observer')[] = ['trigger', 'debounce', 'context', 'decision', 'policy', 'action', 'feedback', 'learning', 'observer'];
 
   for (const stage of stages) {
     const stageDir = path.join(modulesDir, stage);

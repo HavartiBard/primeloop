@@ -1,7 +1,7 @@
 // ContextAttachmentList.tsx - Reusable context attachment chip/list component
 
 import React from 'react'
-import { ContextAttachment } from '../../types'
+import type { ContextAttachment } from '../../types'
 
 export interface ContextAttachmentListProps {
   attachments: ContextAttachment[]

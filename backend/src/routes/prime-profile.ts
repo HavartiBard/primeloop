@@ -20,7 +20,7 @@ import {
 
 const FALLBACK_PROMPTS_DIR = path.resolve(
   path.dirname(new URL(import.meta.url).pathname),
-  '../prompts/agents',
+  '../../prompts/agents',
 )
 
 async function loadShippedDefault(file: ProfileFile): Promise<string> {

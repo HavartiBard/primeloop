@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { fetchPrimeQueueItems, type PrimeQueueItem } from '../api'
+import { fetchPrimeQueueItems } from '../api'
+import type { PrimeQueueItem } from '../types'
 
 const STATUS_COLORS: Record<PrimeQueueItem['status'], string> = {
   pending: '#6b7280',
@@ -130,12 +131,12 @@ export function PrimeQueue() {
   const [offset, setOffset] = useState(0)
   const limit = 50
 
-  const { data: queueItems, isLoading, error, refetch } = useQuery({
+  const { data: queueItems = [], isLoading, error, refetch } = useQuery({
     queryKey: ['prime-queue-items', statusFilter, eventTypeFilter, offset, limit],
     queryFn: () => fetchPrimeQueueItems({ status: statusFilter, event_type: eventTypeFilter, limit, offset }),
-    refetchInterval: (data) => {
-      // Poll more frequently if there are processing items
-      const hasProcessing = data?.some(item => item.status === 'processing')
+    refetchInterval: (query) => {
+      const items = Array.isArray(query.state.data) ? query.state.data : []
+      const hasProcessing = items.some((item) => item.status === 'processing')
       return hasProcessing ? 2000 : 5000
     },
   })

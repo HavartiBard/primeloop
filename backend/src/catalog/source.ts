@@ -7,7 +7,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import * as yaml from 'yaml';
 
-import type { CatalogTemplate, FailureReason, PrimeModuleTemplate } from './types.js';
+import type { CatalogTemplate, FailureReason, PrimeModuleTemplate, ModuleDependency } from './types.js';
 
 /**
  * Read a local catalog source directory and parse all YAML files.
@@ -144,6 +144,8 @@ export async function readTemplateFile(filePath: string): Promise<{ template: Ca
 
 /**
  * Read Prime module templates from a local directory.
+ * Supports multiple versions per template ID via versioned YAML files.
+ * File naming convention: <templateId>@<version>.yaml (e.g., context.fleet-state@1.0.0.yaml)
  */
 export async function readLocalModuleTemplates(
   modulesPath: string
@@ -175,6 +177,14 @@ export async function readLocalModuleTemplates(
             });
             continue;
           }
+          if (!moduleTemplate.version) {
+            errors.push({
+              code: 'MISSING_REQUIRED_FIELD',
+              field: file,
+              detail: 'Missing required field: version'
+            });
+            continue;
+          }
           if (!moduleTemplate.manifest?.stage) {
             errors.push({
               code: 'MISSING_REQUIRED_FIELD',
@@ -182,6 +192,25 @@ export async function readLocalModuleTemplates(
               detail: 'Missing required field: manifest.stage'
             });
             continue;
+          }
+          
+          // Parse dependencies from YAML array
+          if (Array.isArray(moduleTemplate.dependencies)) {
+            const parsedDeps: ModuleDependency[] = [];
+            for (const dep of moduleTemplate.dependencies as unknown[]) {
+              if (typeof dep === 'string') {
+                const match = dep.match(/^([a-zA-Z0-9._-]+)@(.+)$/);
+                if (match && match.length >= 3) {
+                  parsedDeps.push({
+                    templateId: match[1],
+                    versionRange: match[2]
+                  });
+                }
+              }
+            }
+            moduleTemplate.dependencies = parsedDeps;
+          } else {
+            moduleTemplate.dependencies = [];
           }
           
           modules.push(moduleTemplate);

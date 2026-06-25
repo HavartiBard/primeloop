@@ -206,6 +206,81 @@ When a role is allowed to perform sensitive operations, ACP should still be able
 - **SC-005**: ACP can explain, for any completed or failed run, which capabilities and provider adapters were granted and why others were excluded
 - **SC-006**: Ephemeral templates start from a narrower default grant surface than durable staff roles
 
+## Data Model
+
+See `data-model.md` for full database schema. Key entities:
+
+| Table | Purpose |
+|-------|---------|
+| `platform_primitives` | Stable ACP-native action contracts |
+| `capability_bundles` | Policy-level permission groupings |
+| `provider_adapters` | Concrete implementations (MCP, HTTP, CLI, SDK) |
+| `capability_to_adapter_mappings` | Bundle-to-adapter mappings |
+| `capability_profiles` | Role/template-level policy objects |
+| `profile_primitives` / `profile_bundles` | Profile grants |
+| `resolved_tool_grants` | Per-run audit trail |
+| `adapter_health_records` | Health-aware selection |
+
+**Authentication Model**:
+- Agent identity via JWT tokens in `agent_tokens` table
+- Credential broker issues short-lived, scoped tokens per-agent (Spec 010)
+- Grant resolution factors: agent identity, profile, task scope, approval state, adapter health
+
+## API Contracts
+
+### REST API (`/api/v1/capability-registry`)
+
+**Platform Primitives**:
+- `GET /primitives` - List all primitives
+- `GET /primitives/{primitive_id}` - Get primitive by ID
+
+**Capability Bundles**:
+- `GET /bundles` - List all bundles
+- `GET /bundles/{bundle_id}` - Get bundle by ID
+
+**Provider Adapters**:
+- `GET /adapters` - List all adapters
+- `GET /adapters/{adapter_id}` - Get adapter by ID
+- `POST /adapters/{adapter_id}/health` - Update adapter health
+- `GET /adapters/{adapter_id}/health` - Get adapter health
+
+**Mappings**:
+- `GET /bundles/{bundle_id}/mappings` - List mappings for bundle
+- `POST /bundles/{bundle_id}/mappings` - Create mapping
+- `DELETE /mappings/{mapping_id}` - Delete mapping
+
+**Profiles**:
+- `GET /profiles` - List all profiles
+- `GET /profiles/{profile_id}` - Get profile by ID
+- `POST /profiles` - Create profile
+- `PATCH /profiles/{profile_id}` - Update profile
+- `DELETE /profiles/{profile_id}` - Delete profile
+
+**Grants**:
+- `GET /agents/{agent_id}/grants` - List agent's resolved grants
+- `GET /grants/{grant_id}` - Get grant by ID
+
+### ACP Control Plane Messages
+
+| Message | Purpose |
+|---------|--------|
+| `capability_registry.list_primitives` | List all platform primitives |
+| `capability_registry.list_bundles` | List all capability bundles |
+| `capability_registry.list_adapters` | List all provider adapters |
+| `capability_registry.list_profiles` | List all capability profiles |
+| `capability_registry.get_profile` | Get profile by ID |
+| `capability_registry.resolve_grant` | Resolve tool grant for agent |
+| `capability_registry.get_grant` | Get resolved grant by ID |
+| `capability_registry.list_agent_grants` | List agent's resolved grants |
+| `capability_registry.list_adapter_health` | List adapter health status |
+
+**Agent Runtime Messages**:
+- `agent.tool_grant` - Sent when grant is resolved
+- `agent.tool_grant_update` - Sent when grant is updated (e.g., approval granted)
+- `agent.tool_grant_revoke` - Sent when grant is revoked (e.g., adapter unhealthy)
+
+See `contracts/rest-api.yaml` and `contracts/acp-messages.yaml` for full contract specifications.
+
 ## Assumptions
 
 - Builds on the existing ACP control-plane tools, agent `capabilities`, MCP registry tables, and runtime config generation

@@ -1079,13 +1079,18 @@ export async function dispatchDelegate(
 ): Promise<GoalWorkItem> {
   const domain = (delegateAction.domain ?? 'cross_domain') as import('../goals/types.js').Domain
   await assertDomainRoleAssignment(pool, domain, delegateAction.assignedAgentRole)
+  const safeTitle = normalizedTitle(
+    delegateAction.title,
+    delegateAction.scope,
+    `Delegation: ${delegateAction.assignedAgentRole}`,
+  )
 
   // 1. Create Goal work-item in queued state
   const workItem = await createWorkItemGoal(pool, {
     goalId,
     assignedAgentRole: delegateAction.assignedAgentRole,
     domain,
-    title: delegateAction.title,
+    title: safeTitle,
     scope: delegateAction.scope,
     dependsOn: delegateAction.dependsOn,
     status: 'queued',
@@ -1112,8 +1117,8 @@ export async function dispatchDelegate(
     to_agent_id: targetAgentId,
     capability: domain,
     request: {
-      title: delegateAction.title,
-      description: delegateAction.scope ?? delegateAction.title,
+      title: safeTitle,
+      description: delegateAction.scope ?? safeTitle,
       source: 'prime-agent',
       goal_id: goalId,
       assigned_agent_role: delegateAction.assignedAgentRole,
@@ -1130,7 +1135,7 @@ export async function dispatchDelegate(
       workItemId: workItem.id,
       assignedAgentRole: delegateAction.assignedAgentRole,
       domain,
-      title: delegateAction.title,
+      title: safeTitle,
       status: 'queued',
     },
   });
