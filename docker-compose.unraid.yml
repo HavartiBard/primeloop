@@ -3,17 +3,58 @@
 # Port 3101 used instead of 3100 to avoid conflict with LOKI
 
 services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: primeloop
+      POSTGRES_USER: primeloop
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?required}
+    volumes:
+      - /mnt/user/appdata/primeloop/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "primeloop"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
   backend:
     image: code.klsll.com/havartibard/primeloop:latest
-    build: null
+    environment:
+      DATABASE_URL: postgresql://primeloop:${POSTGRES_PASSWORD}@postgres:5432/primeloop
+      SECRET_ENCRYPTION_KEY: ${SECRET_ENCRYPTION_KEY:?required}
+      LANGGRAPH_API_URL: ${LANGGRAPH_API_URL:-http://192.168.20.14:8000}
+      RACLETTE_API_URL: ${RACLETTE_API_URL:-http://192.168.20.169:9119}
+      RACLETTE_SESSION_TOKEN: ${RACLETTE_SESSION_TOKEN:-}
+      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:-}
+      SLACK_APP_TOKEN: ${SLACK_APP_TOKEN:-}
+      SLACK_CHANNEL_ID: ${SLACK_CHANNEL_ID:-C0AU0620ATX}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      LOCAL_LLM_ENABLED: ${LOCAL_LLM_ENABLED:-1}
+      LOCAL_LLM_TYPE: ${LOCAL_LLM_TYPE:-ollama}
+      LOCAL_LLM_BASE_URL: ${LOCAL_LLM_BASE_URL:-http://192.168.20.14:11434}
+      LOCAL_LLM_HOST: ${LOCAL_LLM_HOST:-}
+      LOCAL_LLM_API_KEY: ${LOCAL_LLM_API_KEY:-}
+      LOCAL_LLM_MODEL: ${LOCAL_LLM_MODEL:-llama3.1:8b-instruct-q4_K_M}
+      LOCAL_LLM_NAME: ${LOCAL_LLM_NAME:-local-ollama}
+      AGENT_REPO_ROOT: ${AGENT_REPO_ROOT:-/workspace/repo}
+      AGENT_WORKTREE_ROOT: ${AGENT_WORKTREE_ROOT:-/workspace/agents}
+      GITEA_TOKEN: ${GITEA_TOKEN:-}
+      CREDENTIAL_BROKER: ${CREDENTIAL_BROKER:-1}
+      EGRESS_SANDBOX: ${EGRESS_SANDBOX:-1}
+      CONTROL_PLANE_URL: ${CONTROL_PLANE_URL:-http://127.0.0.1:3100}
+      CATALOG_GIT_TOKEN: ${CATALOG_GIT_TOKEN:-}
     ports:
       - "3101:3100"
     volumes:
-      # Unraid share paths for persistent storage
       - /mnt/user/appdata/primeloop/postgres:/var/lib/postgresql/data
       - /mnt/user/appdata/primeloop/workspace:/workspace
       - /mnt/user/appdata/primeloop/catalog:/app/backend/catalog:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
 
 volumes:
-  # Named volumes are not used in Unraid config
   # All data stored in Unraid shares under /mnt/user/appdata/primeloop/
