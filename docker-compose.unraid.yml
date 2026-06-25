@@ -4,7 +4,6 @@
 
 services:
   backend:
-    ports: null
     ports:
       - "3101:3100"
     volumes:
@@ -12,16 +11,6 @@ services:
       - /mnt/user/appdata/primeloop/postgres:/var/lib/postgresql/data
       - /mnt/user/appdata/primeloop/workspace:/workspace
       - /mnt/user/appdata/primeloop/catalog:/app/backend/catalog:ro
-
-  # Opt-in: only started with `docker compose --profile launcher up`
-  launcher:
-    ports: null
-    ports:
-      - "8787:8787"
-    volumes:
-      # Docker adapter needs the host socket to provision sibling runtime containers
-      - /var/run/docker.sock:/var/run/docker.sock
-      - /mnt/user/appdata/primeloop/workspace:/workspace
 
 volumes:
   # Named volumes are not used in Unraid config
