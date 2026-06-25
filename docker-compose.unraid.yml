@@ -4,6 +4,8 @@
 
 services:
   backend:
+    image: code.klsll.com/havartibard/primeloop:latest
+    build: null
     ports:
       - "3101:3100"
     volumes:
