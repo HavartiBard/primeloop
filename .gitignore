@@ -47,3 +47,8 @@ specs/019-inline-chat-artifacts/research.md
 specs/019-inline-chat-artifacts/tasks.md
 specs/019-inline-chat-artifacts/spec.md
 .specify/feature.json
+
+# Machine/site-specific deployment files (personal infra lives here, not in git)
+deploy/local/
+docker-compose.override.yml
+.dev-data/

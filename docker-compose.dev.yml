@@ -23,7 +23,7 @@ services:
 
       SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:-}
       SLACK_APP_TOKEN: ${SLACK_APP_TOKEN:-}
-      SLACK_CHANNEL_ID: ${SLACK_CHANNEL_ID:-C0AU0620ATX}
+      SLACK_CHANNEL_ID: ${SLACK_CHANNEL_ID:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       LOCAL_LLM_ENABLED: ${LOCAL_LLM_ENABLED:-0}
@@ -43,8 +43,9 @@ services:
     ports:
       - "3101:3100"
     volumes:
-      - /mnt/user/appdata/primeloop-dev/codex:/root/.codex
-      - /mnt/user/appdata/primeloop-dev/workspace:/workspace
+      # Machine-specific paths belong in an untracked docker-compose.override.yml
+      - ./.dev-data/codex:/root/.codex
+      - ./.dev-data/workspace:/workspace
     depends_on:
       postgres-dev:
         condition: service_healthy
@@ -67,7 +68,7 @@ services:
       - "8787:8787"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - /mnt/user/appdata/primeloop-dev/workspace:/workspace
+      - ./.dev-data/workspace:/workspace
     depends_on:
       postgres-dev:
         condition: service_healthy

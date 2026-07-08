@@ -51,9 +51,18 @@ For a production deployment using a pre-built image and persistent volumes, use
 
 ### Production deployment notes
 
-**Prebuilt image path (recommended)**: Pull the latest image and configure via
-`docker-compose.prod.yml`. The container is disposable — all durable state lives in
-volume-mounted paths (Postgres data, catalog YAML, workspace files).
+**Prebuilt image path (recommended)**: set `PRIMELOOP_IMAGE` to a published PrimeLoop
+image (e.g. `ghcr.io/<owner>/primeloop:latest`) and run:
+
+```sh
+cp .env.example .env
+# set POSTGRES_PASSWORD, SECRET_ENCRYPTION_KEY, PRIMELOOP_IMAGE in .env
+docker compose -f docker-compose.prod.yml up -d
+```
+
+By default all durable state (Postgres data, workspace files, catalog YAML) lives
+under `./data` next to the compose file; override the location with
+`PRIMELOOP_DATA_DIR`. The container itself is disposable.
 
 **Catalog storage**: Agent templates (`backend/catalog/*.yaml`) must be on durable
 storage. See [docs/runtime-packaging.md](docs/runtime-packaging.md) for setup options.
@@ -62,12 +71,21 @@ storage. See [docs/runtime-packaging.md](docs/runtime-packaging.md) for setup op
 Workspace files, database records, and catalog YAML are the durable surfaces for
 customization and self-improvement.
 
+**Site-specific deployments** (a particular host's IPs, volume paths, port
+overrides, etc.) don't belong in the tracked compose files — keep them in an
+untracked `docker-compose.override.yml` (repo root) or under `deploy/local/`
+(gitignored). See [deploy/README.md](deploy/README.md).
+
 ### Required environment variables
 
 | Variable | Required | Notes |
 |----------|----------|-------|
 | `POSTGRES_PASSWORD` | yes | Password for the bundled Postgres |
 | `SECRET_ENCRYPTION_KEY` | yes | 64-char hex (`openssl rand -hex 32`) — encrypts stored secrets |
+| `PRIMELOOP_IMAGE` | yes, for `docker-compose.prod.yml` | Published image reference, e.g. `ghcr.io/<owner>/primeloop:latest` |
+| `PRIMELOOP_DATA_DIR` | no | Host directory for durable state (default `./data`), `docker-compose.prod.yml` only |
+| `PRIMELOOP_PORT` | no | Host port for the dashboard/API (default `3100`), `docker-compose.prod.yml` only |
+| `PRIMELOOP_CORS_ORIGINS` | no | Only needed when the dashboard is served from a different origin than the API |
 | `LANGGRAPH_API_URL` | no | Optional LangGraph agent endpoint |
 | `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` | optional | Cloud LLM provider key; not needed if you use a local provider |
 | `LOCAL_LLM_ENABLED` | optional | Set to `1` to explicitly enable local-LLM bootstrap |

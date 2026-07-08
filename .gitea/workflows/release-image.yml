@@ -1,0 +1,50 @@
+name: release-image
+
+# Builds the PrimeLoop image and pushes it to the registry configured in
+# repository secrets. Registry-agnostic: works with GHCR, Docker Hub, or a
+# public Gitea package registry.
+#
+# Required secrets:
+#   RELEASE_IMAGE          — full image name without tag, e.g. ghcr.io/<owner>/primeloop
+#   RELEASE_REGISTRY_USER  — registry username
+#   RELEASE_REGISTRY_TOKEN — registry password / PAT with package:write
+#
+# Pushes :latest on main, plus the version tag on v* tags.
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+
+jobs:
+  release-image:
+    runs-on: linux
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build and push
+        run: |
+          set -euo pipefail
+          IMAGE="${{ secrets.RELEASE_IMAGE }}"
+          if [ -z "$IMAGE" ]; then
+            echo "RELEASE_IMAGE secret is not set; skipping publish." >&2
+            exit 0
+          fi
+          REGISTRY="${IMAGE%%/*}"
+
+          echo "${{ secrets.RELEASE_REGISTRY_TOKEN }}" \
+            | docker login "$REGISTRY" -u "${{ secrets.RELEASE_REGISTRY_USER }}" --password-stdin
+
+          TAGS="-t ${IMAGE}:latest"
+          case "${{ github.ref }}" in
+            refs/tags/v*)
+              VERSION="${GITHUB_REF#refs/tags/}"
+              TAGS="$TAGS -t ${IMAGE}:${VERSION}"
+              ;;
+          esac
+
+          docker build $TAGS .
+          docker push --all-tags "$IMAGE"
+
+          docker logout "$REGISTRY" || true

@@ -1,3 +1,15 @@
+# Production deployment using a pre-built image and durable host-path volumes.
+#
+# Required in .env (or the environment):
+#   PRIMELOOP_IMAGE       — published PrimeLoop image reference, e.g. ghcr.io/<owner>/primeloop:latest
+#   POSTGRES_PASSWORD     — password for the bundled Postgres
+#   SECRET_ENCRYPTION_KEY — 64-char hex (openssl rand -hex 32)
+# Optional:
+#   PRIMELOOP_DATA_DIR    — host directory for all durable state (default ./data)
+#   PRIMELOOP_PORT        — host port for the dashboard/API (default 3100)
+#
+# Usage: docker compose -f docker-compose.prod.yml up -d
+
 services:
   postgres:
     image: pgvector/pgvector:pg16
@@ -6,30 +18,31 @@ services:
       POSTGRES_USER: primeloop
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?required}
     volumes:
-      - /mnt/user/appdata/primeloop/postgres:/var/lib/postgresql/data
+      - ${PRIMELOOP_DATA_DIR:-./data}/postgres:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "primeloop"]
       interval: 5s
       timeout: 5s
       retries: 5
+    restart: unless-stopped
 
   backend:
-    image: code.klsll.com/havartibard/primeloop:latest
+    image: ${PRIMELOOP_IMAGE:?set PRIMELOOP_IMAGE to a published PrimeLoop image, or build from source with docker-compose.yml}
     volumes:
-      - /mnt/user/appdata/primeloop/codex:/root/.codex
-      - /mnt/user/appdata/primeloop/workspace:/workspace
-      # Catalog YAML is durable storage — mounted read-write for Git clone/pull
-      # Container clones catalog repo on startup, operator edits via Git push + API sync
-      - /mnt/user/appdata/primeloop/catalog:/app/backend/catalog
+      - ${PRIMELOOP_DATA_DIR:-./data}/codex:/root/.codex
+      - ${PRIMELOOP_DATA_DIR:-./data}/workspace:/workspace
+      # Catalog YAML is durable storage. Mounted read-write because Git catalog
+      # mode (CATALOG_SOURCE_TYPE=git) clones/pulls into this path on startup.
+      # If you use local mode and edit YAML on the host, you may add :ro.
+      - ${PRIMELOOP_DATA_DIR:-./data}/catalog:/app/backend/catalog
     environment:
       DATABASE_URL: postgresql://primeloop:${POSTGRES_PASSWORD}@postgres:5432/primeloop
       SECRET_ENCRYPTION_KEY: ${SECRET_ENCRYPTION_KEY:?required}
+      PRIMELOOP_CORS_ORIGINS: ${PRIMELOOP_CORS_ORIGINS:-}
       LANGGRAPH_API_URL: ${LANGGRAPH_API_URL:-}
-      RACLETTE_API_URL: ${RACLETTE_API_URL:-http://192.168.20.169:9119}
-      RACLETTE_SESSION_TOKEN: ${RACLETTE_SESSION_TOKEN:-}
       SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN:-}
       SLACK_APP_TOKEN: ${SLACK_APP_TOKEN:-}
-      SLACK_CHANNEL_ID: ${SLACK_CHANNEL_ID:-C0AU0620ATX}
+      SLACK_CHANNEL_ID: ${SLACK_CHANNEL_ID:-}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       LOCAL_LLM_ENABLED: ${LOCAL_LLM_ENABLED:-0}
@@ -42,27 +55,31 @@ services:
       AGENT_REPO_ROOT: ${AGENT_REPO_ROOT:-/workspace/repo}
       AGENT_WORKTREE_ROOT: ${AGENT_WORKTREE_ROOT:-/workspace/agents}
       GITEA_TOKEN: ${GITEA_TOKEN:-}
+      # Catalog source (see docs/runtime-packaging.md)
+      CATALOG_SOURCE_TYPE: ${CATALOG_SOURCE_TYPE:-local}
+      CATALOG_GIT_URL: ${CATALOG_GIT_URL:-}
+      CATALOG_GIT_REF: ${CATALOG_GIT_REF:-main}
+      CATALOG_GIT_TOKEN: ${CATALOG_GIT_TOKEN:-}
+      WORKSPACE_SYNC_INTERVAL: ${WORKSPACE_SYNC_INTERVAL:-3600}
       # Launcher-managed isolated runtimes (spec 025) — OPT-IN, off by default.
       # To enable: set LAUNCHER_ENABLED=1 + LAUNCHER_AUTH_SECRET, point
       # OPENSANDBOX_IMAGE_OPENCODE at a built runtime image, and start with
-      # `docker compose --profile launcher up`.
+      # `docker compose -f docker-compose.prod.yml --profile launcher up`.
       LAUNCHER_AUTH_SECRET: ${LAUNCHER_AUTH_SECRET:-}
       LAUNCHER_URL: ${LAUNCHER_URL:-http://launcher:8787}
       LAUNCHER_ENABLED: ${LAUNCHER_ENABLED:-0}
       LAUNCHER_ADAPTER: ${LAUNCHER_ADAPTER:-docker}
-      # Catalog Git token for workspace auto-backup (dual-repo model)
-      CATALOG_GIT_TOKEN: ${CATALOG_GIT_TOKEN:-}
     ports:
-      - "3100:3100"
+      - "${PRIMELOOP_PORT:-3100}:3100"
     depends_on:
       postgres:
         condition: service_healthy
     restart: unless-stopped
 
-  # Opt-in: only started with `docker compose --profile launcher up`.
+  # Opt-in: only started with `--profile launcher`.
   launcher:
     profiles: ["launcher"]
-    image: code.klsll.com/havartibard/primeloop:latest
+    image: ${PRIMELOOP_IMAGE:?set PRIMELOOP_IMAGE to a published PrimeLoop image, or build from source with docker-compose.yml}
     command: ["node", "dist/launcher/index.js"]
     environment:
       LAUNCHER_AUTH_SECRET: ${LAUNCHER_AUTH_SECRET:-}
@@ -75,10 +92,12 @@ services:
     ports:
       - "8787:8787"
     volumes:
+      # Docker adapter needs the host socket to provision sibling runtime
+      # containers; the workspace mount lets the launcher bind worktrees that
+      # the backend exclusively creates/mutates.
       - /var/run/docker.sock:/var/run/docker.sock
-      - /mnt/user/appdata/primeloop/workspace:/workspace
+      - ${PRIMELOOP_DATA_DIR:-./data}/workspace:/workspace
     depends_on:
       postgres:
         condition: service_healthy
     restart: unless-stopped
-

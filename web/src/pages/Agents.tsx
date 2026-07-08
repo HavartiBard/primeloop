@@ -198,7 +198,7 @@ function AgentEditor({ mode, agent, providers, mcpServerOptions, onClose, onSubm
 
         <div>
           <label className={labelCls}>Host</label>
-          <input value={form.host} onChange={setField('host')} placeholder="192.168.20.169 or hostname" className={inputCls} />
+          <input value={form.host} onChange={setField('host')} placeholder="e.g. 192.168.1.50 or hostname" className={inputCls} />
         </div>
 
         <div className="grid grid-cols-2 gap-3">
