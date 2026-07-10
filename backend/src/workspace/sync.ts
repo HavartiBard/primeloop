@@ -13,7 +13,7 @@ import { promisify } from 'node:util';
 
 const execFile = promisify(execFileCallback);
 
-const CATALOG_PATH = process.env.CATALOG_REPO_PATH ?? '/app/backend/catalog';
+const CATALOG_PATH = process.env.CATALOG_REPO_PATH ?? '/app/catalog';
 const WORKSPACE_ROOT = process.env.WORKSPACE_ROOT ?? '/workspace';
 const GIT_TOKEN = process.env.CATALOG_GIT_TOKEN;
 

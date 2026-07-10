@@ -27,6 +27,11 @@ RUN npm ci --omit=dev && \
 
 COPY --from=backend-builder /app/dist ./dist
 COPY --from=web-builder /web/dist ./public
+# Workspace scaffold templates read from /app/prompts at runtime
+COPY --from=backend-builder /app/prompts ./prompts
+# Default agent-template catalog; entrypoint seeds /app/catalog from this
+# when the (possibly volume-mounted) catalog dir is empty
+COPY --from=backend-builder /app/catalog ./catalog-defaults
 COPY entrypoint.sh ./entrypoint.sh
 COPY entrypoint-setup.sh ./entrypoint-setup.sh
 RUN chmod +x ./entrypoint.sh ./entrypoint-setup.sh

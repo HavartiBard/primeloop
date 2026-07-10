@@ -34,14 +34,14 @@ The agent catalog (`backend/catalog/*.yaml`) is the **authoritative source for a
 
 #### Mode 1: Local Volume Mount (Recommended for Single-Host)
 
-Mount a host directory to `/app/backend/catalog` in the container:
+Mount a host directory to `/app/catalog` in the container:
 
 ```yaml
 # docker-compose.prod.yml
 services:
   backend:
     volumes:
-      - /mnt/user/appdata/primeloop/catalog:/app/backend/catalog:ro
+      - /mnt/user/appdata/primeloop/catalog:/app/catalog:ro
 ```
 
 **Important**: 
@@ -93,7 +93,7 @@ for authentication. Do NOT use SSH URLs — only HTTPS with PAT is supported.
 1. User provides catalog repo URL and PAT
 2. Installer validates access by attempting clone
 3. Container starts with PAT mounted as env var
-4. On startup, container clones catalog repo to `/app/backend/catalog`
+4. On startup, container clones catalog repo to `/app/catalog`
 5. Operator edits YAML in cloned repo → commits → pushes → sync via API
 
 ### Startup Validation
@@ -271,7 +271,7 @@ HavartiBard/primeloop/
    services:
      backend:
        volumes:
-         - /mnt/user/appdata/primeloop/catalog:/app/backend/catalog:rw
+         - /mnt/user/appdata/primeloop/catalog:/app/catalog:rw
        environment:
          CATALOG_GIT_TOKEN: ${CATALOG_GIT_TOKEN}
    ```
@@ -345,7 +345,7 @@ else if (change.target === 'framework') {
 2. **Mount in docker-compose.prod.yml** (already configured)
    ```yaml
    volumes:
-     - /mnt/user/appdata/primeloop/catalog:/app/backend/catalog:ro
+     - /mnt/user/appdata/primeloop/catalog:/app/catalog:ro
    ```
 
 3. **Edit catalog files on host**

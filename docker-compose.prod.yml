@@ -32,9 +32,11 @@ services:
       - ${PRIMELOOP_DATA_DIR:-./data}/codex:/root/.codex
       - ${PRIMELOOP_DATA_DIR:-./data}/workspace:/workspace
       # Catalog YAML is durable storage. Mounted read-write because Git catalog
-      # mode (CATALOG_SOURCE_TYPE=git) clones/pulls into this path on startup.
-      # If you use local mode and edit YAML on the host, you may add :ro.
-      - ${PRIMELOOP_DATA_DIR:-./data}/catalog:/app/backend/catalog
+      # mode (CATALOG_SOURCE_TYPE=git) clones/pulls into this path on startup,
+      # and the entrypoint seeds defaults into it on first boot.
+      # If you use local mode and edit YAML on the host, you may add :ro
+      # after the first boot.
+      - ${PRIMELOOP_DATA_DIR:-./data}/catalog:/app/catalog
     environment:
       DATABASE_URL: postgresql://primeloop:${POSTGRES_PASSWORD}@postgres:5432/primeloop
       SECRET_ENCRYPTION_KEY: ${SECRET_ENCRYPTION_KEY:?required}
@@ -71,6 +73,10 @@ services:
       LAUNCHER_ADAPTER: ${LAUNCHER_ADAPTER:-docker}
     ports:
       - "${PRIMELOOP_PORT:-3100}:3100"
+    extra_hosts:
+      # Lets the container reach LLM servers running on the host
+      # (Ollama, LM Studio, …) via host.docker.internal on Linux.
+      - "host.docker.internal:host-gateway"
     depends_on:
       postgres:
         condition: service_healthy

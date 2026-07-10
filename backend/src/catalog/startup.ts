@@ -4,7 +4,7 @@
 // This prevents data loss from ephemeral container filesystems.
 //
 // On startup:
-// - Git mode: clones/pulls catalog repo to /app/backend/catalog
+// - Git mode: clones/pulls catalog repo to /app/catalog
 // - Local mode: warns if path is inside ephemeral container root
 
 import fs from 'fs/promises';
@@ -93,7 +93,7 @@ export async function validateCatalogStartup(): Promise<{
       `⚠️  WARNING: Catalog path ${DEFAULT_CATALOG_PATH} is inside app root (${APP_ROOT}).`,
       'In containerized deployment, this directory is ephemeral unless volume-mounted.',
       'Recommended actions:',
-      '  1. Mount a host volume to /app/backend/catalog in docker-compose.prod.yml',
+      '  1. Mount a host volume to /app/catalog in docker-compose.prod.yml',
       '  2. OR set CATALOG_SOURCE_TYPE=git and configure CATALOG_GIT_URL',
       '',
       'For production, always use durable storage for catalog YAML files.'
