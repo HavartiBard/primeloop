@@ -46,7 +46,11 @@ services:
       LAUNCHER_ENABLED: ${LAUNCHER_ENABLED:-0}
       LAUNCHER_ADAPTER: ${LAUNCHER_ADAPTER:-docker}
     ports:
-      - "3100:3100"
+      - "${PRIMELOOP_PORT:-3100}:3100"
+    extra_hosts:
+      # Lets the container reach LLM servers running on the host
+      # (Ollama, LM Studio, …) via host.docker.internal on Linux.
+      - "host.docker.internal:host-gateway"
     depends_on:
       postgres:
         condition: service_healthy

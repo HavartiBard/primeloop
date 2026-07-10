@@ -28,6 +28,9 @@ interface DiscoveryCandidate {
   label: string
 }
 
+// Hosts probed when local LLM is enabled without an explicit host/base URL.
+export const DEFAULT_DISCOVERY_HOSTS = ['host.docker.internal', 'localhost']
+
 function normalizeFlag(value: string | undefined): boolean | null {
   if (!value) return null
   const normalized = value.trim().toLowerCase()
@@ -227,6 +230,28 @@ export async function loadLocalLlmConfig(env: NodeJS.ProcessEnv = process.env): 
       ...discovered,
       name,
       model,
+    }
+  }
+
+  // Enabled but no host/base_url given: probe default hosts. Inside a
+  // container, localhost is the container itself — host.docker.internal
+  // (mapped via extra_hosts: host-gateway) reaches services on the host.
+  if (enabledFlag === true) {
+    for (const host of DEFAULT_DISCOVERY_HOSTS) {
+      const discovered = await autodiscoverLocalLlm(host, env['LOCAL_LLM_TYPE'], apiKey)
+      if (discovered && !discovered.discovery_error) {
+        return { ...discovered, name, model }
+      }
+    }
+    return {
+      name,
+      type: canonicalLocalLlmType(env['LOCAL_LLM_TYPE']),
+      base_url: '',
+      model,
+      api_key: apiKey,
+      api_key_configured: Boolean(apiKey),
+      autodiscovered: true,
+      discovery_error: `Unable to autodiscover a local LLM endpoint (tried ${DEFAULT_DISCOVERY_HOSTS.join(', ')})`,
     }
   }
 
