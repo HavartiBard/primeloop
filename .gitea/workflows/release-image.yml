@@ -1,15 +1,16 @@
 name: release-image
 
-# Builds the PrimeLoop image and pushes it to the registry configured in
-# repository secrets. Registry-agnostic: works with GHCR, Docker Hub, or a
-# public Gitea package registry.
+# Builds the PrimeLoop image (multi-arch: amd64 + arm64) and pushes it to the
+# registry configured in repository secrets. Registry-agnostic: works with
+# GHCR, Docker Hub, or a public Gitea package registry.
 #
 # Required secrets:
 #   RELEASE_IMAGE          — full image name without tag, e.g. ghcr.io/<owner>/primeloop
 #   RELEASE_REGISTRY_USER  — registry username
 #   RELEASE_REGISTRY_TOKEN — registry password / PAT with package:write
 #
-# Pushes :latest on main, plus the version tag on v* tags.
+# Pushes :latest on main, plus the version tag on v* tags. The version is
+# baked into the image (PRIMELOOP_VERSION) and reported by GET /health.
 
 on:
   push:
@@ -23,7 +24,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Build and push
+      - name: Build and push (multi-arch)
         run: |
           set -euo pipefail
           IMAGE="${{ secrets.RELEASE_IMAGE }}"
@@ -36,15 +37,27 @@ jobs:
           echo "${{ secrets.RELEASE_REGISTRY_TOKEN }}" \
             | docker login "$REGISTRY" -u "${{ secrets.RELEASE_REGISTRY_USER }}" --password-stdin
 
+          VERSION="dev"
           TAGS="-t ${IMAGE}:latest"
           case "${{ github.ref }}" in
             refs/tags/v*)
               VERSION="${GITHUB_REF#refs/tags/}"
               TAGS="$TAGS -t ${IMAGE}:${VERSION}"
               ;;
+            *)
+              VERSION="main-$(git rev-parse --short HEAD)"
+              ;;
           esac
 
-          docker build $TAGS .
-          docker push --all-tags "$IMAGE"
+          # buildx with QEMU for the non-native platform
+          docker run --privileged --rm tonistiigi/binfmt --install arm64,amd64 >/dev/null || true
+          docker buildx create --use --name primeloop-release 2>/dev/null || docker buildx use primeloop-release
+
+          docker buildx build \
+            --platform linux/amd64,linux/arm64 \
+            --build-arg PRIMELOOP_VERSION="$VERSION" \
+            $TAGS \
+            --push \
+            .
 
           docker logout "$REGISTRY" || true

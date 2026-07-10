@@ -18,6 +18,11 @@ RUN npm run build
 FROM node:22-alpine
 RUN apk add --no-cache tini git
 
+# Release version baked at build time; surfaced by GET /health so bug reports
+# self-identify the build.
+ARG PRIMELOOP_VERSION=dev
+ENV PRIMELOOP_VERSION=$PRIMELOOP_VERSION
+
 WORKDIR /app
 COPY backend/package*.json ./
 RUN npm ci --omit=dev && \

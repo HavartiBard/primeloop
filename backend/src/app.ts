@@ -63,7 +63,7 @@ export function createApp(deps: AppDeps): express.Express {
   app.use(express.json())
 
   app.get('/health', (_req, res) => {
-    res.json({ status: 'ok' })
+    res.json({ status: 'ok', version: process.env.PRIMELOOP_VERSION || 'dev' })
   })
 
   // Admin access gate (PRIMELOOP_ADMIN_TOKEN) — must precede the data routes.

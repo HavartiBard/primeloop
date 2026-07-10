@@ -46,6 +46,24 @@ docker compose down              # stop (add -v to also drop the database volume
 For a production deployment using a pre-built image and persistent volumes, use
 `docker-compose.prod.yml` instead.
 
+### Known limitations (tester release)
+
+- **Single-user.** One shared admin token; no user accounts or roles yet.
+- **Experimental features ship off.** The launcher-managed runtime isolation
+  (`LAUNCHER_ENABLED`, `--profile launcher`) and the spec-024 flags
+  (`RESUME_ON_RESTART`, `LAZY_PROVISIONING`, `CREDENTIAL_BROKER`,
+  `EGRESS_SANDBOX`) are under active development — leave them at their
+  defaults unless you're specifically testing them.
+- **Local models need real tool calling.** Prime plans by calling tools;
+  models under ~7B params are warned/blocked. See
+  [docs/local-llm-guide.md](docs/local-llm-guide.md) for models that work
+  and the GPU gotchas.
+- **`LANGGRAPH_API_URL` is optional** — ignore any older docs that call it
+  required.
+
+When reporting a bug, include the version (`curl localhost:3100/health`),
+your LLM setup, and `docker compose logs backend`.
+
 ### Security
 
 - **Do not expose the PrimeLoop port to the internet.** PrimeLoop drives

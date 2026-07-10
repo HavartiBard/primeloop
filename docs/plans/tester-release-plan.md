@@ -97,21 +97,31 @@ on a clean tree before these changes.
       `git remote set-url origin https://james:<new>@code.klsll.com/HavartiBard/primeloop.git`.
 
 ## Phase 3 — Publish the artifacts
-- [ ] Public GitHub mirror (Gitea stays private origin) + GHCR images.
-- [ ] Configure RELEASE_IMAGE / RELEASE_REGISTRY_USER / RELEASE_REGISTRY_TOKEN
-      secrets so `.gitea/workflows/release-image.yml` publishes.
-- [ ] Multi-arch build (amd64 + arm64) — currently a plain `docker build`.
-- [ ] Tag `v0.1.0`; verify `docker-compose.prod.yml` against the published image.
-- [ ] Add a LICENSE.
+- [x] LICENSE: Apache-2.0 (canonical text).
+- [x] Multi-arch build (amd64 + arm64 via buildx/QEMU) in
+      `.gitea/workflows/release-image.yml`, with `PRIMELOOP_VERSION` baked in.
+- [x] `GET /health` reports the build version (Phase 5 item, pulled forward).
+- [x] CHANGELOG.md started for v0.1.0.
+- [x] Publishing runbook: `docs/publishing.md` — GitHub repo + Gitea push
+      mirror + GHCR secrets + per-release tag loop.
+- [ ] **Operator actions** (see docs/publishing.md): create the GitHub repo,
+      set up the Gitea push mirror, add the three RELEASE_* secrets, make the
+      GHCR package public after first push.
+- [ ] Tag `v0.1.0`; verify `docker-compose.prod.yml` against the published
+      image (blocked on the operator actions above).
 
 ## Phase 4 — Tester-facing docs
-- [ ] Single INSTALL path per LLM option (trim README to one happy path each).
-- [ ] Local-LLM guide naming specific models that pass the tool-call gate.
-- [ ] Known limitations / experimental features section (launcher profile,
-      spec-024 flags).
-- [ ] Fix or mark internal the stale spec-025 setup guide (hardcoded paths,
-      claims LANGGRAPH_API_URL is required).
-- [ ] Feedback template: version, LLM used, `docker compose logs backend`.
+- [x] README quick start rewritten around `./install.sh` (single happy path;
+      wizard handles LLM choice).
+- [x] Local-LLM guide: `docs/local-llm-guide.md` — recommended tool-calling
+      models with VRAM sizes, plus the gotchas hit during validation (cold
+      loads, Ollama keep_alive, shared-GPU OOM, host.docker.internal,
+      server-side tool support).
+- [x] Known limitations section in README (single-user, experimental flags,
+      local-model floor, LANGGRAPH optional).
+- [x] Spec-025 setup guide marked internal/stale with a banner.
+- [x] Feedback template: `.github/ISSUE_TEMPLATE/bug_report.md` (version,
+      install method, LLM setup, logs).
 
 ## Phase 5 — Tester loop
 - [ ] Pin testers to version tags, not `:latest`; keep a short CHANGELOG.

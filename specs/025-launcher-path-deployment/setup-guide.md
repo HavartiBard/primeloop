@@ -1,5 +1,11 @@
 # Setup Guide: Launcher Path Deployment
 
+> **⚠️ Internal / stale.** This is a spec-time design document for the
+> opt-in launcher path (off by default), not install instructions. Parts are
+> outdated — `LANGGRAPH_API_URL` is *not* required, and paths reference the
+> author's machine. For installing PrimeLoop, see the top-level
+> [README](../../README.md).
+
 This guide walks through setting up the launcher path deployment for PrimeLoop agents.
 
 ## Prerequisites
