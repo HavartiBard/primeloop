@@ -20,6 +20,7 @@ import type { ProviderDraft } from '../registry.js'
 import { convertAssignmentsToModelPreferences, mergePrimeConfigWithDefaults, validateFunctionAssignments, DEFAULT_ONBOARDING_ASSIGNMENTS } from '../prime-agent/config.js'
 import { mapProviderToDraft, insertAgent } from '../registry.js'
 import { isOpenAiCompatibleProviderType, loadLocalLlmConfig, shouldUseEnvLocalLlmApiKey } from '../local-llm.js'
+import { probeProvider } from '../setup/provider-probe.js'
 
 // ─── Onboarding DTO Types ──────────────────────────────────────────────────────
 
@@ -324,6 +325,30 @@ export function createSetupRouter({
     } catch {
       res.json({ error: 'unreachable' })
     }
+  })
+
+  // Live provider validation: proves the provider/model pair answers a real
+  // completion and a tool call before the wizard lets setup complete.
+  router.post('/provider-test', async (req, res) => {
+    const body = req.body as { type?: string; base_url?: string; api_key?: string; model?: string }
+    const type = body.type?.trim()
+    const model = body.model?.trim()
+    if (!type || !model) {
+      return res.status(400).json({ error: 'type and model are required' })
+    }
+    if (type !== 'anthropic' && type !== 'openai' && !body.base_url?.trim()) {
+      return res.status(400).json({ error: 'base_url is required for this provider type' })
+    }
+
+    const baseUrl = body.base_url?.trim()
+    const localLlm = await loadLocalLlmConfig(process.env)
+    const apiKey = body.api_key?.trim()
+      || (shouldUseEnvLocalLlmApiKey({ type, base_url: baseUrl }, localLlm) ? localLlm?.api_key : undefined)
+      || (type === 'anthropic' ? process.env.ANTHROPIC_API_KEY : undefined)
+      || (type === 'openai' ? process.env.OPENAI_API_KEY : undefined)
+
+    const result = await probeProvider({ type, base_url: baseUrl, api_key: apiKey, model })
+    res.json(result)
   })
 
   router.post('/provider-models', async (req, res) => {
