@@ -4,6 +4,7 @@ import { createPool, runMigrations, seedRegistry } from './db.js'
 import { listAgents, upsertLocalCodexProvider } from './registry.js'
 import { createBroadcaster } from './ws/broadcast.js'
 import { createApp } from './app.js'
+import { configuredAdminToken, isAuthenticatedRequest } from './auth.js'
 import { validateCatalogStartup, logCatalogStartup, discoverPrimeModulesFromCatalog } from './catalog/startup.js'
 import { startWorkspaceSyncScheduler } from './workspace/sync.js'
 import { setDelegationRuntimeStarter } from './delegation-runner.js'
@@ -233,7 +234,14 @@ const app = createApp({
 const server = http.createServer(app)
 
 const wss = new WebSocketServer({ server, path: '/ws' })
-wss.on('connection', (ws) => addClient(ws))
+wss.on('connection', (ws, req) => {
+  const adminToken = configuredAdminToken()
+  if (adminToken && !isAuthenticatedRequest(req as { headers: { authorization?: string; cookie?: string } }, adminToken)) {
+    ws.close(4401, 'authentication required')
+    return
+  }
+  addClient(ws)
+})
 
 // Start Slack bot if configured
 if (!minimalBoot && SLACK_BOT_TOKEN && SLACK_APP_TOKEN) {
@@ -253,6 +261,11 @@ if (!minimalBoot && SLACK_BOT_TOKEN && SLACK_APP_TOKEN) {
 traceStep('binding http server')
 server.listen(parseInt(PORT), () => {
   console.log(`PrimeLoop backend listening on :${PORT}${minimalBoot ? ' (minimal boot)' : ''}`)
+  if (configuredAdminToken()) {
+    console.log('[auth] dashboard/API auth enabled — sign in with the PRIMELOOP_ADMIN_TOKEN from your .env')
+  } else {
+    console.warn('[auth] ⚠️  PRIMELOOP_ADMIN_TOKEN is not set — the dashboard and API are UNAUTHENTICATED. Anyone who can reach this port controls your agents. Set it in .env (install.sh generates one).')
+  }
 })
 
 process.on('SIGTERM', async () => {

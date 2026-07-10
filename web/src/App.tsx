@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState, useCallback, useRef } from 'react'
 import { useQuery, QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { ActivitySquare, Bot, BookOpen, CalendarClock, CircuitBoard, Library, List, MessageSquare, PuzzleIcon, Server, Settings as SettingsIcon, Sliders } from 'lucide-react'
 import { Sidebar } from './components/Sidebar'
+import { AuthGate } from './components/AuthGate'
 import { FloatingTabbedWindow } from './components/FloatingTabbedWindow'
 import type { NavItem } from './components/Sidebar'
 import { CircuitView } from './pages/CircuitView'
@@ -679,7 +680,9 @@ function AppInner() {
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <AppInner />
+      <AuthGate>
+        <AppInner />
+      </AuthGate>
     </QueryClientProvider>
   )
 }

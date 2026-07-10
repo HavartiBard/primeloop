@@ -139,7 +139,7 @@ export function createRuntimeRouter({ pool }: { pool: pg.Pool }) {
     const { content, sender } = req.body ?? {}
     if (!content) return res.status(400).json({ error: 'content required' })
     try {
-      res.status(201).json(await handlePrimeMessage(pool, req.params.id, content, sender ?? 'james'))
+      res.status(201).json(await handlePrimeMessage(pool, req.params.id, content, sender ?? 'operator'))
     } catch {
       res.status(500).json({ error: 'internal error' })
     }

@@ -21,25 +21,22 @@ the full app — dashboard and API — on port `3100`.
 ```sh
 git clone <repo-url> primeloop
 cd primeloop
-
-# 1. Create your environment file
-cp .env.example .env
-
-# 2. Generate a 32-byte hex encryption key and add it to .env
-echo "SECRET_ENCRYPTION_KEY=$(openssl rand -hex 32)" >> .env
-
-# 3. Edit .env — set at minimum POSTGRES_PASSWORD.
-#    LANGGRAPH_API_URL is optional.
-#    For LLM access, either set a cloud provider key now
-#    (ANTHROPIC_API_KEY or OPENAI_API_KEY), or configure a local provider
-#    through LOCAL_LLM_* env vars and/or the setup flow.
-
-# 4. Build and start (Postgres + backend + bundled dashboard)
-docker compose up -d --build
+./install.sh
 ```
 
+`install.sh` generates the required secrets (`POSTGRES_PASSWORD`,
+`SECRET_ENCRYPTION_KEY`, and the dashboard sign-in token
+`PRIMELOOP_ADMIN_TOKEN`) into `.env`, picks a free port if 3100 is taken,
+and runs `docker compose up -d --build`. It never overwrites values you have
+already set, so you can pre-fill `.env` (e.g. `ANTHROPIC_API_KEY`, or
+`LOCAL_LLM_*` for a local provider) before running it — or configure LLM
+access later in the setup wizard, which auto-detects local servers like
+Ollama and LM Studio.
+
 The dashboard and API are then available at **http://localhost:3100** (health check:
-`GET /health`). Database migrations run automatically on startup.
+`GET /health`). Sign in with the `PRIMELOOP_ADMIN_TOKEN` from `.env`, then the
+setup wizard walks you through picking a provider. Database migrations run
+automatically on startup.
 
 ```sh
 docker compose logs -f backend   # follow logs
@@ -48,6 +45,18 @@ docker compose down              # stop (add -v to also drop the database volume
 
 For a production deployment using a pre-built image and persistent volumes, use
 `docker-compose.prod.yml` instead.
+
+### Security
+
+- **Do not expose the PrimeLoop port to the internet.** PrimeLoop drives
+  agents that can run code and spend LLM credits; keep it on a LAN, VPN, or
+  behind a reverse proxy with TLS + its own auth.
+- Keep `PRIMELOOP_ADMIN_TOKEN` set. Without it the dashboard and API accept
+  requests from anyone who can reach the port. Scripts authenticate with
+  `Authorization: Bearer <token>`; the browser signs in once and holds an
+  httpOnly session cookie.
+- `SECRET_ENCRYPTION_KEY` encrypts provider API keys at rest in Postgres —
+  back it up with the database; losing it orphans the stored secrets.
 
 ### Production deployment notes
 
@@ -82,6 +91,7 @@ untracked `docker-compose.override.yml` (repo root) or under `deploy/local/`
 |----------|----------|-------|
 | `POSTGRES_PASSWORD` | yes | Password for the bundled Postgres |
 | `SECRET_ENCRYPTION_KEY` | yes | 64-char hex (`openssl rand -hex 32`) — encrypts stored secrets |
+| `PRIMELOOP_ADMIN_TOKEN` | strongly recommended | Access token for the dashboard/API (`install.sh` generates one). Empty disables authentication |
 | `PRIMELOOP_IMAGE` | yes, for `docker-compose.prod.yml` | Published image reference, e.g. `ghcr.io/<owner>/primeloop:latest` |
 | `PRIMELOOP_DATA_DIR` | no | Host directory for durable state (default `./data`), `docker-compose.prod.yml` only |
 | `PRIMELOOP_PORT` | no | Host port for the dashboard/API (default `3100`), `docker-compose.prod.yml` only |

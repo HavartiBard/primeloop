@@ -65,6 +65,11 @@ if [ -z "$(env_get SECRET_ENCRYPTION_KEY)" ]; then
   echo "generated SECRET_ENCRYPTION_KEY"
 fi
 
+if [ -z "$(env_get PRIMELOOP_ADMIN_TOKEN)" ]; then
+  env_set PRIMELOOP_ADMIN_TOKEN "$(rand_hex 24)"
+  echo "generated PRIMELOOP_ADMIN_TOKEN (dashboard sign-in token)"
+fi
+
 # ── port: detect conflicts on the host port and pick a free one ──────────────
 port_in_use() {
   if command -v ss >/dev/null 2>&1; then
@@ -78,7 +83,13 @@ port_in_use() {
 
 PORT="$(env_get PRIMELOOP_PORT)"
 [ -n "$PORT" ] || PORT=3100
-if port_in_use "$PORT"; then
+# Re-running install.sh while this project's own stack is up must not treat
+# our own published port as a conflict — compose will reuse the binding.
+SELF_RUNNING=""
+if docker compose -f "$COMPOSE_FILE" ps -q backend 2>/dev/null | grep -q .; then
+  SELF_RUNNING=1
+fi
+if [ -z "$SELF_RUNNING" ] && port_in_use "$PORT"; then
   ORIG_PORT="$PORT"
   while port_in_use "$PORT"; do PORT=$((PORT + 1)); done
   env_set PRIMELOOP_PORT "$PORT"

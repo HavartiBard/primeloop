@@ -19,6 +19,15 @@ BASE_URL="${BASE_URL:-http://localhost:3100}"
 PASS=0
 FAIL=0
 
+# Admin auth: use SMOKE_ADMIN_TOKEN, or fall back to PRIMELOOP_ADMIN_TOKEN
+# from ./.env (where install.sh puts it).
+ADMIN_TOKEN="${SMOKE_ADMIN_TOKEN:-}"
+if [ -z "$ADMIN_TOKEN" ] && [ -f .env ]; then
+  ADMIN_TOKEN=$(sed -n 's/^PRIMELOOP_ADMIN_TOKEN=//p' .env | tail -n1)
+fi
+AUTH_ARGS=()
+[ -n "$ADMIN_TOKEN" ] && AUTH_ARGS=(-H "Authorization: Bearer $ADMIN_TOKEN")
+
 check() {
   local name="$1" expected="$2" actual="$3"
   if [[ "$actual" == *"$expected"* ]]; then
@@ -33,9 +42,9 @@ check() {
 echo "── read-only checks ($BASE_URL)"
 check "GET /health" '"status":"ok"' "$(curl -s -m 10 "$BASE_URL/health")"
 check "GET / serves dashboard" '<title>PrimeLoop</title>' "$(curl -s -m 10 "$BASE_URL/")"
-SETUP_STATUS="$(curl -s -m 10 "$BASE_URL/api/setup/status")"
+SETUP_STATUS="$(curl -s -m 10 "${AUTH_ARGS[@]}" "$BASE_URL/api/setup/status")"
 check "GET /api/setup/status" '"complete"' "$SETUP_STATUS"
-check "GET /api/setup/draft" 'function_assignments' "$(curl -s -m 10 "$BASE_URL/api/setup/draft")"
+check "GET /api/setup/draft" 'function_assignments' "$(curl -s -m 10 "${AUTH_ARGS[@]}" "$BASE_URL/api/setup/draft")"
 
 if [ -z "${SMOKE_PROVIDER_TYPE:-}" ]; then
   echo "── no SMOKE_PROVIDER_* set; skipping live provider + setup round trip"
@@ -46,7 +55,7 @@ else
   KEY="${SMOKE_PROVIDER_KEY:-}"
 
   echo "── live provider probe ($TYPE / $MODEL) — may take minutes on a cold local model"
-  PROBE=$(curl -s -m 150 -X POST "$BASE_URL/api/setup/provider-test" \
+  PROBE=$(curl -s -m 150 "${AUTH_ARGS[@]}" -X POST "$BASE_URL/api/setup/provider-test" \
     -H 'Content-Type: application/json' \
     -d "{\"type\":\"$TYPE\",\"base_url\":\"$URL\",\"api_key\":\"$KEY\",\"model\":\"$MODEL\"}")
   check "provider completion" '"completion_ok":true' "$PROBE"
@@ -56,7 +65,7 @@ else
     echo "── setup already complete; skipping setup round trip"
   else
     echo "── completing setup"
-    COMPLETE=$(curl -s -m 60 -X POST "$BASE_URL/api/setup/complete" \
+    COMPLETE=$(curl -s -m 60 "${AUTH_ARGS[@]}" -X POST "$BASE_URL/api/setup/complete" \
       -H 'Content-Type: application/json' \
       -d "{
         \"providers\": [{\"name\":\"smoke-provider\",\"type\":\"$TYPE\",\"base_url\":\"$URL\",\"api_key\":\"$KEY\",\"model\":\"$MODEL\"}],
@@ -71,13 +80,13 @@ else
     if [ -n "$THREAD_ID" ]; then
       echo "── Prime round trip (thread $THREAD_ID)"
       SENT_AT=$(date -u +%Y-%m-%dT%H:%M:%S)
-      curl -s -m 30 -X POST "$BASE_URL/api/threads/$THREAD_ID/prime/messages" \
+      curl -s -m 30 "${AUTH_ARGS[@]}" -X POST "$BASE_URL/api/threads/$THREAD_ID/prime/messages" \
         -H 'Content-Type: application/json' \
         -d '{"content":"Smoke test: reply with a one-line status.","sender":"smoke-test"}' > /dev/null
 
       REPLY=""
       for _ in $(seq 1 60); do
-        REPLY=$(curl -s -m 10 "$BASE_URL/api/threads/$THREAD_ID/messages" | python3 -c "
+        REPLY=$(curl -s -m 10 "${AUTH_ARGS[@]}" "$BASE_URL/api/threads/$THREAD_ID/messages" | python3 -c "
 import json, sys
 sent = '$SENT_AT'
 ms = json.load(sys.stdin)

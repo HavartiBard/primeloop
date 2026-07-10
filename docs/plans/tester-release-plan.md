@@ -74,15 +74,27 @@ Pre-existing, not fixed here: 7 failing unit tests in
 on a clean tree before these changes.
 
 ## Phase 2 — Minimum security for other people's networks
-- [ ] Admin access token: auto-generated on first boot, printed in
-      `docker compose logs` (Odysseus pattern); required by dashboard + API.
-- [ ] Rotate the Gitea token embedded in the local git remote URL.
-- [ ] Scrub personal defaults from code: `sender ?? 'james'` in
-      `backend/src/routes/runtime.ts` (prime messages route).
-- [ ] Audit logs for secret leakage (provider keys, SECRET_ENCRYPTION_KEY).
-- [ ] Confirm spec-024 flags (RESUME_ON_RESTART, LAZY_PROVISIONING,
-      CREDENTIAL_BROKER, EGRESS_SANDBOX) and LAUNCHER_ENABLED default off.
-- [ ] Document: do not expose the PrimeLoop port to the internet.
+- [x] Admin access token (`PRIMELOOP_ADMIN_TOKEN`): install.sh generates it
+      into .env; backend middleware gates /api, /events, /agents, and the
+      WebSocket. Dashboard shows a sign-in screen and holds an httpOnly
+      session cookie (HMAC-derived — never the raw token); scripts use
+      `Authorization: Bearer`. /health, static assets, and the per-agent
+      `/internal/llm` proxy stay open. Validated: 401s, bearer, cookie login,
+      cookie persistence across reload (headless Chromium), authed smoke test.
+- [x] install.sh re-run safety: no longer treats its own running stack as a
+      port conflict (was silently drifting 3100 → 3101 on updates).
+- [x] Scrub personal defaults: `sender ?? 'james'` → `'operator'` in
+      `backend/src/routes/runtime.ts`.
+- [x] Log audit for secret leakage: no provider keys, tokens, or the
+      encryption key are logged; no req.body/provider object dumps.
+- [x] Spec-024 flags (RESUME_ON_RESTART, LAZY_PROVISIONING, CREDENTIAL_BROKER,
+      EGRESS_SANDBOX) and LAUNCHER_ENABLED all default off in both compose
+      files.
+- [x] README: Security section (never expose the port; token semantics;
+      SECRET_ENCRYPTION_KEY backup) + quick start rewritten around install.sh.
+- [ ] Rotate the Gitea token embedded in the local git remote URL —
+      **operator action**: revoke the token in Gitea, mint a fresh one, then
+      `git remote set-url origin https://james:<new>@code.klsll.com/HavartiBard/primeloop.git`.
 
 ## Phase 3 — Publish the artifacts
 - [ ] Public GitHub mirror (Gitea stays private origin) + GHCR images.

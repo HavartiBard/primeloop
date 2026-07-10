@@ -18,6 +18,7 @@ import { createPrimeProfileRouter } from './routes/prime-profile.js'
 import { createCanvasRouter } from './routes/canvas.js'
 import { createLlmProxyRouter } from './routes/llm-proxy.js'
 import { createCatalogRouter } from './routes/catalog.js'
+import { createAdminAuthMiddleware, createAuthRouter } from './auth.js'
 import type { PrimeQueue } from './prime-agent/queue.js'
 import type { RegistryAgent } from './registry.js'
 import type WebSocket from 'ws'
@@ -64,6 +65,10 @@ export function createApp(deps: AppDeps): express.Express {
   app.get('/health', (_req, res) => {
     res.json({ status: 'ok' })
   })
+
+  // Admin access gate (PRIMELOOP_ADMIN_TOKEN) — must precede the data routes.
+  app.use('/api/auth', createAuthRouter())
+  app.use(createAdminAuthMiddleware())
 
   app.get('/events', async (req, res) => {
     try {
