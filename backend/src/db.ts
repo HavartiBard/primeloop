@@ -1170,7 +1170,8 @@ CREATE TABLE IF NOT EXISTS prime_agent_module_templates (
   id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   template_id         TEXT NOT NULL,
   name                TEXT NOT NULL,
-  current_version_id  UUID NULL REFERENCES prime_agent_module_versions(id) ON DELETE SET NULL,
+  -- FK to prime_agent_module_versions added below, after that table exists
+  current_version_id  UUID NULL,
   lifecycle_state     TEXT NOT NULL DEFAULT 'available' CHECK (lifecycle_state IN ('available', 'deprecated')),
   created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -1201,6 +1202,19 @@ CREATE TABLE IF NOT EXISTS prime_agent_module_versions (
 
 CREATE INDEX IF NOT EXISTS idx_prime_agent_module_versions_admission_state ON prime_agent_module_versions (admission_state);
 CREATE INDEX IF NOT EXISTS idx_prime_agent_module_versions_content_hash ON prime_agent_module_versions (content_hash);
+
+-- Now that prime_agent_module_versions exists, wire the templates ->
+-- current_version_id FK (idempotent).
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'prime_agent_module_templates_current_version_id_fkey'
+  ) THEN
+    ALTER TABLE prime_agent_module_templates
+      ADD CONSTRAINT prime_agent_module_templates_current_version_id_fkey
+      FOREIGN KEY (current_version_id) REFERENCES prime_agent_module_versions(id) ON DELETE SET NULL;
+  END IF;
+END $$;
 
 -- Module dependency resolution table for tracking satisfied dependencies
 CREATE TABLE IF NOT EXISTS prime_agent_module_dependencies (
