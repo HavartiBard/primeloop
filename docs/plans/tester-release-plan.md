@@ -25,10 +25,14 @@ with a live call before declaring setup done.**
 - [ ] Local-LLM discovery probes `host.docker.internal` by default when no
       `LOCAL_LLM_HOST`/`LOCAL_LLM_BASE_URL` is set (currently probes nothing
       unless env vars are provided).
-- [ ] QuickStart setup tier: detection first (env API keys, probed local
-      endpoints with live model lists), then only two questions — default
-      provider/model and workspace — everything else defaulted and editable
-      later in Settings.
+- [x] QuickStart setup tier: `GET /api/setup/detect` scans env keys + local
+      endpoints (parallel probe, models listed, false-positive guard requiring
+      a real models-list shape); wizard opens with a Quick start / Advanced
+      chooser; Quick start asks only provider + model, gates launch on the
+      live probe, and lands in the dashboard. Validated in headless Chromium
+      end to end (2026-07-10). Known quirk (pre-existing): the wizard's
+      post-launch/team-plan panel unmounts when setup-status refetches as
+      complete; reachable via `?setup=1`.
 - [ ] Live validation gate: real completion + tool-call round-trip against
       the chosen model before setup can complete, with recommended-model
       hints when a local model fails the tool-call test.

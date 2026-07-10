@@ -98,7 +98,21 @@ async function fetchJson(url: string, headers: Record<string, string> = {}, time
   }
 }
 
+// A generic web app can 200 anything (SPA fallbacks return HTML for
+// /v1/models), so response.ok alone is not proof of an LLM server — require
+// the body to actually parse as a models list.
+async function looksLikeModelsList(response: Response): Promise<boolean> {
+  if (!response.ok) return false
+  try {
+    const body = await response.json() as { data?: unknown; models?: unknown }
+    return Array.isArray(body) || Array.isArray(body?.data) || Array.isArray(body?.models)
+  } catch {
+    return false
+  }
+}
+
 async function probeCandidate(candidate: DiscoveryCandidate, apiKey?: string): Promise<boolean> {
+  const headers: Record<string, string> = apiKey ? { Authorization: `Bearer ${apiKey}` } : {}
   try {
     if (candidate.type === 'ollama') {
       const response = await fetchJson(`${candidate.baseUrl}/api/tags`)
@@ -108,20 +122,96 @@ async function probeCandidate(candidate: DiscoveryCandidate, apiKey?: string): P
     }
 
     if (candidate.type === 'llamacpp') {
-      const modelsResponse = await fetchJson(`${candidate.baseUrl}/v1/models`, apiKey ? { Authorization: `Bearer ${apiKey}` } : {})
-      if (modelsResponse.ok) return true
-      const healthResponse = await fetchJson(`${candidate.baseUrl}/health`, apiKey ? { Authorization: `Bearer ${apiKey}` } : {})
-      return healthResponse.ok
+      const modelsResponse = await fetchJson(`${candidate.baseUrl}/v1/models`, headers)
+      if (await looksLikeModelsList(modelsResponse)) return true
+      // llama.cpp's health endpoint returns exactly {"status":"ok"}
+      const healthResponse = await fetchJson(`${candidate.baseUrl}/health`, headers)
+      if (!healthResponse.ok) return false
+      const health = await healthResponse.json().catch(() => null) as { status?: unknown } | null
+      return health?.status === 'ok'
     }
 
-    const headers: Record<string, string> = apiKey ? { Authorization: `Bearer ${apiKey}` } : {}
     const v1Response = await fetchJson(`${candidate.baseUrl}/v1/models`, headers)
-    if (v1Response.ok) return true
+    if (await looksLikeModelsList(v1Response)) return true
     const modelsResponse = await fetchJson(`${candidate.baseUrl}/models`, headers)
-    return modelsResponse.ok
+    return looksLikeModelsList(modelsResponse)
   } catch {
     return false
   }
+}
+
+function allCandidatesFor(base: string): DiscoveryCandidate[] {
+  return [
+    { type: 'ollama', baseUrl: `${base}:11434`, label: 'Ollama' },
+    { type: 'lmstudio', baseUrl: `${base}:1234/v1`, label: 'LM Studio' },
+    { type: 'vllm', baseUrl: `${base}:8000/v1`, label: 'vLLM' },
+    { type: 'llamacpp', baseUrl: `${base}:8080`, label: 'llama.cpp' },
+    { type: 'llm-proxy', baseUrl: `${base}:4000/v1`, label: 'LLM proxy' },
+    { type: 'litellm', baseUrl: `${base}:3000/v1`, label: 'OpenAI-compatible server' },
+  ]
+}
+
+export interface DiscoveredEndpoint {
+  type: string
+  base_url: string
+  label: string
+  models: string[]
+}
+
+/** List model names served by a local endpoint (empty array on failure). */
+export async function listEndpointModels(type: string, baseUrl: string, apiKey?: string): Promise<string[]> {
+  const headers: Record<string, string> = apiKey ? { Authorization: `Bearer ${apiKey}` } : {}
+  try {
+    if (type === 'ollama') {
+      const response = await fetchJson(`${baseUrl}/api/tags`)
+      if (!response.ok) return []
+      const data = await response.json() as { models?: Array<{ name?: string }> }
+      return (data.models ?? []).map((m) => m.name).filter((n): n is string => Boolean(n))
+    }
+    const base = /\/v1$/.test(baseUrl) ? baseUrl : `${baseUrl}/v1`
+    const response = await fetchJson(`${base}/models`, headers)
+    if (!response.ok) return []
+    const data = await response.json() as { data?: Array<{ id?: string }> }
+    return (data.data ?? []).map((m) => m.id).filter((id): id is string => Boolean(id))
+  } catch {
+    return []
+  }
+}
+
+/**
+ * Probe every known local-LLM server type on the given hosts in parallel and
+ * return all reachable endpoints with their model lists. Used by the setup
+ * wizard's detection-first QuickStart path.
+ */
+export async function discoverLocalLlmEndpoints(
+  hosts: string[] = DEFAULT_DISCOVERY_HOSTS,
+  apiKey?: string,
+): Promise<DiscoveredEndpoint[]> {
+  const candidates = hosts
+    .map(normalizeHostToHttpBase)
+    .filter(Boolean)
+    .flatMap(allCandidatesFor)
+
+  const probed = await Promise.all(candidates.map(async (candidate) => {
+    if (!(await probeCandidate(candidate, apiKey))) return null
+    const base_url = normalizeBaseUrl(candidate.baseUrl)
+    const models = await listEndpointModels(candidate.type, base_url, apiKey)
+    return { type: candidate.type, base_url, label: candidate.label, models }
+  }))
+
+  // Dedupe endpoints that are the same server reached via different hostnames
+  // (e.g. host.docker.internal and localhost outside a container): keep the
+  // first hit per type + identical model list.
+  const seen = new Set<string>()
+  const found: DiscoveredEndpoint[] = []
+  for (const endpoint of probed) {
+    if (!endpoint) continue
+    const signature = `${endpoint.type}|${[...endpoint.models].sort().join(',')}`
+    if (endpoint.models.length > 0 && seen.has(signature)) continue
+    seen.add(signature)
+    found.push(endpoint)
+  }
+  return found
 }
 
 async function autodiscoverLocalLlm(host: string, requestedType?: string, apiKey?: string): Promise<LocalLlmResolvedConfig | null> {
@@ -159,14 +249,7 @@ async function autodiscoverLocalLlm(host: string, requestedType?: string, apiKey
           : requested === 'llm-proxy'
             ? [{ type: 'llm-proxy', baseUrl: `${base}:4000/v1`, label: 'LLM proxy' }]
             : requested === 'auto' || requested === 'llm'
-              ? [
-                { type: 'ollama', baseUrl: `${base}:11434`, label: 'Ollama' },
-                { type: 'lmstudio', baseUrl: `${base}:1234/v1`, label: 'LM Studio' },
-                { type: 'vllm', baseUrl: `${base}:8000/v1`, label: 'vLLM' },
-                { type: 'llamacpp', baseUrl: `${base}:8080`, label: 'llama.cpp' },
-                { type: 'llm-proxy', baseUrl: `${base}:4000/v1`, label: 'LLM proxy' },
-                { type: 'litellm', baseUrl: `${base}:3000/v1`, label: 'OpenAI-compatible server' },
-              ]
+              ? allCandidatesFor(base)
               : []
 
   for (const candidate of candidates) {

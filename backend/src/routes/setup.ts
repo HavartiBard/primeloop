@@ -19,7 +19,14 @@ import type {
 import type { ProviderDraft } from '../registry.js'
 import { convertAssignmentsToModelPreferences, mergePrimeConfigWithDefaults, validateFunctionAssignments, DEFAULT_ONBOARDING_ASSIGNMENTS } from '../prime-agent/config.js'
 import { mapProviderToDraft, insertAgent } from '../registry.js'
-import { isOpenAiCompatibleProviderType, loadLocalLlmConfig, shouldUseEnvLocalLlmApiKey } from '../local-llm.js'
+import {
+  DEFAULT_DISCOVERY_HOSTS,
+  discoverLocalLlmEndpoints,
+  listEndpointModels,
+  isOpenAiCompatibleProviderType,
+  loadLocalLlmConfig,
+  shouldUseEnvLocalLlmApiKey,
+} from '../local-llm.js'
 import { probeProvider } from '../setup/provider-probe.js'
 
 // ─── Onboarding DTO Types ──────────────────────────────────────────────────────
@@ -324,6 +331,42 @@ export function createSetupRouter({
       res.json(data)
     } catch {
       res.json({ error: 'unreachable' })
+    }
+  })
+
+  // Detection-first QuickStart: scan the environment before asking the user
+  // anything. Reports cloud keys present in the env and every reachable
+  // local LLM endpoint (with its model list).
+  router.get('/detect', async (_req, res) => {
+    try {
+      const localEnv = await loadLocalLlmConfig(process.env)
+      const hosts = [...DEFAULT_DISCOVERY_HOSTS]
+      const envHost = process.env.LOCAL_LLM_HOST?.trim()
+      if (envHost && !hosts.includes(envHost)) hosts.unshift(envHost)
+
+      const local = await discoverLocalLlmEndpoints(hosts, localEnv?.api_key)
+
+      // An env-configured base URL may point somewhere the port scan misses.
+      if (localEnv?.base_url && !local.some((e) => e.base_url === localEnv.base_url)) {
+        local.unshift({
+          type: localEnv.type,
+          base_url: localEnv.base_url,
+          label: `${localEnv.type} (from environment)`,
+          models: await listEndpointModels(localEnv.type, localEnv.base_url, localEnv.api_key),
+        })
+      }
+
+      res.json({
+        cloud: [
+          { type: 'anthropic', env_key_present: Boolean(process.env.ANTHROPIC_API_KEY?.trim()) },
+          { type: 'openai', env_key_present: Boolean(process.env.OPENAI_API_KEY?.trim()) },
+        ],
+        local,
+        default_model: localEnv?.model ?? null,
+        scanned_hosts: hosts,
+      })
+    } catch (err) {
+      res.status(500).json({ error: (err as Error).message ?? 'internal error' })
     }
   })
 

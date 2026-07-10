@@ -12,6 +12,7 @@ import {
   startCodexDeviceAuth,
 } from '../api'
 import type { ModelCapabilityAssessment } from '../types'
+import { QuickStartSetup, type QuickStartProvider } from '../components/setup/QuickStartSetup'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -1765,6 +1766,46 @@ export function StepPlugins({ pluginChoices, onChange }: { pluginChoices: Array<
   )
 }
 
+function StepChooseMode({ onQuick, onAdvanced }: { onQuick: () => void; onAdvanced: () => void }) {
+  return (
+    <div className="space-y-5">
+      <div className="rounded-xl border border-[rgba(110,231,255,0.18)] bg-[linear-gradient(180deg,rgba(15,27,45,0.96),rgba(9,18,32,0.94))] p-5">
+        <div className="text-[11px] uppercase tracking-[0.18em] text-[var(--accent)]">PrimeLoop</div>
+        <h2 className="mt-2 text-lg font-semibold text-[var(--text)]">Set up your operator layer</h2>
+        <p className="mt-3 text-sm leading-6 text-[var(--muted)]">
+          PrimeLoop needs one working LLM to start. Everything else — routing, personality,
+          rules, plugins — has sensible defaults you can change later in Settings.
+        </p>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-2">
+        <button
+          type="button"
+          onClick={onQuick}
+          className="rounded-lg border border-[#6ee7ff] bg-[rgba(31,111,235,0.12)] p-4 text-left transition hover:bg-[rgba(31,111,235,0.2)]"
+        >
+          <div className="text-sm font-semibold text-[var(--text)]">Quick start</div>
+          <div className="mt-1 text-xs leading-5 text-[var(--muted)]">
+            Recommended. Scans this machine for local LLM servers and cloud keys,
+            verifies your pick with a live test, and launches with defaults.
+          </div>
+        </button>
+        <button
+          type="button"
+          onClick={onAdvanced}
+          className="rounded-lg border border-[var(--border-soft)] bg-[var(--panel-subtle)] p-4 text-left transition hover:border-[rgba(110,231,255,0.4)]"
+        >
+          <div className="text-sm font-semibold text-[var(--text)]">Advanced setup</div>
+          <div className="mt-1 text-xs leading-5 text-[var(--muted)]">
+            Walk through every option: providers, per-function routing,
+            personality, standing rules, workspace, and plugins.
+          </div>
+        </button>
+      </div>
+    </div>
+  )
+}
+
 function StepIntro() {
   return (
     <div className="space-y-5">
@@ -2034,6 +2075,7 @@ function StepPostLaunch({
 
 export function Setup({ onSkip, initialSetupStatus }: { onSkip?: () => void; initialSetupStatus?: { local_provider_default?: LocalProviderDefault } }) {
   const queryClient = useQueryClient()
+  const [mode, setMode] = useState<'choose' | 'quick' | 'advanced'>('choose')
   const [step, setStep] = useState<Step>(0)
   const [state, setState] = useState<WizardState>(() => buildInitialState(initialSetupStatus?.local_provider_default))
   const [submitting, setSubmitting] = useState(false)
@@ -2063,12 +2105,13 @@ export function Setup({ onSkip, initialSetupStatus }: { onSkip?: () => void; ini
   const stepBlocker = getStepBlocker(state, step)
   const canAdvance = !stepBlocker
 
-  async function handleSubmit(launch: boolean) {
+  async function handleSubmit(launch: boolean, override?: WizardState) {
+    const effective = override ?? state
     setSubmitting(true)
     setSubmitError(null)
     try {
       const body = {
-        providers: state.providers
+        providers: effective.providers
           .filter((p) => p.active)
           .map((p) => ({
             ...(p.id ? { id: p.id } : {}),
@@ -2079,31 +2122,31 @@ export function Setup({ onSkip, initialSetupStatus }: { onSkip?: () => void; ini
             ...(p.model ? { model: p.model } : {}),
           })),
         routing: {
-          planning: state.routing.planning,
-          dispatching: state.routing.dispatching,
-          discussion: state.routing.discussion,
+          planning: effective.routing.planning,
+          dispatching: effective.routing.dispatching,
+          discussion: effective.routing.discussion,
         },
-        profile: profileSubmitPayload(state.profile),
+        profile: profileSubmitPayload(effective.profile),
         rules: {
-          presets: state.rules.presets,
-          custom: state.rules.custom,
+          presets: effective.rules.presets,
+          custom: effective.rules.custom,
         },
-        cost_controls: { monthly_token_budget: state.costControls.monthlyTokenBudget },
+        cost_controls: { monthly_token_budget: effective.costControls.monthlyTokenBudget },
         prime_config: {
-          cron_fast_interval_seconds: state.primeConfig?.cron_fast_interval_seconds,
-          cron_slow_interval_seconds: state.primeConfig?.cron_slow_interval_seconds,
-          debounce_window_ms: state.primeConfig?.debounce_window_ms,
-          monthly_token_budget: state.costControls.monthlyTokenBudget,
+          cron_fast_interval_seconds: effective.primeConfig?.cron_fast_interval_seconds,
+          cron_slow_interval_seconds: effective.primeConfig?.cron_slow_interval_seconds,
+          debounce_window_ms: effective.primeConfig?.debounce_window_ms,
+          monthly_token_budget: effective.costControls.monthlyTokenBudget,
         },
-        plugin_choices: (state.pluginChoices ?? []).map((p) => ({
+        plugin_choices: (effective.pluginChoices ?? []).map((p) => ({
           plugin_id: p.plugin_id,
           selected: p.selected,
         })),
         workspace: {
-          mode: state.workspace.mode,
-          root_path: state.workspace.root_path,
-          remote_url: state.workspace.remote_url || undefined,
-          branch: state.workspace.branch,
+          mode: effective.workspace.mode,
+          root_path: effective.workspace.root_path,
+          remote_url: effective.workspace.remote_url || undefined,
+          branch: effective.workspace.branch,
         },
         launch,
       }
@@ -2134,6 +2177,18 @@ export function Setup({ onSkip, initialSetupStatus }: { onSkip?: () => void; ini
     }
   }
 
+  async function handleQuickLaunch(provider: QuickStartProvider) {
+    const routes = [{ provider_name: provider.name, model: provider.model }]
+    const quickState: WizardState = {
+      ...buildInitialState(initialSetupStatus?.local_provider_default),
+      providers: [{ ...provider, active: true }],
+      routing: { planning: routes, dispatching: routes, discussion: routes },
+      profile: state.profile, // keep server-loaded profile defaults
+    }
+    setState(quickState)
+    await handleSubmit(true, quickState)
+  }
+
   async function handleConfirmTeamPlan(selectedRoles: string[]) {
     if (!launchResult?.teamPlan?.id) return
     setConfirming(true)
@@ -2156,7 +2211,8 @@ export function Setup({ onSkip, initialSetupStatus }: { onSkip?: () => void; ini
           <p className="mt-1 text-xs text-[var(--muted)]">Configure your Primeloop instance</p>
         </div>
 
-        {/* Step indicator */}
+        {/* Step indicator (advanced wizard only) */}
+        {mode === 'advanced' && !launchResult && (
         <div className="mb-6 space-y-3">
           <div className="relative overflow-hidden rounded-full border border-[rgba(148,163,184,0.2)] bg-[rgba(15,23,42,0.78)]">
             <div className="grid grid-cols-6">
@@ -2216,48 +2272,69 @@ export function Setup({ onSkip, initialSetupStatus }: { onSkip?: () => void; ini
             )})}
           </div>
         </div>
+        )}
 
         {/* Step content */}
         <div className="rounded-lg border border-[var(--border-soft)] bg-[var(--panel)] p-6">
-          <h2 className="mb-4 text-sm font-medium text-[var(--text)]">{STEPS[step]}</h2>
+          <h2 className="mb-4 text-sm font-medium text-[var(--text)]">
+            {launchResult ? 'Launch' : mode === 'choose' ? 'Welcome' : mode === 'quick' ? 'Quick start' : STEPS[step]}
+          </h2>
 
-          {step === 0 && <StepIntro />}
-          {step === 1 && <StepProviders state={state} onChange={setState} />}
-          {step === 2 && <StepRouting state={state} onChange={setState} />}
-          {step === 3 && <StepPersonality profile={state.profile} onChange={(next) => setState((s) => ({ ...s, profile: next }))} />}
-          {step === 4 && <StepRules state={state} onChange={setState} />}
-          {step === 5 && <StepWorkspace state={state} onChange={setState} />}
-          {step === 6 && (
-            <StepPlugins
-              pluginChoices={state.pluginChoices ?? []}
-              onChange={(update) => setState((s) => ({ ...s, pluginChoices: update.plugin_choices }))}
-            />
-          )}
-          {step === 7 && !launchResult && (
-            <StepLaunch
-              state={state}
-              onSubmit={handleSubmit}
-              submitting={submitting}
-              error={submitError}
-              sectionIssues={getLaunchIssues(state)}
-              onGoToStep={(s) => setStep(s)}
-            />
-          )}
-          {step === 7 && launchResult && (
+          {launchResult ? (
             <StepPostLaunch
               threadId={launchResult.threadId}
               teamPlan={launchResult.teamPlan}
               onConfirmTeamPlan={handleConfirmTeamPlan}
               confirming={confirming}
             />
+          ) : mode === 'choose' ? (
+            <StepChooseMode onQuick={() => setMode('quick')} onAdvanced={() => setMode('advanced')} />
+          ) : mode === 'quick' ? (
+            <QuickStartSetup
+              onLaunch={handleQuickLaunch}
+              submitting={submitting}
+              submitError={submitError}
+              onAdvanced={() => setMode('advanced')}
+            />
+          ) : (
+            <>
+              {step === 0 && <StepIntro />}
+              {step === 1 && <StepProviders state={state} onChange={setState} />}
+              {step === 2 && <StepRouting state={state} onChange={setState} />}
+              {step === 3 && <StepPersonality profile={state.profile} onChange={(next) => setState((s) => ({ ...s, profile: next }))} />}
+              {step === 4 && <StepRules state={state} onChange={setState} />}
+              {step === 5 && <StepWorkspace state={state} onChange={setState} />}
+              {step === 6 && (
+                <StepPlugins
+                  pluginChoices={state.pluginChoices ?? []}
+                  onChange={(update) => setState((s) => ({ ...s, pluginChoices: update.plugin_choices }))}
+                />
+              )}
+              {step === 7 && (
+                <StepLaunch
+                  state={state}
+                  onSubmit={handleSubmit}
+                  submitting={submitting}
+                  error={submitError}
+                  sectionIssues={getLaunchIssues(state)}
+                  onGoToStep={(s) => setStep(s)}
+                />
+              )}
+            </>
           )}
         </div>
 
         {/* Navigation */}
+        {!launchResult && (
         <div className="mt-4 flex items-center justify-between">
           <div>
-            {step > 0 && (
+            {mode === 'advanced' && step > 0 && (
               <button type="button" onClick={() => setStep((s) => (s - 1) as Step)} className={BTN_SECONDARY}>
+                ← Back
+              </button>
+            )}
+            {mode === 'quick' && (
+              <button type="button" onClick={() => setMode('choose')} className={BTN_SECONDARY}>
                 ← Back
               </button>
             )}
@@ -2268,7 +2345,7 @@ export function Setup({ onSkip, initialSetupStatus }: { onSkip?: () => void; ini
                 Skip for now
               </button>
             )}
-            {step < STEPS.length - 1 && (
+            {mode === 'advanced' && step < STEPS.length - 1 && (
               <div className="flex flex-col items-end gap-1">
                 {stepBlocker && (
                   <p className="text-[11px] text-amber-400">{stepBlocker}</p>
@@ -2285,6 +2362,7 @@ export function Setup({ onSkip, initialSetupStatus }: { onSkip?: () => void; ini
             )}
           </div>
         </div>
+        )}
       </div>
     </div>
   )
