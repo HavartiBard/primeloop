@@ -54,7 +54,7 @@ jobs:
           # official buildx-bin image using docker itself.
           if ! docker buildx version >/dev/null 2>&1; then
             mkdir -p ~/.docker/cli-plugins
-            ctr=$(docker create docker/buildx-bin:0.19.3)
+            ctr=$(docker create docker/buildx-bin:0.19.3 /buildx)
             docker cp "$ctr:/buildx" ~/.docker/cli-plugins/docker-buildx
             docker rm "$ctr" >/dev/null
             chmod +x ~/.docker/cli-plugins/docker-buildx
