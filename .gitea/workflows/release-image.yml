@@ -49,12 +49,14 @@ jobs:
               ;;
           esac
 
-          # buildx CLI plugin (runner's docker may not ship it)
+          # buildx CLI plugin (runner's docker may not ship it); the job
+          # container has no curl/wget, so extract the binary from the
+          # official buildx-bin image using docker itself.
           if ! docker buildx version >/dev/null 2>&1; then
-            BUILDX_VERSION=v0.19.3
             mkdir -p ~/.docker/cli-plugins
-            curl -fsSL "https://github.com/docker/buildx/releases/download/${BUILDX_VERSION}/buildx-${BUILDX_VERSION}.linux-amd64" \
-              -o ~/.docker/cli-plugins/docker-buildx
+            ctr=$(docker create docker/buildx-bin:0.19.3)
+            docker cp "$ctr:/buildx" ~/.docker/cli-plugins/docker-buildx
+            docker rm "$ctr" >/dev/null
             chmod +x ~/.docker/cli-plugins/docker-buildx
             docker buildx version
           fi
