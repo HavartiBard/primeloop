@@ -52,3 +52,6 @@ specs/019-inline-chat-artifacts/spec.md
 deploy/local/
 docker-compose.override.yml
 .dev-data/
+
+# Internal design docs — kept local, not published
+specs/
