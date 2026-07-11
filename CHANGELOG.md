@@ -1,6 +1,6 @@
 # Changelog
 
-## v0.1.0 — first tester release (unreleased)
+## v0.1.0 — first tester release (2026-07-11)
 
 First release intended for installation outside the author's environment,
 using either local LLMs (Ollama, LM Studio, vLLM, llama.cpp, LiteLLM) or
