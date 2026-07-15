@@ -16,6 +16,8 @@ services:
   backend:
     image: code.klsll.com/havartibard/primeloop:latest
     volumes:
+      # Durable operator/agent state lives in host-mounted paths so the app image
+      # can be replaced without losing Codex state or managed workspace content.
       - /mnt/user/appdata/primeloop/codex:/root/.codex
       - /mnt/user/appdata/primeloop/workspace:/workspace
     environment:
@@ -70,10 +72,11 @@ services:
     ports:
       - "8787:8787"
     volumes:
+      # The launcher must mount the same durable workspace root; runtime containers
+      # remain disposable and should not own the authoritative workspace state.
       - /var/run/docker.sock:/var/run/docker.sock
       - /mnt/user/appdata/primeloop/workspace:/workspace
     depends_on:
       postgres:
         condition: service_healthy
     restart: unless-stopped
-

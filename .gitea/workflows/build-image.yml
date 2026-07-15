@@ -1,0 +1,63 @@
+name: build-image
+
+# Two jobs in one workflow:
+#  - web-build gate: on every PR/push, compile the web bundle (the `web-builder`
+#    Dockerfile stage). Catches TS/vite breaks that the backend test suite can't —
+#    e.g. the Setup.tsx type error that silently broke the image build.
+#  - publish: on push to main only, build the full image and push it to the Gitea
+#    registry so the recommended prebuilt-image install path (docker-compose.prod.yml)
+#    stays current.
+#
+# DOCKER_BUILDKIT=0: this runner's Docker has BuildKit on by default but no buildx.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  web-build:
+    runs-on: linux
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Build web bundle (Dockerfile web-builder stage)
+        run: |
+          set -euo pipefail
+          TAG="pl-web-check-${{ github.run_id }}"
+          DOCKER_BUILDKIT=0 docker build --target web-builder -t "$TAG" .
+          docker image rm "$TAG" >/dev/null 2>&1 || true
+
+  publish:
+    runs-on: linux
+    needs: web-build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Build full image and push to registry
+        env:
+          REGISTRY: code.klsll.com
+          IMAGE: code.klsll.com/havartibard/primeloop
+          REGISTRY_USER: ${{ secrets.REGISTRY_USER }}
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN }}
+        run: |
+          set -euo pipefail
+          LOCAL="primeloop-build-${{ github.run_id }}"
+          DOCKER_BUILDKIT=0 docker build -t "$LOCAL" .
+
+          if [ -z "${REGISTRY_TOKEN:-}" ] || [ -z "${REGISTRY_USER:-}" ]; then
+            echo "::error::REGISTRY_USER/REGISTRY_TOKEN not set — cannot publish the image required by docker-compose.prod.yml."
+            echo "Add repo secrets REGISTRY_USER + REGISTRY_TOKEN (Gitea token with package:write) to enable publishing."
+            docker image rm "$LOCAL" >/dev/null 2>&1 || true
+            exit 1
+          fi
+
+          echo "$REGISTRY_TOKEN" | docker login "$REGISTRY" -u "$REGISTRY_USER" --password-stdin
+          docker tag "$LOCAL" "$IMAGE:latest"
+          docker tag "$LOCAL" "$IMAGE:${{ github.sha }}"
+          docker push "$IMAGE:latest"
+          docker push "$IMAGE:${{ github.sha }}"
+          echo "Pushed $IMAGE:latest and $IMAGE:${{ github.sha }}"
+
+          docker image rm "$LOCAL" "$IMAGE:latest" "$IMAGE:${{ github.sha }}" >/dev/null 2>&1 || true

@@ -16,7 +16,34 @@ the full app — dashboard and API — on port `3100`.
 - Either a cloud LLM provider key (`ANTHROPIC_API_KEY` or `OPENAI_API_KEY`) or a local provider you will configure in setup
 - For from-source development only: Node.js 22+
 
-### Quick start (Docker Compose)
+### Recommended install (prebuilt image)
+
+For the fastest operator setup, use the published image with
+`docker-compose.prod.yml`. This is the recommended install path because it avoids a
+local build and treats the application container as disposable.
+
+```sh
+git clone <repo-url> primeloop
+cd primeloop
+
+cp .env.example .env
+echo "SECRET_ENCRYPTION_KEY=$(openssl rand -hex 32)" >> .env
+
+# Edit .env and set at minimum:
+#   POSTGRES_PASSWORD
+#   ANTHROPIC_API_KEY or OPENAI_API_KEY (unless using a local provider)
+
+docker compose -f docker-compose.prod.yml up -d
+```
+
+This path uses the prebuilt image referenced by
+[`docker-compose.prod.yml`](/home/james/projects/primeloop/docker-compose.prod.yml:1).
+Persistent host-mounted volumes hold the database, Codex state, and workspace state so
+container replacement does not erase agent work.
+
+### From source (build locally)
+
+Use this when you are developing PrimeLoop itself or need a source-based install.
 
 ```sh
 git clone <repo-url> primeloop
@@ -38,16 +65,19 @@ echo "SECRET_ENCRYPTION_KEY=$(openssl rand -hex 32)" >> .env
 docker compose up -d --build
 ```
 
-The dashboard and API are then available at **http://localhost:3100** (health check:
-`GET /health`). Database migrations run automatically on startup.
+### Quick start notes
+In both Docker-based install modes, the dashboard and API are available at
+**http://localhost:3100** (health check: `GET /health`). Database migrations run
+automatically on startup.
 
 ```sh
 docker compose logs -f backend   # follow logs
 docker compose down              # stop (add -v to also drop the database volume)
 ```
 
-For a production deployment using a pre-built image and persistent volumes, use
-`docker-compose.prod.yml` instead.
+See [docs/runtime-packaging.md](/home/james/projects/primeloop/docs/runtime-packaging.md:1)
+for the packaging model, persistence boundaries, and immutable-versus-extensible
+surface rules.
 
 ### Required environment variables
 
@@ -76,6 +106,22 @@ provider modes include Ollama, llama.cpp, LiteLLM/LLM proxy, vLLM, and LM Studio
 Use `LOCAL_LLM_BASE_URL` when you know the exact endpoint, or `LOCAL_LLM_HOST` when you
 want PrimeLoop to probe common ports such as Ollama (`11434`), LM Studio (`1234`),
 vLLM (`8000`), llama.cpp (`8080`), and proxy-style OpenAI-compatible servers.
+
+## Persistence Model
+
+PrimeLoop is designed so the application image or process can be replaced without
+losing important agent state.
+
+- The app/container is the deployment payload.
+- PostgreSQL is durable runtime truth.
+- Mounted workspace content is where managed repos, worktrees, prompt overrides,
+  profile content, policies, and skills should persist.
+- Agent-created commits or self-improvement changes must live in managed repos or
+  durable extension surfaces, not only in the container writable layer.
+
+If you want PrimeLoop to improve PrimeLoop, mount the PrimeLoop repo as a managed
+workspace and treat it as repo state. Do not rely on mutating the live installed
+application filesystem.
 
 Examples:
 
